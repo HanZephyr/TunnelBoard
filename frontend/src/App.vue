@@ -259,6 +259,7 @@ onBeforeUnmount(() => {
           :theme="theme"
           :app-meta="appMeta"
           @theme-change="setThemeBySwitch"
+          @vault-changed="loadVault"
           @notify="notify"
         />
       </main>

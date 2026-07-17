@@ -1,14 +1,20 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  ApplyImport,
   ApplyTrayLocale,
   CheckForUpdates as CheckForUpdatesAPI,
+  ExportBackupWithDialog,
   GetAutoRunEnabled,
   GetConfigPath,
   GetUpdateCheckEnabled,
   OpenConfigDir,
+  PreviewImport,
+  RestoreBackup,
+  SaveImportKeyFile,
   SaveUILocale,
+  SelectBackupFile,
   SetAutoRunEnabled,
   SetUpdateCheckEnabled
 } from '../../../wailsjs/go/main/App'
@@ -26,7 +32,7 @@ const props = defineProps({
   }
 })
 
-const emit = defineEmits(['theme-change', 'notify'])
+const emit = defineEmits(['theme-change', 'notify', 'vault-changed'])
 
 const { t, locale } = useI18n()
 
@@ -164,6 +170,200 @@ async function onOpenConfigDir() {
     emit('notify', errorMessage(err))
   }
 }
+
+// ---- 备份与恢复 ----
+const exportForm = reactive({
+  password: '',
+  confirmPassword: '',
+  includeKeyFiles: false
+})
+const isExporting = ref(false)
+const exportWarnings = ref([])
+
+const importState = reactive({
+  srcPath: '',
+  password: '',
+  preview: null,
+  folderName: '',
+  resolutions: []
+})
+const isPreviewing = ref(false)
+const isImporting = ref(false)
+const importSummary = ref(null)
+
+const restoreState = reactive({
+  srcPath: '',
+  password: '',
+  confirmed: false
+})
+const isRestoring = ref(false)
+
+const previewCounts = computed(() => {
+  const counts = importState.preview?.counts || {}
+  return [
+    { key: 'folders', label: t('settings.backup.countFolders'), value: counts.folders || 0 },
+    { key: 'sshHosts', label: t('settings.backup.countSshHosts'), value: counts.sshHosts || 0 },
+    { key: 'forwards', label: t('settings.backup.countForwards'), value: counts.forwards || 0 },
+    { key: 'webRoutes', label: t('settings.backup.countWebRoutes'), value: counts.webRoutes || 0 },
+    { key: 'hostKeys', label: t('settings.backup.countHostKeys'), value: counts.hostKeys || 0 }
+  ]
+})
+
+const previewConflicts = computed(() => {
+  const conflicts = importState.preview?.hostConflicts
+  return Array.isArray(conflicts) ? conflicts : []
+})
+
+const previewKeyFiles = computed(() => {
+  const keyFiles = importState.preview?.keyFiles
+  return Array.isArray(keyFiles) ? keyFiles : []
+})
+
+const summaryKeyFilePaths = computed(() => {
+  const paths = importSummary.value?.keyFilePaths
+  return Array.isArray(paths) ? paths : []
+})
+
+const canRestore = computed(
+  () => !!(restoreState.srcPath && restoreState.password && restoreState.confirmed)
+)
+
+async function onExportBackup() {
+  if (isExporting.value || !exportForm.password) return
+  if (exportForm.password !== exportForm.confirmPassword) {
+    emit('notify', t('settings.backup.passwordMismatch'))
+    return
+  }
+  isExporting.value = true
+  try {
+    const warnings = await callBackend(ExportBackupWithDialog, exportForm.password, exportForm.includeKeyFiles)
+    // 空数组：用户取消保存对话框或纯成功，按约定静默；非空则展示风险提示。
+    exportWarnings.value = Array.isArray(warnings) ? warnings : []
+    exportForm.password = ''
+    exportForm.confirmPassword = ''
+  } catch (err) {
+    emit('notify', errorMessage(err))
+  } finally {
+    isExporting.value = false
+  }
+}
+
+async function onSelectImportFile() {
+  try {
+    const selected = await callBackend(SelectBackupFile)
+    const srcPath = String(selected || '').trim()
+    if (!srcPath) return // 用户取消：静默
+    importState.srcPath = srcPath
+    importState.preview = null
+    importState.resolutions = []
+    importSummary.value = null
+  } catch (err) {
+    emit('notify', errorMessage(err))
+  }
+}
+
+async function onPreviewImport() {
+  if (isPreviewing.value || !importState.srcPath || !importState.password) return
+  isPreviewing.value = true
+  try {
+    const preview = await callBackend(PreviewImport, importState.srcPath, importState.password)
+    importState.preview = preview
+    importState.folderName = String(preview?.folderName || '')
+    const conflicts = Array.isArray(preview?.hostConflicts) ? preview.hostConflicts : []
+    importState.resolutions = conflicts.map(() => 'rename')
+    importSummary.value = null
+  } catch (err) {
+    importState.preview = null
+    emit('notify', errorMessage(err))
+  } finally {
+    isPreviewing.value = false
+  }
+}
+
+async function onApplyImport() {
+  if (isImporting.value || !importState.preview) return
+  const folderName = importState.folderName.trim()
+  if (!folderName) return
+  isImporting.value = true
+  try {
+    const plan = {
+      folderName,
+      hostResolutions: previewConflicts.value.map((conflict, index) => ({
+        host: conflict?.imported?.host || '',
+        port: Number(conflict?.imported?.port || 0),
+        user: conflict?.imported?.user || '',
+        action: importState.resolutions[index] === 'skip' ? 'skip' : 'rename'
+      }))
+    }
+    const summary = await callBackend(ApplyImport, importState.srcPath, importState.password, plan)
+    importSummary.value = summary
+    const imported = summary?.imported || {}
+    let message = t('settings.backup.importResult', {
+      folders: imported.folders || 0,
+      sshHosts: imported.sshHosts || 0,
+      forwards: imported.forwards || 0,
+      webRoutes: imported.webRoutes || 0,
+      hostKeys: imported.hostKeys || 0,
+      skipped: summary?.skippedHosts || 0
+    })
+    if ((summary?.routesDeactivated || 0) > 0) {
+      message += ' ' + t('settings.backup.routesDeactivatedNote')
+    }
+    emit('notify', message)
+    // 防止重复点击造成重复导入；保留 srcPath/password 供私钥另存使用。
+    importState.preview = null
+    emit('vault-changed')
+  } catch (err) {
+    emit('notify', errorMessage(err))
+  } finally {
+    isImporting.value = false
+  }
+}
+
+async function onSaveImportKeyFile(keyPath) {
+  if (!keyPath) return
+  try {
+    // 保存对话框的关闭即反馈；用户取消时后端同样返回成功，故此处静默。
+    await callBackend(SaveImportKeyFile, importState.srcPath, importState.password, keyPath)
+  } catch (err) {
+    emit('notify', errorMessage(err))
+  }
+}
+
+async function onSelectRestoreFile() {
+  try {
+    const selected = await callBackend(SelectBackupFile)
+    const srcPath = String(selected || '').trim()
+    if (!srcPath) return // 用户取消：静默
+    restoreState.srcPath = srcPath
+  } catch (err) {
+    emit('notify', errorMessage(err))
+  }
+}
+
+async function onRestoreBackup() {
+  if (isRestoring.value || !canRestore.value) return
+  isRestoring.value = true
+  try {
+    await callBackend(RestoreBackup, restoreState.srcPath, restoreState.password, restoreState.confirmed)
+    emit('notify', t('settings.backup.restoreSuccess'))
+    restoreState.srcPath = ''
+    restoreState.password = ''
+    restoreState.confirmed = false
+    // Vault 已整体替换，导入区状态一并失效。
+    importState.srcPath = ''
+    importState.password = ''
+    importState.preview = null
+    importState.resolutions = []
+    importSummary.value = null
+    emit('vault-changed')
+  } catch (err) {
+    emit('notify', errorMessage(err))
+  } finally {
+    isRestoring.value = false
+  }
+}
+
 </script>
 
 <template>
@@ -288,6 +488,226 @@ async function onOpenConfigDir() {
               @click="onOpenConfigDir"
             >
               {{ t('settings.openDir') }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <div class="panel-card">
+          <div class="panel-head mb-2">
+            <h2 class="panel-title mb-0">{{ t('settings.backup.title') }}</h2>
+          </div>
+
+          <div class="mb-4">
+            <div class="config-name">{{ t('settings.backup.exportTitle') }}</div>
+            <div class="config-desc mb-2">{{ t('settings.backup.exportDesc') }}</div>
+            <div class="row g-2 align-items-end">
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1" for="backupExportPassword">{{ t('settings.backup.password') }}</label>
+                <input
+                  id="backupExportPassword"
+                  v-model="exportForm.password"
+                  type="password"
+                  class="form-control form-control-sm"
+                  autocomplete="new-password"
+                />
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1" for="backupExportPasswordConfirm">{{ t('settings.backup.confirmPassword') }}</label>
+                <input
+                  id="backupExportPasswordConfirm"
+                  v-model="exportForm.confirmPassword"
+                  type="password"
+                  class="form-control form-control-sm"
+                  autocomplete="new-password"
+                />
+              </div>
+              <div class="col-12 col-md-4">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-primary"
+                  :disabled="!exportForm.password || isExporting"
+                  @click="onExportBackup"
+                >
+                  {{ isExporting ? t('settings.backup.exporting') : t('settings.backup.exportButton') }}
+                </button>
+              </div>
+            </div>
+            <div class="form-check mt-2">
+              <input
+                id="backupIncludeKeyFiles"
+                v-model="exportForm.includeKeyFiles"
+                class="form-check-input"
+                type="checkbox"
+              />
+              <label class="form-check-label" for="backupIncludeKeyFiles">
+                {{ t('settings.backup.includeKeyFiles') }}
+              </label>
+              <div class="config-desc">{{ t('settings.backup.includeKeyFilesRisk') }}</div>
+            </div>
+            <details v-if="exportWarnings.length" class="mt-2">
+              <summary class="config-name">{{ t('settings.backup.exportWarnings') }} ({{ exportWarnings.length }})</summary>
+              <ul class="config-desc mt-1 mb-0">
+                <li v-for="(warning, index) in exportWarnings" :key="index">{{ warning }}</li>
+              </ul>
+            </details>
+          </div>
+
+          <div class="mb-4">
+            <div class="config-name">{{ t('settings.backup.importTitle') }}</div>
+            <div class="config-desc mb-2">{{ t('settings.backup.importDesc') }}</div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+              <button type="button" class="btn btn-sm btn-secondary flex-shrink-0" @click="onSelectImportFile">
+                {{ t('settings.backup.selectFile') }}
+              </button>
+              <span class="config-desc text-break mb-0">{{ importState.srcPath || t('settings.backup.noFileSelected') }}</span>
+            </div>
+            <div v-if="importState.srcPath" class="row g-2 align-items-end">
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1" for="backupImportPassword">{{ t('settings.backup.password') }}</label>
+                <input
+                  id="backupImportPassword"
+                  v-model="importState.password"
+                  type="password"
+                  class="form-control form-control-sm"
+                  autocomplete="off"
+                />
+              </div>
+              <div class="col-12 col-md-4">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-secondary"
+                  :disabled="!importState.password || isPreviewing"
+                  @click="onPreviewImport"
+                >
+                  {{ isPreviewing ? t('settings.backup.previewing') : t('settings.backup.previewButton') }}
+                </button>
+              </div>
+            </div>
+
+            <div v-if="importState.preview" class="mt-3">
+              <div class="config-name mb-1">{{ t('settings.backup.countsTitle') }}</div>
+              <div class="d-flex flex-wrap gap-2 mb-2">
+                <span v-for="item in previewCounts" :key="item.key" class="badge text-bg-secondary">
+                  {{ item.label }}: {{ item.value }}
+                </span>
+              </div>
+              <div class="row g-2 align-items-end mb-2">
+                <div class="col-12 col-md-4">
+                  <label class="form-label small mb-1" for="backupImportFolderName">{{ t('settings.backup.folderName') }}</label>
+                  <input
+                    id="backupImportFolderName"
+                    v-model="importState.folderName"
+                    type="text"
+                    class="form-control form-control-sm"
+                  />
+                </div>
+              </div>
+
+              <template v-if="previewConflicts.length">
+                <div class="config-name mb-1">{{ t('settings.backup.conflictsTitle') }} ({{ previewConflicts.length }})</div>
+                <div class="table-responsive mb-2">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th scope="col">{{ t('settings.backup.conflictHost') }}</th>
+                        <th scope="col" style="width: 10rem">{{ t('settings.backup.conflictAction') }}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(conflict, index) in previewConflicts" :key="index">
+                        <td>
+                          <div>{{ conflict.imported?.name || conflict.imported?.host }}</div>
+                          <div class="config-desc">{{ conflict.imported?.user }}@{{ conflict.imported?.host }}:{{ conflict.imported?.port }}</div>
+                        </td>
+                        <td>
+                          <select v-model="importState.resolutions[index]" class="form-select form-select-sm">
+                            <option value="rename">{{ t('settings.backup.actionRename') }}</option>
+                            <option value="skip">{{ t('settings.backup.actionSkip') }}</option>
+                          </select>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </template>
+
+              <template v-if="previewKeyFiles.length">
+                <div class="config-name mb-1">{{ t('settings.backup.keyFilesTitle') }} ({{ previewKeyFiles.length }})</div>
+                <ul class="config-desc mt-1 mb-2">
+                  <li v-for="keyFile in previewKeyFiles" :key="keyFile">{{ keyFile }}</li>
+                </ul>
+              </template>
+
+              <button
+                type="button"
+                class="btn btn-sm btn-primary"
+                :disabled="!importState.folderName.trim() || isImporting"
+                @click="onApplyImport"
+              >
+                {{ isImporting ? t('settings.backup.importing') : t('settings.backup.importButton') }}
+              </button>
+            </div>
+
+            <div v-if="summaryKeyFilePaths.length" class="mt-3">
+              <div class="config-name mb-1">{{ t('settings.backup.keyFilesTitle') }} ({{ summaryKeyFilePaths.length }})</div>
+              <div
+                v-for="keyPath in summaryKeyFilePaths"
+                :key="keyPath"
+                class="d-flex flex-wrap align-items-center gap-2 mb-1"
+              >
+                <span class="config-desc text-break mb-0">{{ keyPath }}</span>
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-secondary flex-shrink-0"
+                  @click="onSaveImportKeyFile(keyPath)"
+                >
+                  {{ t('settings.backup.saveKeyFile') }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="border border-danger rounded p-3">
+            <div class="config-name text-danger">{{ t('settings.backup.restoreTitle') }} · {{ t('settings.backup.restoreDanger') }}</div>
+            <div class="config-desc mb-2">{{ t('settings.backup.restoreDesc') }}</div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+              <button type="button" class="btn btn-sm btn-outline-danger flex-shrink-0" @click="onSelectRestoreFile">
+                {{ t('settings.backup.selectFile') }}
+              </button>
+              <span class="config-desc text-break mb-0">{{ restoreState.srcPath || t('settings.backup.noFileSelected') }}</span>
+            </div>
+            <div class="row g-2 align-items-end">
+              <div class="col-12 col-md-4">
+                <label class="form-label small mb-1" for="backupRestorePassword">{{ t('settings.backup.password') }}</label>
+                <input
+                  id="backupRestorePassword"
+                  v-model="restoreState.password"
+                  type="password"
+                  class="form-control form-control-sm"
+                  autocomplete="off"
+                />
+              </div>
+            </div>
+            <div class="form-check mt-2">
+              <input
+                id="backupRestoreConfirmed"
+                v-model="restoreState.confirmed"
+                class="form-check-input"
+                type="checkbox"
+              />
+              <label class="form-check-label" for="backupRestoreConfirmed">
+                {{ t('settings.backup.restoreConfirm') }}
+              </label>
+            </div>
+            <button
+              type="button"
+              class="btn btn-sm btn-danger mt-2"
+              :disabled="!canRestore || isRestoring"
+              @click="onRestoreBackup"
+            >
+              {{ isRestoring ? t('settings.backup.restoring') : t('settings.backup.restoreButton') }}
             </button>
           </div>
         </div>
