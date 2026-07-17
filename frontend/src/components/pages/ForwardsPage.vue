@@ -1,17 +1,24 @@
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   CreateFolder,
   DeleteSelection,
+  EnrollHostKey,
+  GetRuntimeSnapshot,
   MoveForward,
-  SaveForward
+  ReplaceHostKey,
+  SaveForward,
+  StartForward,
+  StartManyForwards,
+  StopForward
 } from '../../../wailsjs/go/main/App'
 import { callBackend, errorMessage, isValidPort } from '../../utils/backend'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
 import ForwardModal from '../modals/ForwardModal.vue'
+import HostKeyDialog from '../modals/HostKeyDialog.vue'
 
 const props = defineProps({
   folders: {
@@ -405,6 +412,252 @@ function onMoveTargetChange() {
   })
 }
 
+// ---- 运行时状态（仅存内存；Vault 数据重载不清除）----
+const runtimeMap = ref({})
+const pendingIds = ref(new Set())
+const batchPending = ref(false)
+let runtimeTimer = null
+
+function runtimeOf(forwardId) {
+  return runtimeMap.value[forwardId] || { status: 'stopped', lastError: '', latencyMs: 0 }
+}
+
+function isActiveStatus(status) {
+  return status === 'running' || status === 'reconnecting'
+}
+
+const STATUS_BADGE_CLASS = {
+  running: 'running',
+  reconnecting: 'busy',
+  stopped: 'stopped',
+  error: 'error'
+}
+
+function statusBadgeClass(status) {
+  return STATUS_BADGE_CLASS[status] || 'stopped'
+}
+
+function statusLabel(status) {
+  const key = `forwards.status.${status}`
+  const label = t(key)
+  return label === key ? status : label
+}
+
+function formatLatency(latencyMs) {
+  const value = Number(latencyMs)
+  if (!Number.isFinite(value) || value <= 0) return t('app.common.none')
+  if (value < 1000) return `${Math.round(value)}ms`
+  if (value < 60000) return `${(value / 1000).toFixed(1)}s`
+  return `${(value / 60000).toFixed(1)}m`
+}
+
+async function refreshRuntime() {
+  try {
+    const snapshot = await callBackend(GetRuntimeSnapshot)
+    const next = {}
+    for (const item of Array.isArray(snapshot) ? snapshot : []) {
+      next[item.forwardId] = {
+        status: item.status || 'stopped',
+        lastError: item.lastError || '',
+        latencyMs: Number(item.latencyMs) || 0
+      }
+    }
+    runtimeMap.value = next
+  } catch (_) {
+    /* 后端暂不可用时保留现有状态，下一轮轮询再试 */
+  }
+}
+
+function setPending(forwardId, pending) {
+  const next = new Set(pendingIds.value)
+  if (pending) {
+    next.add(forwardId)
+  } else {
+    next.delete(forwardId)
+  }
+  pendingIds.value = next
+}
+
+function forwardName(forwardId) {
+  const forward = props.forwards.find((item) => item.id === forwardId)
+  return forward ? forward.name : `#${forwardId}`
+}
+
+// 指纹错误消息格式见 internal/biz/runtime.go hostKeyVerifier（line 88-91）：
+//   unknown:  "biz: ssh host key unknown: <host>:<port> fingerprint <fp>"
+//   mismatch: "biz: ssh host key mismatch: <host>:<port> fingerprint changed (stored <fp>, got <fp>)"
+const HOSTKEY_UNKNOWN_RE = /ssh host key unknown: (.+):(\d+) fingerprint (\S+)/
+const HOSTKEY_MISMATCH_RE = /ssh host key mismatch: (.+):(\d+) fingerprint changed \(stored (\S+), got (\S+)\)/
+
+function parseHostKeyError(message) {
+  if (typeof message !== 'string') return null
+  const mismatch = message.match(HOSTKEY_MISMATCH_RE)
+  if (mismatch) {
+    return {
+      kind: 'mismatch',
+      host: mismatch[1],
+      port: Number(mismatch[2]),
+      storedFingerprint: mismatch[3],
+      fingerprint: mismatch[4]
+    }
+  }
+  const unknown = message.match(HOSTKEY_UNKNOWN_RE)
+  if (unknown) {
+    return {
+      kind: 'unknown',
+      host: unknown[1],
+      port: Number(unknown[2]),
+      storedFingerprint: '',
+      fingerprint: unknown[3]
+    }
+  }
+  return null
+}
+
+// ---- 指纹确认队列：批量启动出现多条指纹错误时逐条依次弹窗 ----
+const hostKeyQueue = ref([])
+const hostKeyBusy = ref(false)
+
+const activeHostKey = computed(() => hostKeyQueue.value[0] || null)
+
+function enqueueHostKey(item) {
+  hostKeyQueue.value = [...hostKeyQueue.value, item]
+}
+
+function shiftHostKeyQueue() {
+  hostKeyQueue.value = hostKeyQueue.value.slice(1)
+}
+
+async function confirmHostKey() {
+  const item = activeHostKey.value
+  if (!item || hostKeyBusy.value) return
+  hostKeyBusy.value = true
+  try {
+    // 错误消息中不含密钥类型，解析不到时按约定传空字符串
+    if (item.kind === 'mismatch') {
+      await callBackend(ReplaceHostKey, item.host, item.port, '', item.fingerprint)
+    } else {
+      await callBackend(EnrollHostKey, item.host, item.port, '', item.fingerprint)
+    }
+    shiftHostKeyQueue()
+    // 用户已信任指纹，自动重试启动
+    const forward = props.forwards.find((entry) => entry.id === item.forwardId)
+    if (forward) {
+      await startForward(forward)
+    } else {
+      void refreshRuntime()
+    }
+  } catch (err) {
+    emit('notify', errorMessage(err))
+    shiftHostKeyQueue()
+  } finally {
+    hostKeyBusy.value = false
+  }
+}
+
+function cancelHostKey() {
+  // 取消则不动：不入库、不启动，仅把该条移出队列
+  shiftHostKeyQueue()
+}
+
+// ---- Forward 启停（单条 / 批量）----
+async function startForward(forward) {
+  if (pendingIds.value.has(forward.id)) return
+  setPending(forward.id, true)
+  try {
+    await callBackend(StartForward, forward.id)
+  } catch (err) {
+    const message = errorMessage(err)
+    const hostKey = parseHostKeyError(message)
+    if (hostKey) {
+      enqueueHostKey({ ...hostKey, forwardId: forward.id })
+    } else {
+      emit('notify', t('forwards.notify.startFailed', { name: forward.name, error: message }))
+    }
+  } finally {
+    setPending(forward.id, false)
+    void refreshRuntime()
+  }
+}
+
+async function stopForward(forward) {
+  if (pendingIds.value.has(forward.id)) return
+  setPending(forward.id, true)
+  try {
+    await callBackend(StopForward, forward.id)
+  } catch (err) {
+    emit('notify', t('forwards.notify.stopFailed', { name: forward.name, error: errorMessage(err) }))
+  } finally {
+    setPending(forward.id, false)
+    void refreshRuntime()
+  }
+}
+
+function toggleForward(forward) {
+  if (isActiveStatus(runtimeOf(forward.id).status)) {
+    void stopForward(forward)
+  } else {
+    void startForward(forward)
+  }
+}
+
+async function startSelectedForwards() {
+  const ids = [...selectedForwardIds.value]
+  if (!ids.length || batchPending.value) return
+  batchPending.value = true
+  for (const id of ids) setPending(id, true)
+  try {
+    const failures = await callBackend(StartManyForwards, ids)
+    for (const [id, message] of Object.entries(failures || {})) {
+      const forwardId = Number(id)
+      const hostKey = parseHostKeyError(message)
+      if (hostKey) {
+        enqueueHostKey({ ...hostKey, forwardId })
+      } else {
+        emit('notify', t('forwards.notify.startFailed', { name: forwardName(forwardId), error: message }))
+      }
+    }
+  } catch (err) {
+    emit('notify', errorMessage(err))
+  } finally {
+    for (const id of ids) setPending(id, false)
+    batchPending.value = false
+    void refreshRuntime()
+  }
+}
+
+async function stopSelectedForwards() {
+  const ids = [...selectedForwardIds.value]
+  if (!ids.length || batchPending.value) return
+  batchPending.value = true
+  for (const id of ids) setPending(id, true)
+  try {
+    for (const id of ids) {
+      try {
+        await callBackend(StopForward, id)
+      } catch (err) {
+        emit('notify', t('forwards.notify.stopFailed', { name: forwardName(id), error: errorMessage(err) }))
+      }
+    }
+  } finally {
+    for (const id of ids) setPending(id, false)
+    batchPending.value = false
+    void refreshRuntime()
+  }
+}
+
+onMounted(() => {
+  void refreshRuntime()
+  runtimeTimer = window.setInterval(refreshRuntime, 5000)
+})
+
+onBeforeUnmount(() => {
+  if (runtimeTimer !== null) {
+    window.clearInterval(runtimeTimer)
+    runtimeTimer = null
+  }
+})
+
 // ---- 展示辅助 ----
 const modeLabel = (mode) => {
   const key = `forwards.mode.${mode}`
@@ -499,6 +752,22 @@ function chainLabel(forward) {
           <h2 class="panel-title mb-0">{{ selectedFolder ? selectedFolder.name : t('forwards.tableTitle') }}</h2>
           <div v-if="selectedForwardIds.size" class="batch-bar">
             <span class="batch-count">{{ t('forwards.selectedCount', { count: selectedForwardIds.size }) }}</span>
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-success"
+              :disabled="batchPending"
+              @click="startSelectedForwards"
+            >
+              <i class="bi bi-play-fill me-1" aria-hidden="true"></i>{{ t('forwards.startSelected') }}
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm btn-outline-warning"
+              :disabled="batchPending"
+              @click="stopSelectedForwards"
+            >
+              <i class="bi bi-stop-fill me-1" aria-hidden="true"></i>{{ t('forwards.stopSelected') }}
+            </button>
             <select
               v-model="moveTargetId"
               class="form-select form-select-sm batch-move-select"
@@ -536,6 +805,7 @@ function chainLabel(forward) {
                 <th class="forward-route-cell">{{ t('forwards.table.remote') }}</th>
                 <th>{{ t('forwards.table.chain') }}</th>
                 <th class="forward-autostart-cell">{{ t('forwards.table.autoStart') }}</th>
+                <th class="forward-status-cell">{{ t('forwards.table.status') }}</th>
                 <th class="forwards-action-cell">{{ t('forwards.table.actions') }}</th>
               </tr>
             </thead>
@@ -564,7 +834,44 @@ function chainLabel(forward) {
                   <span v-else>{{ t('app.common.none') }}</span>
                 </td>
                 <td>
+                  <span class="status-badge" :class="statusBadgeClass(runtimeOf(forward.id).status)">
+                    {{ statusLabel(runtimeOf(forward.id).status) }}
+                  </span>
+                  <div
+                    v-if="runtimeOf(forward.id).status === 'error' && runtimeOf(forward.id).lastError"
+                    class="runtime-meta error-text cell-ellipsis"
+                    :title="runtimeOf(forward.id).lastError"
+                  >
+                    {{ runtimeOf(forward.id).lastError }}
+                  </div>
+                  <div v-else class="runtime-meta">{{ formatLatency(runtimeOf(forward.id).latencyMs) }}</div>
+                </td>
+                <td>
                   <div class="d-flex gap-1">
+                    <button
+                      v-if="pendingIds.has(forward.id)"
+                      type="button"
+                      class="btn btn-sm icon-btn btn-outline-secondary"
+                      disabled
+                    >
+                      <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+                    </button>
+                    <IconActionButton
+                      v-else-if="isActiveStatus(runtimeOf(forward.id).status)"
+                      icon-class="bi-stop-fill"
+                      button-class="btn-outline-warning"
+                      :title="t('forwards.actions.stop')"
+                      :aria-label="t('forwards.actions.stop')"
+                      @click="toggleForward(forward)"
+                    />
+                    <IconActionButton
+                      v-else
+                      icon-class="bi-play-fill"
+                      button-class="btn-outline-success"
+                      :title="t('forwards.actions.start')"
+                      :aria-label="t('forwards.actions.start')"
+                      @click="toggleForward(forward)"
+                    />
                     <IconActionButton
                       icon-class="bi-pencil"
                       :title="t('app.common.edit')"
@@ -638,5 +945,17 @@ function chainLabel(forward) {
     :show-cancel="confirmDialog.showCancel"
     @confirm="handleConfirm"
     @close="closeConfirm"
+  />
+
+  <HostKeyDialog
+    :show="!!activeHostKey"
+    :kind="activeHostKey?.kind || 'unknown'"
+    :host="activeHostKey?.host || ''"
+    :port="activeHostKey?.port || 0"
+    :fingerprint="activeHostKey?.fingerprint || ''"
+    :stored-fingerprint="activeHostKey?.storedFingerprint || ''"
+    :busy="hostKeyBusy"
+    @confirm="confirmHostKey"
+    @cancel="cancelHostKey"
   />
 </template>

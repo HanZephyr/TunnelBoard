@@ -50,6 +50,7 @@
             "remote": "Remote",
             "chain": "Host Chain",
             "autoStart": "Auto Start",
+            "status": "Status",
             "actions": "Actions"
         },
         "mode": {
@@ -58,6 +59,18 @@
             "dynamic": "Dynamic"
         },
         "autoStartYes": "Auto",
+        "status": {
+            "running": "Running",
+            "reconnecting": "Reconnecting",
+            "stopped": "Stopped",
+            "error": "Error"
+        },
+        "actions": {
+            "start": "Start",
+            "stop": "Stop"
+        },
+        "startSelected": "Start",
+        "stopSelected": "Stop",
         "selectedCount": "{count} selected",
         "moveToPlaceholder": "Move to…",
         "deleteSelected": "Delete",
@@ -99,6 +112,17 @@
             "cascadeConfirm": "Delete All",
             "moveSelected": "Move {count} forward(s) to \"{folder}\"?"
         },
+        "hostkey": {
+            "unknownTitle": "Trust This Host?",
+            "unknownMessage": "First connection to {endpoint}. Confirm the fingerprint below matches the server before trusting it.",
+            "fingerprint": "SHA256 fingerprint",
+            "mismatchTitle": "Host Key Changed",
+            "mismatchMessage": "The host key presented by {endpoint} does not match the saved one. You may be under a man-in-the-middle attack. Only replace the saved key if you know the server key was regenerated.",
+            "storedFingerprint": "Saved fingerprint",
+            "newFingerprint": "New fingerprint",
+            "trustAndStart": "Trust & Start",
+            "replaceAndStart": "Replace & Start"
+        },
         "notify": {
             "saved": "Forward \"{name}\" saved.",
             "deleted": "Forward deleted.",
@@ -106,7 +130,9 @@
             "movedCount": "{count} forward(s) moved.",
             "folderCreated": "Folder \"{name}\" created.",
             "folderDeleted": "Folder \"{name}\" deleted.",
-            "needFolder": "Create a folder before adding forwards."
+            "needFolder": "Create a folder before adding forwards.",
+            "startFailed": "Failed to start \"{name}\": {error}",
+            "stopFailed": "Failed to stop \"{name}\": {error}"
         }
     },
     "hosts": {

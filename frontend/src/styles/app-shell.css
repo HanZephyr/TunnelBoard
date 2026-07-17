@@ -1663,9 +1663,67 @@
   max-width: 92px;
 }
 
+.forwards-table .forward-status-cell {
+  width: 132px;
+  max-width: 132px;
+}
+
 .forwards-table .forwards-action-cell {
-  width: 84px;
-  max-width: 84px;
+  width: 116px;
+  max-width: 116px;
+}
+
+.runtime-meta {
+  margin-top: 0.18rem;
+  font-size: 0.7rem;
+  line-height: 1.3;
+  color: var(--lt-muted);
+}
+
+.runtime-meta.error-text {
+  color: var(--lt-danger-ink);
+}
+
+.hostkey-dialog .action-dialog-message {
+  margin-bottom: 0.6rem;
+}
+
+.hostkey-title-danger {
+  color: var(--lt-danger-ink);
+}
+
+.hostkey-fingerprint-grid {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.hostkey-fingerprint-block {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.hostkey-fingerprint-label {
+  margin-bottom: 0.2rem;
+  font-size: 0.72rem;
+  color: var(--lt-muted);
+}
+
+.hostkey-fingerprint-value {
+  border: 1px solid var(--lt-border);
+  border-radius: var(--lt-radius-md);
+  padding: 0.4rem 0.5rem;
+  background: var(--lt-neutral-bg);
+  font-family: monospace;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  word-break: break-all;
+  color: var(--lt-ink);
+}
+
+.hostkey-fingerprint-value.danger {
+  border-color: var(--lt-danger-border);
+  color: var(--lt-danger-ink);
 }
 
 .hosts-table .host-name-cell {

@@ -47,6 +47,7 @@
             "remote": "Удалённый",
             "chain": "Цепочка хостов",
             "autoStart": "Автозапуск",
+            "status": "Статус",
             "actions": "Действия"
         },
         "mode": {
@@ -55,6 +56,18 @@
             "dynamic": "Динамический"
         },
         "autoStartYes": "Авто",
+        "status": {
+            "running": "Работает",
+            "reconnecting": "Переподключение",
+            "stopped": "Остановлен",
+            "error": "Ошибка"
+        },
+        "actions": {
+            "start": "Запустить",
+            "stop": "Остановить"
+        },
+        "startSelected": "Запустить",
+        "stopSelected": "Остановить",
         "selectedCount": "Выбрано: {count}",
         "moveToPlaceholder": "Переместить в…",
         "deleteSelected": "Удалить",
@@ -88,13 +101,26 @@
             "deleteSelectedTitle": "Удалить форварды",
             "cascadeConfirm": "Удалить всё"
         },
+        "hostkey": {
+            "unknownTitle": "Доверять этому хосту?",
+            "unknownMessage": "Первое подключение к {endpoint}. Убедитесь, что отпечаток ниже совпадает с серверным, прежде чем доверять ему.",
+            "fingerprint": "Отпечаток SHA256",
+            "mismatchTitle": "Ключ хоста изменился",
+            "mismatchMessage": "Ключ хоста {endpoint} не совпадает с сохранённым. Возможна атака «человек посередине». Заменяйте сохранённый ключ, только если уверены, что ключ сервера был пересоздан.",
+            "storedFingerprint": "Сохранённый отпечаток",
+            "newFingerprint": "Новый отпечаток",
+            "trustAndStart": "Доверять и запустить",
+            "replaceAndStart": "Заменить и запустить"
+        },
         "notify": {
             "saved": "Форвард \"{name}\" сохранён.",
             "deleted": "Форвард удалён.",
             "deletedCount": "Удалено форвардов: {count}.",
             "movedCount": "Перемещено форвардов: {count}.",
             "folderCreated": "Папка \"{name}\" создана.",
-            "folderDeleted": "Папка \"{name}\" удалена."
+            "folderDeleted": "Папка \"{name}\" удалена.",
+            "startFailed": "Не удалось запустить \"{name}\": {error}",
+            "stopFailed": "Не удалось остановить \"{name}\": {error}"
         }
     },
     "hosts": {

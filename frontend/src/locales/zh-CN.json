@@ -50,6 +50,7 @@
             "remote": "远端",
             "chain": "主机链",
             "autoStart": "自动启动",
+            "status": "状态",
             "actions": "操作"
         },
         "mode": {
@@ -58,6 +59,18 @@
             "dynamic": "动态转发"
         },
         "autoStartYes": "自动",
+        "status": {
+            "running": "运行中",
+            "reconnecting": "重连中",
+            "stopped": "已停止",
+            "error": "错误"
+        },
+        "actions": {
+            "start": "启动",
+            "stop": "停止"
+        },
+        "startSelected": "启动",
+        "stopSelected": "停止",
         "selectedCount": "已选 {count} 项",
         "moveToPlaceholder": "移动到…",
         "deleteSelected": "删除",
@@ -99,6 +112,17 @@
             "cascadeConfirm": "全部删除",
             "moveSelected": "将选中的 {count} 条 Forward 移动到「{folder}」？"
         },
+        "hostkey": {
+            "unknownTitle": "信任该主机？",
+            "unknownMessage": "首次连接 {endpoint}。请确认下方指纹与服务器一致后再信任。",
+            "fingerprint": "SHA256 指纹",
+            "mismatchTitle": "主机密钥已变更",
+            "mismatchMessage": "{endpoint} 提供的主机密钥与已保存的不一致，可能遭遇中间人攻击。仅在确认服务器密钥确已重新生成时才应替换。",
+            "storedFingerprint": "已存指纹",
+            "newFingerprint": "新指纹",
+            "trustAndStart": "信任并启动",
+            "replaceAndStart": "替换并启动"
+        },
         "notify": {
             "saved": "Forward「{name}」已保存。",
             "deleted": "Forward 已删除。",
@@ -106,7 +130,9 @@
             "movedCount": "已移动 {count} 条 Forward。",
             "folderCreated": "文件夹「{name}」已创建。",
             "folderDeleted": "文件夹「{name}」已删除。",
-            "needFolder": "请先创建文件夹，再添加 Forward。"
+            "needFolder": "请先创建文件夹，再添加 Forward。",
+            "startFailed": "启动「{name}」失败：{error}",
+            "stopFailed": "停止「{name}」失败：{error}"
         }
     },
     "hosts": {
