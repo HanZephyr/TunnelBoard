@@ -30,3 +30,6 @@ ui.locale
 **/.vitepress/cache
 # bundled caddy binary (fetched by scripts/fetch-caddy.py)
 build/caddy/
+
+# packaging output
+build/bin/
