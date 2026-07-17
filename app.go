@@ -504,12 +504,12 @@ func (a *App) StartManyForwards(ids []int) (map[int]string, error) {
 	return out, nil
 }
 
-// GetRuntimeSnapshot 返回全部 Forward 的运行时状态快照。
+// GetRuntimeSnapshot 返回全部 Forward 的运行时状态快照；读取失败时返回错误（前端据此提示而非静默回退）。
 func (a *App) GetRuntimeSnapshot() ([]biz.RuntimeStatus, error) {
 	if err := a.ensureReady(); err != nil {
 		return nil, err
 	}
-	return a.runtime.Snapshot(), nil
+	return a.runtime.Snapshot()
 }
 
 // CheckLocalPortAvailable 预检本地监听端口是否可绑定，供编辑 Forward 时尽早提示端口冲突。

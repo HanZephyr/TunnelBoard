@@ -46,6 +46,7 @@
         "selectFolderHint": "在左侧选择文件夹以查看其中的 Forward。",
         "emptyFolder": "该文件夹下还没有 Forward。",
         "tableTitle": "Forward 列表",
+        "statusUnavailable": "运行状态获取失败",
         "table": {
             "name": "名称",
             "mode": "模式",

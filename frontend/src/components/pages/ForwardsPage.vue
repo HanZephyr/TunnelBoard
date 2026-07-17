@@ -451,6 +451,9 @@ function formatLatency(latencyMs) {
   return `${(value / 60000).toFixed(1)}m`
 }
 
+// runtimeFetchError 非空表示状态快照获取失败：页面向用户显式提示，而不是静默回退为"全部已停止"。
+const runtimeFetchError = ref('')
+
 async function refreshRuntime() {
   try {
     const snapshot = await callBackend(GetRuntimeSnapshot)
@@ -463,8 +466,10 @@ async function refreshRuntime() {
       }
     }
     runtimeMap.value = next
-  } catch (_) {
-    /* 后端暂不可用时保留现有状态，下一轮轮询再试 */
+    runtimeFetchError.value = ''
+  } catch (err) {
+    /* 保留现有状态，下一轮轮询再试；但让失败可见 */
+    runtimeFetchError.value = errorMessage(err)
   }
 }
 
@@ -748,6 +753,10 @@ function chainLabel(forward) {
       </div>
 
       <div class="panel-card forwards-table-panel">
+        <div v-if="runtimeFetchError" class="alert alert-warning py-2 px-3 mb-2 small" role="alert">
+          <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>
+          {{ t('forwards.statusUnavailable') }}：{{ runtimeFetchError }}
+        </div>
         <div class="panel-head">
           <h2 class="panel-title mb-0">{{ selectedFolder ? selectedFolder.name : t('forwards.tableTitle') }}</h2>
           <div v-if="selectedForwardIds.size" class="batch-bar">

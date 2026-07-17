@@ -245,7 +245,10 @@ func TestRuntimeStartRunning(t *testing.T) {
 		t.Fatalf("LatencyMs = %d, want 120", st.LatencyMs)
 	}
 
-	snapshot := b.Snapshot()
+	snapshot, err := b.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
 	if len(snapshot) != 3 {
 		t.Fatalf("Snapshot len = %d, want 3", len(snapshot))
 	}
@@ -382,7 +385,11 @@ func TestRuntimeDoneWithErrFinalizesError(t *testing.T) {
 	}
 
 	found := false
-	for _, item := range b.Snapshot() {
+	items, err := b.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	for _, item := range items {
 		if item.ForwardID == 1 {
 			found = true
 			if item.Status != RuntimeStateError {
@@ -413,7 +420,10 @@ func TestRuntimeDoneCleanFinalizesStopped(t *testing.T) {
 func TestRuntimeSnapshotDefaultsStopped(t *testing.T) {
 	b := newTestRuntime(seedRuntimeVault(), &runFactory{})
 
-	snapshot := b.Snapshot()
+	snapshot, err := b.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
 	if len(snapshot) != 3 {
 		t.Fatalf("Snapshot len = %d, want 3", len(snapshot))
 	}

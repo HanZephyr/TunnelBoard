@@ -207,10 +207,11 @@ func (b *RuntimeBiz) Status(id int) (RuntimeStatus, bool) {
 }
 
 // Snapshot 返回 Vault 中全部 Forward 的运行时状态；未运行的给 stopped 默认。
-func (b *RuntimeBiz) Snapshot() []RuntimeStatus {
+// 读取 Vault 失败时返回错误（调用方应让失败可见，而不是退化为"全部已停止"）。
+func (b *RuntimeBiz) Snapshot() ([]RuntimeStatus, error) {
 	data, err := b.store.Load()
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -222,7 +223,7 @@ func (b *RuntimeBiz) Snapshot() []RuntimeStatus {
 			out = append(out, RuntimeStatus{ForwardID: fw.ID, Status: RuntimeStateStopped})
 		}
 	}
-	return out
+	return out, nil
 }
 
 func (b *RuntimeBiz) setState(id int, status string, lastError string) {

@@ -46,6 +46,7 @@
         "selectFolderHint": "Select a folder on the left to view its forwards.",
         "emptyFolder": "No forwards in this folder yet.",
         "tableTitle": "Forwards",
+        "statusUnavailable": "Runtime status unavailable",
         "table": {
             "name": "Name",
             "mode": "Mode",
