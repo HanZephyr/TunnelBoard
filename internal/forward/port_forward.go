@@ -1077,7 +1077,7 @@ func getSSHAgent(preferredSocketPath string) (agent.ExtendedAgent, string, error
 
 	candidates := agentSocketCandidates(preferredSocketPath)
 	if len(candidates) == 0 {
-		return nil, "", fmt.Errorf("no SSH agent socket found; set agent socket path, SSH_AUTH_SOCK, or LORIS_TUNNEL_SSH_AUTH_SOCK")
+		return nil, "", fmt.Errorf("no SSH agent socket found; set agent socket path, SSH_AUTH_SOCK, or TUNNELBOARD_SSH_AUTH_SOCK")
 	}
 
 	if sshAgentInst != nil {
@@ -1133,7 +1133,7 @@ func agentSocketCandidates(preferredSocketPath string) []string {
 	}
 
 	add(preferredSocketPath)
-	add(os.Getenv("LORIS_TUNNEL_SSH_AUTH_SOCK"))
+	add(os.Getenv("TUNNELBOARD_SSH_AUTH_SOCK"))
 	add(os.Getenv("SSH_AUTH_SOCK"))
 
 	for _, s := range defaultAgentSocketCandidates() {

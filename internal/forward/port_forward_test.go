@@ -133,7 +133,7 @@ func TestEnsureSignerSupportsLegacyRSA_NonRSAUnchanged(t *testing.T) {
 
 func TestGetSSHAgentSigners_NoSock(t *testing.T) {
 	resetSSHAgent()
-	t.Setenv("LORIS_TUNNEL_SSH_AUTH_SOCK", "")
+	t.Setenv("TUNNELBOARD_SSH_AUTH_SOCK", "")
 	t.Setenv("SSH_AUTH_SOCK", "")
 	t.Setenv("HOME", t.TempDir())
 
@@ -150,7 +150,8 @@ func TestAgentSocketCandidates_OrderAndNormalization(t *testing.T) {
 	resetSSHAgent()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("LORIS_TUNNEL_SSH_AUTH_SOCK", "~/custom-agent.sock")
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("TUNNELBOARD_SSH_AUTH_SOCK", "~/custom-agent.sock")
 	t.Setenv("SSH_AUTH_SOCK", "/tmp/another-agent.sock")
 
 	candidates := agentSocketCandidates("")
@@ -176,7 +177,8 @@ func TestAgentSocketCandidates_Dedup(t *testing.T) {
 	resetSSHAgent()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("LORIS_TUNNEL_SSH_AUTH_SOCK", "/tmp/shared-agent.sock")
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("TUNNELBOARD_SSH_AUTH_SOCK", "/tmp/shared-agent.sock")
 	t.Setenv("SSH_AUTH_SOCK", "/tmp/shared-agent.sock")
 
 	candidates := agentSocketCandidates("")
@@ -189,7 +191,8 @@ func TestAgentSocketCandidates_PreferJumperSocket(t *testing.T) {
 	resetSSHAgent()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("LORIS_TUNNEL_SSH_AUTH_SOCK", "/tmp/loris-agent.sock")
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("TUNNELBOARD_SSH_AUTH_SOCK", "/tmp/tunnelboard-agent.sock")
 	t.Setenv("SSH_AUTH_SOCK", "/tmp/system-agent.sock")
 
 	candidates := agentSocketCandidates("~/user-selected.sock")

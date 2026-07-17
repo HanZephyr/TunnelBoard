@@ -59,7 +59,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26" # 保持与你本地一致的 Go 版本
+          go-version: "1.23" # 与 go.mod 保持一致
           cache: true        # 魔法开启：自动缓存下载过的 Go 依赖包，下次运行大幅提速！
 
       # 【步骤 3】安装 Node.js 环境（Wails 的前端需要，同步为 24）。
@@ -106,37 +106,37 @@ jobs:
           
           # 1. 确保可执行文件拥有运行权限
           # Wails 默认生成的可执行文件在 Contents/MacOS/ 目录下
-          chmod +x "loris-tunnel.app/Contents/MacOS/loris-tunnel"
+          chmod +x "tunnelboard.app/Contents/MacOS/tunnelboard"
           
           # 2. 清除可能存在的隔离属性和多余元数据
           # 防止打包进去的 App 自带“待核实”标记
-          xattr -cr "loris-tunnel.app"
+          xattr -cr "tunnelboard.app"
           
           # 3. 进行 Ad-hoc 签名（伪签名）
           # 这是最关键的一步！对于没有开发者证书的开源项目，这能告诉 macOS：
           # “虽然我没公证，但我经过了完整的本地签名校验”，这能极大减少“损坏”报错。
-          codesign --force --deep --sign - "loris-tunnel.app"
+          codesign --force --deep --sign - "tunnelboard.app"
           
           # 4. 执行原有的 create-dmg
           create-dmg \
-            --volname "loris-tunnel" \
+            --volname "TunnelBoard" \
             --background "../../dmg-bg.png" \
             --window-pos 200 120 \
             --window-size 600 400 \
             --icon-size 100 \
-            --icon "loris-tunnel.app" 110 200 \
-            --hide-extension "loris-tunnel.app" \
+            --icon "tunnelboard.app" 110 200 \
+            --hide-extension "tunnelboard.app" \
             --app-drop-link 490 200 \
-            "loris-tunnel.dmg" \
-            "loris-tunnel.app"  
+            "tunnelboard.dmg" \
+            "tunnelboard.app"
 
       # 【步骤 10】打包收尾：把编译出来的 DMG 文件上传到 GitHub 的后台。
       # 因为虚拟机用完马上就会被销毁，不上传的话打包出来的东西就全没了。
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: loris-tunnel-macos
-          path: build/bin/loris-tunnel.dmg
+          name: tunnelboard-macos
+          path: build/bin/tunnelboard.dmg
 
   # ----------------------------------------
   # 任务 2：构建 Windows 版本程序
@@ -152,7 +152,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26"
+          go-version: "1.23"
           cache: true
 
       - name: Setup Node.js
@@ -175,7 +175,7 @@ jobs:
 
       - name: Install Wails
         if: steps.cache-wails.outputs.cache-hit != 'true'
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
 
       # 编译出 Windows 64 位程序
       - name: Build Windows app
@@ -185,7 +185,7 @@ jobs:
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: loris-tunnel-windows
+          name: tunnelboard-windows
           path: build/bin/*.exe
 
 
@@ -208,14 +208,14 @@ jobs:
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: loris-tunnel-macos
+          name: tunnelboard-macos
           path: artifacts/macos      # 下载后放到当前服务器的这个文件夹里
 
       # 【步骤 2】把 Windows 软件也下载过来。
       - name: Download Windows artifact
         uses: actions/download-artifact@v4
         with:
-          name: loris-tunnel-windows
+          name: tunnelboard-windows
           path: artifacts/windows
 
       # 【步骤 3】终极步骤：调用 GitHub 官方提供的发布插件，自动创建一个 Release 发布页。

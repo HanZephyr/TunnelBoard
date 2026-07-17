@@ -10,7 +10,7 @@ A comprehensive guide to getting started with TunnelBoard, covering its core fea
 ### [OpenClaw Remote Gateway + SSH Tunnels](./20260329-openclaw-remote-gateway-ssh-tunnel)
 How to pair OpenClaw’s remote gateway with TunnelBoard for stable local port forwarding, auto-reconnect, and a desktop-first workflow.
 
-### [Codex SSH Login on Remote Servers](./20260331-codex-ssh-login-with-loris-tunnel)
+### [Codex SSH Login on Remote Servers](./20260331-codex-ssh-login-with-tunnelboard)
 A practical guide for the `codex ssh` login callback issue on remote servers, based on issue #2668 and improved with TunnelBoard tunnel management.
 
 ## Upcoming Topics

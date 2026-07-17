@@ -1,6 +1,6 @@
 ---
 title: Codex SSH Login on Remote Servers — Use TunnelBoard for a Cleaner Port-Forward Workflow
-description: A practical codex ssh login guide for remote servers. Learn the SSH port-forward workaround from issue #2668 and how TunnelBoard makes the flow easier to run daily.
+description: A practical Codex SSH login guide for remote servers. Learn the SSH port-forward workaround from issue #2668 and how TunnelBoard makes the flow easier to run daily.
 ---
 
 # Codex SSH Login on Remote Servers — Use TunnelBoard for a Cleaner Port-Forward Workflow

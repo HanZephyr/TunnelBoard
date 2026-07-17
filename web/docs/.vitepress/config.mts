@@ -29,7 +29,7 @@ export default defineConfig({
                 text: 'Articles',
                 items: [
                     { text: 'All Articles', link: '/articles/' },
-                    { text: 'Codex SSH Login on Remote Servers', link: '/articles/20260331-codex-ssh-login-with-loris-tunnel' },
+                    { text: 'Codex SSH Login on Remote Servers', link: '/articles/20260331-codex-ssh-login-with-tunnelboard' },
                     { text: 'OpenClaw + SSH Tunnels', link: '/articles/20260329-openclaw-remote-gateway-ssh-tunnel' },
                 ]
             }

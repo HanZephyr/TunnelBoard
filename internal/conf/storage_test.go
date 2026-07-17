@@ -9,7 +9,7 @@ import (
 )
 
 func TestStorage_LoadUpdate(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "loris-test-*")
+	tmpDir, err := os.MkdirTemp("", "tunnelboard-test-*")
 	if err != nil {
 		t.Fatal(err)
 	}
