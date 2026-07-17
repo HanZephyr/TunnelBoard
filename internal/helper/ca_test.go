@@ -1,0 +1,80 @@
+package helper_test
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
+	"math/big"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/HanZephyr/TunnelBoard/internal/helper"
+)
+
+// makeSelfSignedCA 现场生成一张自签 CA 证书（DER 编码），CN 由调用方指定。
+func makeSelfSignedCA(t *testing.T, commonName string) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	return der
+}
+
+// sha256Hex 返回小写十六进制 SHA-256 指纹，与协议声明格式一致。
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+// 指纹匹配且 CN 含 TunnelBoard → 通过。
+func TestValidateTunnelBoardCAAcceptsTunnelBoardCA(t *testing.T) {
+	der := makeSelfSignedCA(t, "TunnelBoard Local CA")
+	if err := helper.ValidateTunnelBoardCA(der, sha256Hex(der)); err != nil {
+		t.Fatalf("err = %v, want nil", err)
+	}
+}
+
+// 指纹不匹配 → 拒绝（错误区分于 CN 问题）。
+func TestValidateTunnelBoardCARejectsFingerprintMismatch(t *testing.T) {
+	der := makeSelfSignedCA(t, "TunnelBoard Local CA")
+	err := helper.ValidateTunnelBoardCA(der, strings.Repeat("0", 64))
+	if err == nil || !strings.Contains(err.Error(), "mismatch") {
+		t.Fatalf("err = %v, want SHA-256 mismatch error", err)
+	}
+}
+
+// CN 不含 TunnelBoard（即使指纹匹配）→ 拒绝。
+func TestValidateTunnelBoardCARejectsForeignCN(t *testing.T) {
+	der := makeSelfSignedCA(t, "Some Other Root CA")
+	err := helper.ValidateTunnelBoardCA(der, sha256Hex(der))
+	if err == nil || !strings.Contains(err.Error(), "TunnelBoard") {
+		t.Fatalf("err = %v, want CN rejection mentioning TunnelBoard", err)
+	}
+}
+
+// DER 损坏无法解析 → 拒绝。
+func TestValidateTunnelBoardCARejectsCorruptDER(t *testing.T) {
+	broken := []byte("not a certificate")
+	err := helper.ValidateTunnelBoardCA(broken, sha256Hex(broken))
+	if err == nil || !strings.Contains(err.Error(), "parse") {
+		t.Fatalf("err = %v, want parse error", err)
+	}
+}
