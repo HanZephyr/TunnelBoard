@@ -90,6 +90,7 @@
             "noFoldersHint": "还没有文件夹，请先创建文件夹。",
             "localHost": "本地地址",
             "localPort": "本地端口",
+            "portConflict": "端口 {port} 在本机已被占用。",
             "remoteHost": "远端地址",
             "remotePort": "远端端口",
             "autoStart": "随应用自动启动",

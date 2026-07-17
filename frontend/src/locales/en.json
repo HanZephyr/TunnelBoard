@@ -90,6 +90,7 @@
             "noFoldersHint": "No folders yet. Create a folder first.",
             "localHost": "Local Host",
             "localPort": "Local Port",
+            "portConflict": "Port {port} is already in use on this machine.",
             "remoteHost": "Remote Host",
             "remotePort": "Remote Port",
             "autoStart": "Auto start with app",

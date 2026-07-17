@@ -12,6 +12,7 @@ import (
 
 	"github.com/HanZephyr/TunnelBoard/internal/autostart"
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
+	"github.com/HanZephyr/TunnelBoard/internal/forward"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 	"github.com/HanZephyr/TunnelBoard/internal/traytext"
 	"github.com/HanZephyr/TunnelBoard/internal/uilocale"
@@ -284,6 +285,14 @@ func (a *App) GetRuntimeSnapshot() ([]biz.RuntimeStatus, error) {
 		return nil, err
 	}
 	return a.runtime.Snapshot(), nil
+}
+
+// CheckLocalPortAvailable 预检本地监听端口是否可绑定，供编辑 Forward 时尽早提示端口冲突。
+func (a *App) CheckLocalPortAvailable(host string, port int) error {
+	if err := a.ensureReady(); err != nil {
+		return err
+	}
+	return forward.CheckLocalPortAvailable(host, port)
 }
 
 // HostKeyStatusResult 是 SSH 主机指纹核验结果（绑定层单返回值包装）。

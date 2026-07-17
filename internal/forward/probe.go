@@ -133,3 +133,18 @@ func isPortForwardDenied(err error) bool {
 		strings.Contains(msg, "forwarding disabled") ||
 		strings.Contains(msg, "port forwarding disabled")
 }
+
+// CheckLocalPortAvailable 通过实际绑定预检本地监听端口；可绑定则立即释放并返回 nil。
+// 空 host 按 127.0.0.1 处理（与 LocalForward 启动时的回退一致）。
+func CheckLocalPortAvailable(host string, port int) error {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s failed: %w", addr, err)
+	}
+	return ln.Close()
+}

@@ -1,6 +1,7 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { CheckLocalPortAvailable } from '../../../wailsjs/go/main/App'
 
 const props = defineProps({
   show: {
@@ -69,6 +70,29 @@ function removeChainHost(index) {
   if (index < 0 || index >= props.form.chainHostIds.length) return
   props.form.chainHostIds.splice(index, 1)
 }
+
+// 端口冲突预警：编辑时经实际绑定预检本地监听端口（remote 模式在服务端绑定，不做本机预检）。
+const portWarning = ref('')
+let portCheckTimer = null
+watch(
+  () => [props.show, props.form.mode, props.form.localHost, props.form.localPort],
+  () => {
+    portWarning.value = ''
+    if (portCheckTimer) clearTimeout(portCheckTimer)
+    if (!props.show || props.form.mode === 'remote') return
+    const port = Number(props.form.localPort)
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return
+    portCheckTimer = setTimeout(async () => {
+      try {
+        await CheckLocalPortAvailable(String(props.form.localHost || ''), port)
+        portWarning.value = ''
+      } catch (_) {
+        portWarning.value = t('forwards.modal.portConflict', { port })
+      }
+    }, 400)
+  },
+  { immediate: true }
+)
 </script>
 
 <template>
@@ -184,6 +208,7 @@ function removeChainHost(index) {
               max="65535"
               class="form-control"
             />
+            <div v-if="portWarning" class="field-note text-warning">{{ portWarning }}</div>
           </div>
 
           <template v-if="form.mode !== 'dynamic'">

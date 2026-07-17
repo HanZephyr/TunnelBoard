@@ -90,6 +90,7 @@
             "noFoldersHint": "還沒有資料夾，請先建立資料夾。",
             "localHost": "本機位址",
             "localPort": "本機連接埠",
+            "portConflict": "連接埠 {port} 在本機已被佔用。",
             "remoteHost": "遠端位址",
             "remotePort": "遠端連接埠",
             "autoStart": "隨應用程式自動啟動",
