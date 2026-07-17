@@ -27,6 +27,7 @@ type App struct {
 	ctx     context.Context
 	store   *vault.Store
 	catalog *biz.CatalogBiz
+	runtime *biz.RuntimeBiz
 	updater *updater.Service
 	initErr error
 
@@ -47,6 +48,7 @@ func NewApp() *App {
 	return &App{
 		store:   store,
 		catalog: biz.NewCatalogBiz(store),
+		runtime: biz.NewRuntimeBiz(store),
 		updater: updater.NewDefaultService(),
 	}
 }
@@ -56,19 +58,32 @@ func (a *App) startup(ctx context.Context) {
 	slog.Info("app startup")
 	if err := a.ensureReady(); err == nil {
 		a.syncAutoRunWithConfig()
+		go func() {
+			if errs, err := a.runtime.StartAutoStart(); err != nil {
+				slog.Error("auto start forwards failed", "err", err)
+			} else {
+				for id, startErr := range errs {
+					slog.Error("auto start forward failed", "forward_id", id, "err", startErr)
+				}
+			}
+		}()
 	}
 }
 
+// shutdown 在显式退出时停止全部 Forward（CONTEXT.md：显式退出才停止 Forward 与 Caddy）。
 func (a *App) shutdown(ctx context.Context) {
 	_ = ctx
 	slog.Info("app shutdown")
+	if a.runtime != nil {
+		a.runtime.Shutdown()
+	}
 }
 
 func (a *App) ensureReady() error {
 	if a.initErr != nil {
 		return a.initErr
 	}
-	if a.store == nil || a.catalog == nil {
+	if a.store == nil || a.catalog == nil || a.runtime == nil {
 		return fmt.Errorf("app is not initialized")
 	}
 	return nil
@@ -187,20 +202,122 @@ func (a *App) SaveSSHHost(host model.SSHHost) (model.SSHHost, error) {
 	return a.catalog.SaveSSHHost(host)
 }
 
-// SaveForward 新建（ID 为 0）或更新 Forward。
+// SaveForward 新建（ID 为 0）或更新 Forward；运行中的 Forward 必须先停止再编辑。
 func (a *App) SaveForward(forward model.Forward) (model.Forward, error) {
 	if err := a.ensureReady(); err != nil {
 		return model.Forward{}, err
+	}
+	if forward.ID != 0 {
+		if st, ok := a.runtime.Status(forward.ID); ok && (st.Status == biz.RuntimeStateRunning || st.Status == biz.RuntimeStateReconnecting) {
+			return model.Forward{}, fmt.Errorf("forward %d is running, stop it before editing", forward.ID)
+		}
 	}
 	return a.catalog.SaveForward(forward)
 }
 
 // DeleteSelection 批量删除文件夹、SSH 主机与 Forward；非空文件夹需 CascadeFolders。
+// 涉及的运行中 Forward 先停止（含级联删除文件夹内的）。
 func (a *App) DeleteSelection(sel biz.DeleteSelection) error {
 	if err := a.ensureReady(); err != nil {
 		return err
 	}
+	for _, id := range sel.ForwardIDs {
+		_ = a.runtime.Stop(id)
+	}
+	if sel.CascadeFolders && len(sel.FolderIDs) > 0 {
+		data, err := a.catalog.Data()
+		if err != nil {
+			return err
+		}
+		deletedFolders := map[int]bool{}
+		for _, fid := range sel.FolderIDs {
+			deletedFolders[fid] = true
+		}
+		for _, f := range data.Folders {
+			if deletedFolders[f.ParentID] {
+				deletedFolders[f.ID] = true
+			}
+		}
+		for _, fw := range data.Forwards {
+			if deletedFolders[fw.FolderID] {
+				_ = a.runtime.Stop(fw.ID)
+			}
+		}
+	}
 	return a.catalog.DeleteSelection(sel)
+}
+
+// StartForward 启动单条 Forward 的运行时。
+func (a *App) StartForward(id int) error {
+	if err := a.ensureReady(); err != nil {
+		return err
+	}
+	return a.runtime.Start(id)
+}
+
+// StopForward 停止单条 Forward；手动停止不触发自动重连。
+func (a *App) StopForward(id int) error {
+	if err := a.ensureReady(); err != nil {
+		return err
+	}
+	return a.runtime.Stop(id)
+}
+
+// StartManyForwards 批量启动 Forward；返回启动失败的 id → 错误信息（成功项不出现）。
+func (a *App) StartManyForwards(ids []int) (map[int]string, error) {
+	if err := a.ensureReady(); err != nil {
+		return nil, err
+	}
+	errs := a.runtime.StartMany(ids)
+	out := make(map[int]string, len(errs))
+	for id, err := range errs {
+		if err != nil {
+			out[id] = err.Error()
+		}
+	}
+	return out, nil
+}
+
+// GetRuntimeSnapshot 返回全部 Forward 的运行时状态快照。
+func (a *App) GetRuntimeSnapshot() ([]biz.RuntimeStatus, error) {
+	if err := a.ensureReady(); err != nil {
+		return nil, err
+	}
+	return a.runtime.Snapshot(), nil
+}
+
+// HostKeyStatusResult 是 SSH 主机指纹核验结果（绑定层单返回值包装）。
+type HostKeyStatusResult struct {
+	Entry  model.HostKey    `json:"entry"`
+	Status model.TrustStatus `json:"status"`
+}
+
+// GetHostKeyStatus 查询指定端点指纹的信任状态（unknown/trusted/mismatch）。
+func (a *App) GetHostKeyStatus(host string, port int, fingerprint string) (HostKeyStatusResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return HostKeyStatusResult{}, err
+	}
+	entry, status, err := a.catalog.HostKeyStatus(host, port, fingerprint)
+	if err != nil {
+		return HostKeyStatusResult{}, err
+	}
+	return HostKeyStatusResult{Entry: entry, Status: status}, nil
+}
+
+// EnrollHostKey 在用户首次确认后保存端点指纹。
+func (a *App) EnrollHostKey(host string, port int, keyType, fingerprint string) (model.HostKey, error) {
+	if err := a.ensureReady(); err != nil {
+		return model.HostKey{}, err
+	}
+	return a.catalog.EnrollHostKey(host, port, keyType, fingerprint)
+}
+
+// ReplaceHostKey 在用户显式确认指纹变更后替换端点指纹。
+func (a *App) ReplaceHostKey(host string, port int, keyType, fingerprint string) (model.HostKey, error) {
+	if err := a.ensureReady(); err != nil {
+		return model.HostKey{}, err
+	}
+	return a.catalog.ReplaceHostKey(host, port, keyType, fingerprint)
 }
 
 // CheckForUpdates 查询 GitHub Releases 是否有新版本（只读检查，不做自更新）。
