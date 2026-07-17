@@ -67,7 +67,7 @@ func NewApp() *App {
 		catalog: catalog,
 		runtime: biz.NewRuntimeBiz(store),
 		router: biz.NewRouterBiz(
-			store, catalog, helper.NewClient(), caddyAdapter,
+			store, catalog, helper.NewOperator(), caddyAdapter,
 			helper.SystemHostsPath(), filepath.Join(store.Dir(), "caddy.json"),
 		),
 		backup:  biz.NewBackupBiz(store),

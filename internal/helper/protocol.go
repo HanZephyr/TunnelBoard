@@ -57,37 +57,47 @@ type Environment struct {
 // HandleRequest 校验并分发一个请求。校验失败一律返回 OK=false 且不产生任何副作用：
 // 所有参数校验先于 Environment 注入函数与文件写入执行。
 func HandleRequest(req Request, env Environment) Response {
+	if err := ValidateRequest(req); err != nil {
+		return fail(err)
+	}
 	switch req.Op {
 	case OpPing:
 		return Response{OK: true, Version: env.Version}
 	case OpApplyManagedHosts:
-		if err := validateHostEntries(req.Hosts); err != nil {
-			return fail(err)
-		}
 		return done(WriteManagedHosts(env.HostsPath, req.Hosts))
 	case OpRemoveManagedHosts:
 		return done(WriteManagedHosts(env.HostsPath, nil))
 	case OpTrustLocalCA:
-		if err := validateSHA256Hex(req.CertSHA256); err != nil {
-			return fail(err)
-		}
-		if len(req.CertDER) == 0 {
-			return fail(errors.New("helper: empty certificate DER"))
-		}
-		if len(req.CertDER) > maxCertDERBytes {
-			return fail(fmt.Errorf("helper: certificate DER too large: %d > %d bytes", len(req.CertDER), maxCertDERBytes))
-		}
-		if err := ValidateTunnelBoardCA(req.CertDER, req.CertSHA256); err != nil {
-			return fail(err)
-		}
 		return done(env.TrustCA(req.CertDER, req.CertSHA256))
 	case OpUntrustLocalCA:
-		if err := validateSHA256Hex(req.CertSHA256); err != nil {
-			return fail(err)
-		}
 		return done(env.UntrustCA(req.CertSHA256))
 	default:
 		return fail(fmt.Errorf("helper: unknown op %q", req.Op))
+	}
+}
+
+// ValidateRequest 校验请求的操作与全部参数；零副作用，供服务端分发与本地直连客户端共用。
+func ValidateRequest(req Request) error {
+	switch req.Op {
+	case OpPing, OpRemoveManagedHosts:
+		return nil
+	case OpApplyManagedHosts:
+		return validateHostEntries(req.Hosts)
+	case OpTrustLocalCA:
+		if err := validateSHA256Hex(req.CertSHA256); err != nil {
+			return err
+		}
+		if len(req.CertDER) == 0 {
+			return errors.New("helper: empty certificate DER")
+		}
+		if len(req.CertDER) > maxCertDERBytes {
+			return fmt.Errorf("helper: certificate DER too large: %d > %d bytes", len(req.CertDER), maxCertDERBytes)
+		}
+		return ValidateTunnelBoardCA(req.CertDER, req.CertSHA256)
+	case OpUntrustLocalCA:
+		return validateSHA256Hex(req.CertSHA256)
+	default:
+		return fmt.Errorf("helper: unknown op %q", req.Op)
 	}
 }
 
