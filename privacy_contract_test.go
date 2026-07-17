@@ -26,7 +26,14 @@ func TestFrontendDoesNotBootstrapTelemetry(t *testing.T) {
 	}
 }
 
-func TestOnlyUpdaterOwnsAnHTTPClient(t *testing.T) {
+// httpClientAllowedDirs 是允许 import net/http 的包：updater 负责唯一的出站请求（GitHub 更新检查）；
+// caddy 仅访问 127.0.0.1:2019 的本地 admin API（回环 IPC，非网络出站）。
+var httpClientAllowedDirs = map[string]bool{
+	"internal/updater": true,
+	"internal/caddy":   true,
+}
+
+func TestHTTPClientRestrictedToAllowlist(t *testing.T) {
 	err := filepath.WalkDir("internal", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -38,7 +45,7 @@ func TestOnlyUpdaterOwnsAnHTTPClient(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if strings.Contains(string(data), `"net/http"`) && filepath.ToSlash(filepath.Dir(path)) != "internal/updater" {
+		if strings.Contains(string(data), `"net/http"`) && !httpClientAllowedDirs[filepath.ToSlash(filepath.Dir(path))] {
 			t.Errorf("non-update HTTP client found in %s", path)
 		}
 		return nil
