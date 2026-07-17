@@ -7,19 +7,10 @@ import {
   CreateTunnel,
   DeleteJumper,
   DeleteTunnel,
-  DebugJumperFailure as DebugJumperFailureAPI,
-  DebugSavedTunnelFailure as DebugSavedTunnelFailureAPI,
-  DebugTunnelFailure as DebugTunnelFailureAPI,
-  GetAutoRunEnabled,
-  GetLicenseStatus as GetLicenseStatusAPI,
   GetSSHConfigImportSources,
-  GetStoredLicenseCode,
   GetState,
   LoadSSHConfigJumpersByPath,
-  OpenReportEmail,
-  RedeemLicenseCode as RedeemLicenseCodeAPI,
   SaveUILocale,
-  SetAutoRunEnabled,
   TestJumperConnection as TestJumperConnectionAPI,
   TestTunnelConnection as TestTunnelConnectionAPI,
   ToggleTunnel,
@@ -27,7 +18,6 @@ import {
   UpdateTunnel
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL } from '../wailsjs/runtime/runtime'
-import { trackAppStart, trackPageView, trackButtonClick, trackModalOpen, trackModalClose, trackTunnelAction, trackJumperAction } from './utils/analytics'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppTopHeader from './components/layout/AppTopHeader.vue'
 import OverviewPage from './components/pages/OverviewPage.vue'
@@ -35,13 +25,11 @@ import JumpersPage from './components/pages/JumpersPage.vue'
 import TunnelsPage from './components/pages/TunnelsPage.vue'
 import LogsPage from './components/pages/LogsPage.vue'
 import ConfigPage from './components/pages/ConfigPage.vue'
-import AIDebugModal from './components/common/AIDebugModal.vue'
 import JumperModal from './components/modals/JumperModal.vue'
 import ImportJumperModal from './components/modals/ImportJumperModal.vue'
 import TunnelModal from './components/modals/TunnelModal.vue'
 import ImportTunnelModal from './components/modals/ImportTunnelModal.vue'
 import './styles/app-shell.css'
-import { AI_DEBUG_ENABLED } from './config/features'
 
 const { t, locale } = useI18n()
 
@@ -65,8 +53,8 @@ const authOptions = computed(() => [
   { value: 'ssh_agent', label: t('app.options.auth.sshAgent') }
 ])
 
-const savedTheme = typeof window !== 'undefined' ? window.localStorage.getItem('lt.theme') : null
-const savedSidebarCollapsed = typeof window !== 'undefined' ? window.localStorage.getItem('lt.sidebar.collapsed') : null
+const savedTheme = typeof window !== 'undefined' ? window.localStorage.getItem('tunnelboard.theme') : null
+const savedSidebarCollapsed = typeof window !== 'undefined' ? window.localStorage.getItem('tunnelboard.sidebar.collapsed') : null
 const theme = ref(savedTheme === 'dark' ? 'dark' : 'light')
 const sidebarCollapsed = ref(savedSidebarCollapsed === '1')
 const activePage = ref('overview')
@@ -77,7 +65,6 @@ const releasePageUrl = ref(DEFAULT_RELEASES_PAGE_URL)
 const showOverviewActive = ref(true)
 const showOverviewActivity = ref(true)
 const isCheckingUpdates = ref(false)
-const isRefreshingLicenseStatus = ref(false)
 const updateCheckDialog = reactive({
   visible: false,
   mode: 'idle',
@@ -92,17 +79,6 @@ const appMeta = reactive({
   version: '1.0.3.0'
 })
 const hasNewVersion = ref(false)
-const proLicense = reactive({
-  isPro: false,
-  expiresAt: '',
-  isLifetime: false,
-  code: ''
-})
-const LIFETIME_DURATION_DAYS = 36500
-const AI_REPORT_SUPPORT_EMAIL = 'admin@lorisdev.cc'
-const AI_REPORT_SUBJECT = '[Loris Tunnel] Report Inappropriate AI Debug Content'
-const AI_REPORT_MAX_FIELD_LEN = 800
-
 watchEffect(() => {
   if (typeof document !== 'undefined') {
     document.documentElement.setAttribute('data-theme', theme.value)
@@ -112,13 +88,13 @@ watchEffect(() => {
 
 watch(theme, (newTheme) => {
   if (typeof window !== 'undefined') {
-    window.localStorage.setItem('lt.theme', newTheme)
+    window.localStorage.setItem('tunnelboard.theme', newTheme)
   }
 })
 
 watch(sidebarCollapsed, (collapsed) => {
   if (typeof window !== 'undefined') {
-    window.localStorage.setItem('lt.sidebar.collapsed', collapsed ? '1' : '0')
+    window.localStorage.setItem('tunnelboard.sidebar.collapsed', collapsed ? '1' : '0')
   }
 })
 
@@ -139,10 +115,6 @@ watch(configMessage, (message) => {
     showConfigToast.value = false
     configToastTimer = null
   }, CONFIG_TOAST_DURATION_MS)
-})
-
-watch(activePage, (pageKey) => {
-  trackPageView(pageKey, appMeta.version)
 })
 
 const jumpers = ref([])
@@ -192,26 +164,14 @@ const actionDialog = reactive({
   secondaryButtonClass: 'btn-outline-primary',
   onSecondary: null
 })
-const redeemDialog = reactive({
-  visible: false,
-  code: '',
-  error: '',
-  submitting: false
-})
 const jumperTest = reactive({
   status: 'idle',
-  message: '',
-  debuggable: false
+  message: ''
 })
 const tunnelTest = reactive({
   status: 'idle',
-  message: '',
-  debuggable: false
+  message: ''
 })
-const jumperAiDebug = reactive(defaultAIDebugState())
-const tunnelAiDebug = reactive(defaultAIDebugState())
-const tunnelErrorAiDebugStates = reactive({})
-const selectedAIDebugTunnel = ref(null)
 
 const JUMPER_LIMITS = {
   name: 20,
@@ -229,7 +189,6 @@ const JUMPER_LIMITS = {
 const TUNNEL_LIMITS = {
   name: 20
 }
-const FREE_PLAN_RUNNING_LIMIT = 3
 
 const currentPage = computed(() => pages.value.find((page) => page.key === activePage.value))
 const totalTunnels = computed(() => tunnels.value.length)
@@ -240,19 +199,6 @@ const filteredLogs = computed(() => {
   if (selectedLogLevel.value === 'all') return logs.value
   return logs.value.filter((log) => log.level === selectedLogLevel.value)
 })
-const selectedAIDebugTunnelState = computed(() => {
-  if (!selectedAIDebugTunnel.value?.id) return defaultAIDebugState()
-  return ensureTunnelErrorAIDebugState(selectedAIDebugTunnel.value.id)
-})
-const selectedAIDebugTunnelTitle = computed(() => {
-  const name = selectedAIDebugTunnel.value?.name || t('app.aiDebug.savedTunnelFallback')
-  return t('app.aiDebug.modalTitle', { name })
-})
-const selectedAIDebugTunnelSubtitle = computed(() => {
-  if (!selectedAIDebugTunnel.value) return ''
-  return getTunnelJumperLabel(selectedAIDebugTunnel.value)
-})
-
 const filteredJumpers = computed(() => {
   const query = jumperSearchQuery.value.trim().toLowerCase()
   if (!query) return jumpers.value
@@ -289,13 +235,6 @@ const jumperNeedsKeyFile = computed(() => authNeedsKeyFile(jumperForm.authType))
 const inlineJumperNeedsPassword = computed(() => authNeedsPassword(inlineJumperForm.authType))
 const inlineJumperShowsPassword = computed(() => authShowsPassword(inlineJumperForm.authType))
 const inlineJumperNeedsKeyFile = computed(() => authNeedsKeyFile(inlineJumperForm.authType))
-const isPro = computed(() => proLicense.isPro)
-const proExpiryLabel = computed(() => {
-  if (!proLicense.isPro) return '--'
-  if (proLicense.isLifetime) return t('config.lifetime')
-  return formatDateTime(proLicense.expiresAt)
-})
-
 function defaultJumperForm() {
   return {
     name: '',
@@ -346,30 +285,8 @@ function defaultInlineJumperForm() {
   }
 }
 
-function defaultAIDebugState() {
-  return {
-    status: 'idle',
-    error: '',
-    result: null
-  }
-}
-
 function nowLabel() {
   return new Date().toLocaleString()
-}
-
-function formatDateTime(value) {
-  if (!value) return '--'
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return String(value)
-  return date.toLocaleDateString()
-}
-
-function applyLicenseState({ active = false, expire_time = null, is_lifetime = false, code = '' }) {
-  proLicense.isPro = !!active
-  proLicense.expiresAt = expire_time ? String(expire_time) : ''
-  proLicense.isLifetime = !!is_lifetime
-  proLicense.code = code ? String(code) : ''
 }
 
 function openExternalUrl(url) {
@@ -381,49 +298,6 @@ function openExternalUrl(url) {
       window.open(url, '_blank', 'noopener,noreferrer')
     }
   }
-}
-
-function toText(value) {
-  return String(value ?? '').trim()
-}
-
-function clipText(value, limit = AI_REPORT_MAX_FIELD_LEN) {
-  const text = toText(value)
-  if (limit <= 0 || text.length <= limit) return text
-  return `${text.slice(0, limit)}...`
-}
-
-async function writeTextToClipboard(text) {
-  const value = String(text ?? '')
-  if (!value) return false
-
-  if (navigator?.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value)
-      return true
-    } catch (_) {
-      // fallback below
-    }
-  }
-
-  if (typeof document === 'undefined') return false
-  const textarea = document.createElement('textarea')
-  textarea.value = value
-  textarea.setAttribute('readonly', '')
-  textarea.style.position = 'fixed'
-  textarea.style.left = '-9999px'
-  document.body.appendChild(textarea)
-  textarea.select()
-  textarea.setSelectionRange(0, textarea.value.length)
-  let copied = false
-  try {
-    copied = document.execCommand('copy')
-  } catch (_) {
-    copied = false
-  } finally {
-    document.body.removeChild(textarea)
-  }
-  return copied
 }
 
 function nameUnits(text) {
@@ -540,98 +414,12 @@ function errorMessage(err, fallback = 'Operation failed.') {
   return fallback
 }
 
-function aiDebugErrorMessage(err, fallback = 'AI Debug failed.') {
-  const message = errorMessage(err, fallback)
-  if (/quota exceeded|daily quota/i.test(message)) {
-    return t('app.aiDebug.quotaExceeded', { freeLimit: 10, proLimit: 200 })
-  }
-  if (/AI_PROVIDER_BUSY|rate limited|rate_limit_exceeded/i.test(message)) {
-    return t('app.aiDebug.providerBusy')
-  }
-  if (/HTTP 5\d\d|cannot connect|connection refused|timeout|not configured|provider request failed|backend/i.test(message)) {
-    return t('app.aiDebug.unavailable')
-  }
-  return message
-}
-
-function buildAIDebugReportBody({ targetType, result }) {
-  const lines = [
-    'Please describe why this AI output is inappropriate:',
-    '',
-    '[Your report]',
-    '',
-    '--- Context (auto-filled) ---',
-    'Feature: AI Debug',
-    `Target Type: ${clipText(targetType || 'unknown', 40)}`,
-    `App Version: ${clipText(appMeta.version, 64)}`,
-    `OS: ${clipText(typeof navigator !== 'undefined' ? navigator.platform || 'unknown' : 'unknown', 80)}`,
-    `UI Locale: ${clipText(locale.value || 'en', 24)}`,
-    `Timestamp (UTC): ${new Date().toISOString()}`,
-    '',
-    '[AI Output]',
-    `Reason: ${clipText(result?.reason)}`,
-    `Summary: ${clipText(result?.summary)}`,
-    `Steps: ${clipText(Array.isArray(result?.steps) ? result.steps.join(' | ') : '')}`
-  ]
-  return lines.join('\n').trim()
-}
-
-async function showAIDebugReportFallbackDialog(reportBody) {
-  openActionDialog({
-    mode: 'alert',
-    message: t('app.aiDebug.reportOpenFailed'),
-    confirmButtonClass: 'btn-primary',
-    confirmLabel: t('app.aiDebug.copyReportBody'),
-    onConfirm: async () => {
-      const copied = await writeTextToClipboard(reportBody)
-      setConfigMessage(copied ? t('app.aiDebug.copyBodyDone') : t('app.aiDebug.copyFailed'))
-    },
-    secondaryLabel: t('app.aiDebug.copySupportEmail'),
-    secondaryButtonClass: 'btn-outline-secondary',
-    onSecondary: async () => {
-      const copied = await writeTextToClipboard(AI_REPORT_SUPPORT_EMAIL)
-      setConfigMessage(copied ? t('app.aiDebug.copyEmailDone') : t('app.aiDebug.copyFailed'))
-    }
-  })
-}
-
-async function reportAIDebugContent(targetType, state) {
-  const result = state?.result
-  if (!result) return
-
-  const body = buildAIDebugReportBody({ targetType, result })
-  try {
-    const openResult = await OpenReportEmail({
-      subject: AI_REPORT_SUBJECT,
-      body
-    })
-    if (!openResult?.success) {
-      await showAIDebugReportFallbackDialog(body)
-      return
-    }
-    setConfigMessage(t('app.aiDebug.reportDraftOpened'))
-  } catch (_) {
-    await showAIDebugReportFallbackDialog(body)
-  }
-}
-
 async function loadStateFromBackend(options = {}) {
   const { silent = false } = options
   try {
     const state = await GetState()
     jumpers.value = Array.isArray(state?.jumpers) ? state.jumpers : []
     const backendTunnels = (Array.isArray(state?.tunnels) ? state.tunnels : []).map(normalizeTunnelFromBackend)
-    const validTunnelIds = new Set(backendTunnels.map((item) => String(item.id)))
-    Object.keys(tunnelErrorAiDebugStates).forEach((key) => {
-      if (!validTunnelIds.has(key)) {
-        delete tunnelErrorAiDebugStates[key]
-      }
-    })
-    backendTunnels.forEach((item) => {
-      if (item.status !== 'error' || !item.lastError) {
-        delete tunnelErrorAiDebugStates[String(item.id)]
-      }
-    })
 
     if (pendingToggleTunnelIds.size === 0) {
       tunnels.value = backendTunnels
@@ -670,7 +458,6 @@ function switchPage(pageKey) {
 
 function setThemeBySwitch(enabled) {
   theme.value = enabled ? 'dark' : 'light'
-  trackButtonClick('theme_switch', 'config', { theme: theme.value })
   logEvent('info', `Theme switched to ${theme.value}`)
 }
 
@@ -686,54 +473,9 @@ function hideConfigToast() {
   }
 }
 
-async function refreshLicenseStatus(options = {}) {
-  const { silent = false } = options
-  try {
-    const status = await GetLicenseStatusAPI()
-    applyLicenseState(status || {})
-    if (!silent) {
-      if (proLicense.isPro) {
-        configMessage.value = t('config.messages.licenseActive', { expiry: proExpiryLabel.value })
-        logEvent('info', `License status refreshed: active (${proExpiryLabel.value})`)
-      } else {
-        configMessage.value = t('config.messages.licenseInactive')
-        logEvent('info', 'License status refreshed: inactive')
-      }
-    }
-    return true
-  } catch (err) {
-    if (!silent) {
-      const message = errorMessage(err, 'Failed to query license status from Wails backend.')
-      configMessage.value = message
-      logEvent('error', message)
-    }
-    return false
-  }
-}
-
-async function refreshLicenseStatusFromConfig() {
-  if (isRefreshingLicenseStatus.value) return
-  isRefreshingLicenseStatus.value = true
-  try {
-    await refreshLicenseStatus()
-  } finally {
-    isRefreshingLicenseStatus.value = false
-  }
-}
-
-async function loadStoredLicenseCode() {
-  try {
-    const code = String(await GetStoredLicenseCode() || '').trim()
-    if (code) proLicense.code = code
-  } catch (_) {
-    // local display cache is optional
-  }
-}
-
 async function checkForUpdates() {
   if (isCheckingUpdates.value) return
   isCheckingUpdates.value = true
-  trackButtonClick('check_updates', 'config')
   try {
     const result = await CheckForUpdatesAPI(appMeta.version)
 
@@ -792,17 +534,6 @@ function closeUpdateCheckDialog() {
   updateCheckDialog.visible = false
 }
 
-async function openProUpgrade() {
-  await refreshLicenseStatus({ silent: true })
-
-  if (proLicense.isPro) {
-    configMessage.value = t('config.messages.proActive', { expiry: proExpiryLabel.value })
-    logEvent('info', `Checked Pro expiry (${proExpiryLabel.value})`)
-    return
-  }
-  openRedeemDialog()
-}
-
 function resetJumperValidation() {
   jumperValidationError.value = ''
 }
@@ -814,45 +545,11 @@ function resetInlineJumperValidation() {
 function resetJumperTest() {
   jumperTest.status = 'idle'
   jumperTest.message = ''
-  jumperTest.debuggable = false
 }
 
 function resetTunnelTest() {
   tunnelTest.status = 'idle'
   tunnelTest.message = ''
-  tunnelTest.debuggable = false
-}
-
-function resetAIDebugState(state) {
-  state.status = 'idle'
-  state.error = ''
-  state.result = null
-}
-
-function ensureTunnelErrorAIDebugState(tunnelId) {
-  const key = String(tunnelId)
-  if (!tunnelErrorAiDebugStates[key]) {
-    tunnelErrorAiDebugStates[key] = defaultAIDebugState()
-  }
-  return tunnelErrorAiDebugStates[key]
-}
-
-function setAIDebugLoading(state) {
-  state.status = 'analyzing'
-  state.error = ''
-  state.result = null
-}
-
-function setAIDebugResult(state, result) {
-  state.status = 'success'
-  state.error = ''
-  state.result = result || null
-}
-
-function setAIDebugError(state, message) {
-  state.status = 'error'
-  state.error = message
-  state.result = null
 }
 
 function buildTunnelPayloadForTest() {
@@ -946,9 +643,7 @@ function openNewJumper() {
   showJumperAdvanced.value = false
   resetJumperValidation()
   resetJumperTest()
-  resetAIDebugState(jumperAiDebug)
   showJumperModal.value = true
-  trackModalOpen('jumper_create', 'jumpers')
 }
 
 async function loadImportJumperSources() {
@@ -985,7 +680,6 @@ async function loadImportJumpers() {
 
 function openImportJumper() {
   showImportJumperModal.value = true
-  trackModalOpen('jumper_import', 'jumpers')
   importJumperLoading.value = false
   importJumperError.value = ''
   importJumperHasLoaded.value = false
@@ -1010,9 +704,7 @@ function editJumper(jumper) {
   showJumperAdvanced.value = false
   resetJumperValidation()
   resetJumperTest()
-  resetAIDebugState(jumperAiDebug)
   showJumperModal.value = true
-  trackModalOpen('jumper_edit', 'jumpers', { jumper_name: jumper.name })
 }
 
 function fillJumperFormFromJumper(jumper, nameOverride = null) {
@@ -1039,7 +731,6 @@ function copyJumper(jumper) {
   showJumperAdvanced.value = false
   resetJumperValidation()
   resetJumperTest()
-  resetAIDebugState(jumperAiDebug)
   showJumperModal.value = true
 }
 
@@ -1124,13 +815,11 @@ async function importJumpers(jumpersToImport) {
 
 async function testJumperConnection() {
   resetJumperValidation()
-  resetAIDebugState(jumperAiDebug)
   const payload = buildJumperPayload(jumperForm)
   const error = validateJumperPayload(payload)
   if (error) {
     jumperTest.status = 'error'
     jumperTest.message = error
-    jumperTest.debuggable = false
     return
   }
 
@@ -1141,12 +830,10 @@ async function testJumperConnection() {
     await TestJumperConnectionAPI(payload)
     jumperTest.status = 'success'
     jumperTest.message = 'Connection test passed.'
-    jumperTest.debuggable = false
     logEvent('info', `Connection test passed for jumper ${payload.name}`)
   } catch (err) {
     jumperTest.status = 'error'
     jumperTest.message = errorMessage(err)
-    jumperTest.debuggable = AI_DEBUG_ENABLED
     logEvent('error', `Connection test failed for jumper ${payload.name}: ${jumperTest.message}`)
   }
 }
@@ -1154,7 +841,6 @@ async function testJumperConnection() {
 async function testTunnelConnection() {
   resetInlineJumperValidation()
   tunnelValidationError.value = ''
-  resetAIDebugState(tunnelAiDebug)
 
   let inlinePayload = null
   let selectedJumperIds = normalizeJumperIdList(tunnelForm.jumperIds)
@@ -1165,7 +851,6 @@ async function testTunnelConnection() {
     if (inlineError) {
       tunnelTest.status = 'error'
       tunnelTest.message = `[Jumper] ${inlineError}`
-      tunnelTest.debuggable = false
       return
     }
   }
@@ -1173,7 +858,6 @@ async function testTunnelConnection() {
   if (!selectedJumperIds.length && !inlinePayload) {
     tunnelTest.status = 'error'
     tunnelTest.message = 'Please select at least one jumper.'
-    tunnelTest.debuggable = false
     return
   }
 
@@ -1183,13 +867,11 @@ async function testTunnelConnection() {
   if (!payload.name || !payload.localHost || !payload.localPort) {
     tunnelTest.status = 'error'
     tunnelTest.message = 'Please fill in required fields.'
-    tunnelTest.debuggable = false
     return
   }
   if (payload.mode !== 'dynamic' && (!payload.remoteHost || !payload.remotePort)) {
     tunnelTest.status = 'error'
     tunnelTest.message = 'Please fill in required remote host/port.'
-    tunnelTest.debuggable = false
     return
   }
 
@@ -1201,87 +883,12 @@ async function testTunnelConnection() {
     const latencyText = formatLatencyLabel(result?.latencyMs)
     tunnelTest.status = 'success'
     tunnelTest.message = t('app.modals.tunnel.testPassedWithLatency', { latency: latencyText })
-    tunnelTest.debuggable = false
     logEvent('info', `Connection test passed for tunnel ${payload.name}; latency=${latencyText}`)
   } catch (err) {
     tunnelTest.status = 'error'
     tunnelTest.message = errorMessage(err)
-    tunnelTest.debuggable = AI_DEBUG_ENABLED
     logEvent('error', `Connection test failed for tunnel ${payload.name}: ${tunnelTest.message}`)
   }
-}
-
-async function runJumperAIDebug() {
-  if (!AI_DEBUG_ENABLED || !jumperTest.debuggable || !jumperTest.message) return
-  const payload = buildJumperPayload(jumperForm)
-  setAIDebugLoading(jumperAiDebug)
-  try {
-    const result = await DebugJumperFailureAPI(payload, jumperTest.message, locale.value)
-    setAIDebugResult(jumperAiDebug, result)
-    logEvent('info', `AI Debug completed for jumper ${payload.name}`)
-  } catch (err) {
-    const message = aiDebugErrorMessage(err, 'AI Debug failed for this jumper.')
-    setAIDebugError(jumperAiDebug, message)
-    logEvent('error', message)
-  }
-}
-
-async function runTunnelAIDebug() {
-  if (!AI_DEBUG_ENABLED || !tunnelTest.debuggable || !tunnelTest.message) return
-
-  let inlinePayload = null
-  if (tunnelForm.appendNewJumper) {
-    inlinePayload = buildJumperPayload(inlineJumperForm)
-  }
-  const payload = buildTunnelPayloadForTest()
-  setAIDebugLoading(tunnelAiDebug)
-  try {
-    const result = await DebugTunnelFailureAPI(payload, inlinePayload, tunnelTest.message, locale.value)
-    setAIDebugResult(tunnelAiDebug, result)
-    logEvent('info', `AI Debug completed for tunnel ${payload.name}`)
-  } catch (err) {
-    const message = aiDebugErrorMessage(err, 'AI Debug failed for this tunnel.')
-    setAIDebugError(tunnelAiDebug, message)
-    logEvent('error', message)
-  }
-}
-
-async function runSavedTunnelAIDebug(tunnel) {
-  if (!AI_DEBUG_ENABLED || !tunnel?.id || !tunnel?.lastError) return
-  const state = ensureTunnelErrorAIDebugState(tunnel.id)
-  setAIDebugLoading(state)
-  try {
-    const result = await DebugSavedTunnelFailureAPI(Number(tunnel.id), String(tunnel.lastError || ''), locale.value)
-    setAIDebugResult(state, result)
-    logEvent('info', `AI Debug completed for tunnel ${tunnel.name}`)
-  } catch (err) {
-    const message = aiDebugErrorMessage(err, `AI Debug failed for tunnel ${tunnel?.name || ''}`.trim())
-    setAIDebugError(state, message)
-    logEvent('error', message)
-  }
-}
-
-function openSavedTunnelAIDebug(tunnel) {
-  if (!AI_DEBUG_ENABLED || !tunnel?.id || !tunnel?.lastError) return
-  selectedAIDebugTunnel.value = tunnel
-  const state = ensureTunnelErrorAIDebugState(tunnel.id)
-  if (state.status === 'idle') {
-    void runSavedTunnelAIDebug(tunnel)
-  }
-}
-
-function closeSavedTunnelAIDebug() {
-  selectedAIDebugTunnel.value = null
-}
-
-function retrySavedTunnelAIDebug() {
-  if (!selectedAIDebugTunnel.value) return
-  void runSavedTunnelAIDebug(selectedAIDebugTunnel.value)
-}
-
-function retestSavedTunnelFromAIDebug() {
-  if (!selectedAIDebugTunnel.value) return
-  void toggleTunnel(selectedAIDebugTunnel.value)
 }
 
 function openNewTunnel() {
@@ -1290,19 +897,16 @@ function openNewTunnel() {
   Object.assign(inlineJumperForm, defaultInlineJumperForm())
   resetInlineJumperValidation()
   resetTunnelTest()
-  resetAIDebugState(tunnelAiDebug)
   tunnelValidationError.value = ''
   tunnelForm.jumperIds = jumpers.value.length ? [jumpers.value[0].id] : []
   tunnelForm.nextJumperId = getNextTunnelJumperCandidate(tunnelForm.jumperIds)
   tunnelForm.appendNewJumper = jumpers.value.length === 0
   showTunnelModal.value = true
-  trackModalOpen('tunnel_create', 'tunnels')
 }
 
 function openImportTunnel() {
   importTunnelError.value = ''
   showImportTunnelModal.value = true
-  trackModalOpen('tunnel_import', 'tunnels')
 }
 
 function closeImportTunnel() {
@@ -1469,10 +1073,8 @@ function editTunnel(tunnel) {
   Object.assign(inlineJumperForm, defaultInlineJumperForm())
   resetInlineJumperValidation()
   resetTunnelTest()
-  resetAIDebugState(tunnelAiDebug)
   tunnelValidationError.value = ''
   showTunnelModal.value = true
-  trackModalOpen('tunnel_edit', 'tunnels', { tunnel_name: tunnel.name })
 }
 
 function addJumperToTunnelChain(jumperId) {
@@ -1529,7 +1131,6 @@ function copyTunnel(tunnel) {
   Object.assign(inlineJumperForm, defaultInlineJumperForm())
   resetInlineJumperValidation()
   resetTunnelTest()
-  resetAIDebugState(tunnelAiDebug)
   tunnelValidationError.value = ''
   showTunnelModal.value = true
 }
@@ -1596,27 +1197,6 @@ async function toggleTunnel(tunnel) {
     return
   }
 
-  const shouldStart = tunnel.status === 'stopped' || tunnel.status === 'error'
-  if (shouldStart && !proLicense.isPro) {
-    const runningCount = tunnels.value.filter((item) => item.status === 'running').length
-    const pendingStartCount = pendingToggleTunnelIds.size
-    if (runningCount + pendingStartCount >= FREE_PLAN_RUNNING_LIMIT) {
-      const message = t('config.messages.freePlanRunningLimit', { limit: FREE_PLAN_RUNNING_LIMIT })
-      openActionDialog({
-        mode: 'confirm',
-        message,
-        confirmButtonClass: 'btn-primary',
-        confirmLabel: t('app.sidebar.upgrade'),
-        onConfirm: async () => {
-          await openProUpgrade()
-        }
-      })
-      configMessage.value = message
-      logEvent('warn', message)
-      return
-    }
-  }
-
   const previousStatus = tunnel.status
   const previousLastError = tunnel.lastError || ''
   const shouldShowBusy = previousStatus === 'stopped' || previousStatus === 'error'
@@ -1644,7 +1224,6 @@ async function toggleTunnel(tunnel) {
     }
 
     const action = updated.status === 'running' ? 'started' : 'stopped'
-    trackTunnelAction(action, updated.name)
     if (updated.status === 'running') {
       // 计算启动耗时
       const duration = Date.now() - startTime
@@ -1708,52 +1287,7 @@ async function secondaryActionDialog() {
   }
 }
 
-function openRedeemDialog() {
-  redeemDialog.visible = true
-  redeemDialog.code = ''
-  redeemDialog.error = ''
-  redeemDialog.submitting = false
-}
-
-function closeRedeemDialog(force = false) {
-  if (redeemDialog.submitting && !force) return
-  redeemDialog.visible = false
-  redeemDialog.code = ''
-  redeemDialog.error = ''
-}
-
-async function submitRedeemDialog() {
-  const code = String(redeemDialog.code || '').trim()
-  if (!code) {
-    redeemDialog.error = t('config.messages.enterLicenseCode')
-    return
-  }
-
-  redeemDialog.error = ''
-  redeemDialog.submitting = true
-  try {
-    const redeemResult = await RedeemLicenseCodeAPI(code)
-    applyLicenseState({
-      active: redeemResult?.active,
-      expire_time: redeemResult?.expire_time,
-      is_lifetime: redeemResult?.added_days >= LIFETIME_DURATION_DAYS,
-      code: redeemResult?.code || code
-    })
-    configMessage.value = t('config.messages.licenseRedeemedWithExpiry', { expiry: proExpiryLabel.value })
-    logEvent('info', `License redeemed successfully (${proExpiryLabel.value})`)
-    closeRedeemDialog(true)
-  } catch (err) {
-    const message = errorMessage(err, 'Failed to redeem license code.')
-    redeemDialog.error = message
-    configMessage.value = message
-    logEvent('error', message)
-  } finally {
-    redeemDialog.submitting = false
-  }
-}
-
 function deleteTunnel(tunnel) {
-  trackTunnelAction('delete', tunnel.name)
   openActionDialog({
     mode: 'confirm',
     message: t('app.confirmations.deleteTunnel', { name: tunnel.name }),
@@ -1771,7 +1305,6 @@ function deleteTunnel(tunnel) {
 }
 
 function deleteJumper(jumper) {
-  trackJumperAction('delete', jumper.name)
   const inUseBy = tunnels.value.filter((item) => normalizeJumperIdList(item.jumperIds).includes(jumper.id))
   if (inUseBy.length > 0) {
     openActionDialog({
@@ -1799,25 +1332,11 @@ function deleteJumper(jumper) {
 }
 
 onMounted(async () => {
-  const platform = typeof navigator !== 'undefined' ? navigator.platform || 'unknown' : 'unknown'
-  trackAppStart(appMeta.version, platform)
   await loadStateFromBackend()
   try {
     await SaveUILocale(locale.value)
   } catch (_) {
     /* tray locale sync is best-effort */
-  }
-  await loadStoredLicenseCode()
-  const licenseStatusReady = await refreshLicenseStatus({ silent: true })
-  // If launch at login is on but user is not Pro or expired, disable it and show upgrade prompt
-  try {
-    const autoRunEnabled = await GetAutoRunEnabled()
-    if (licenseStatusReady && autoRunEnabled && !proLicense.isPro) {
-      configMessage.value = t('config.autoRunExpiredDisabled')
-      await SetAutoRunEnabled(false)
-    }
-  } catch (err) {
-    logEvent('error', errorMessage(err, 'Failed to check or reset launch-at-login (AutoRun).'))
   }
   stateSyncTimer = window.setInterval(syncStateSilently, STATE_SYNC_INTERVAL_MS)
   void checkForUpdatesSilently()
@@ -1859,12 +1378,9 @@ watch(
       :pages="pages"
       :active-page="activePage"
       :app-version="appMeta.version"
-      :is-pro="isPro"
-      :pro-expiry-label="proExpiryLabel"
       :has-new-version="hasNewVersion"
       :collapsed="sidebarCollapsed"
       @switch-page="switchPage"
-      @upgrade="openProUpgrade"
       @open-release-page="openReleasePage"
       @toggle-collapse="toggleSidebar"
     />
@@ -1911,15 +1427,12 @@ watch(
           :tunnels="filteredTunnels"
           :search-query="tunnelSearchQuery"
           :mode-options="modeOptions"
-          :tunnel-ai-debug-states="tunnelErrorAiDebugStates"
-          :ai-debug-enabled="AI_DEBUG_ENABLED"
           :get-tunnel-jumper-label="getTunnelJumperLabel"
           @update-search-query="tunnelSearchQuery = $event"
           @toggle-tunnel="toggleTunnel"
           @copy-tunnel="copyTunnel"
           @edit-tunnel="editTunnel"
           @delete-tunnel="deleteTunnel"
-          @ai-debug="openSavedTunnelAIDebug"
         />
 
         <LogsPage
@@ -1933,19 +1446,13 @@ watch(
           v-if="activePage === 'config'"
           :theme="theme"
           :app-meta="appMeta"
-          :is-pro="isPro"
-          :pro-expiry-label="proExpiryLabel"
-          :license-code="proLicense.code"
           :config-message="configMessage"
           :is-checking-updates="isCheckingUpdates"
-          :is-refreshing-license-status="isRefreshingLicenseStatus"
           :update-check-dialog="updateCheckDialog"
           @theme-change="setThemeBySwitch"
           @check-updates="checkForUpdates"
           @open-release-page="openReleasePage"
           @close-update-check-dialog="closeUpdateCheckDialog"
-          @refresh-license-status="refreshLicenseStatusFromConfig"
-          @upgrade="openProUpgrade"
           @set-config-message="setConfigMessage"
           @reload-state="loadStateFromBackend"
           @confirm-action="openActionDialog"
@@ -2006,55 +1513,6 @@ watch(
     </div>
   </div>
 
-  <AIDebugModal
-    v-if="AI_DEBUG_ENABLED"
-    :show="!!selectedAIDebugTunnel"
-    :title="selectedAIDebugTunnelTitle"
-    :subtitle="selectedAIDebugTunnelSubtitle"
-    :raw-error="selectedAIDebugTunnel?.lastError || ''"
-    :state="selectedAIDebugTunnelState"
-    @close="closeSavedTunnelAIDebug"
-    @retry-debug="retrySavedTunnelAIDebug"
-    @test-again="retestSavedTunnelFromAIDebug"
-    @report-content="reportAIDebugContent('saved_tunnel', selectedAIDebugTunnelState)"
-  />
-
-  <div v-if="redeemDialog.visible" class="overlay">
-    <div class="dialog-card compact-dialog redeem-dialog">
-      <div class="dialog-head">
-        <h3 class="dialog-title">{{ $t('config.redeemDialog.title') }}</h3>
-      </div>
-      <form class="dialog-body" @submit.prevent="submitRedeemDialog">
-        <label for="redeemCodeInput" class="form-label">{{ $t('config.redeemDialog.codeLabel') }}</label>
-        <input
-          id="redeemCodeInput"
-          v-model="redeemDialog.code"
-          type="text"
-          class="form-control"
-          :placeholder="$t('config.redeemDialog.codePlaceholder')"
-          :disabled="redeemDialog.submitting"
-        />
-        <div class="field-note mt-1">{{ $t('config.redeemDialog.codeHint') }}</div>
-        <p v-if="redeemDialog.error" class="form-error mb-0 mt-2">{{ redeemDialog.error }}</p>
-        <div class="dialog-actions mt-4">
-          <div class="dialog-right-actions">
-            <button
-              type="button"
-              class="btn btn-outline-secondary"
-              :disabled="redeemDialog.submitting"
-              @click="closeRedeemDialog"
-            >
-              {{ $t('app.common.cancel') }}
-            </button>
-            <button type="submit" class="btn btn-primary" :disabled="redeemDialog.submitting">
-              {{ redeemDialog.submitting ? $t('config.redeemDialog.submitting') : $t('app.sidebar.upgrade') }}
-            </button>
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
-
   <JumperModal
     :show="showJumperModal"
     :editing-jumper-id="editingJumperId"
@@ -2068,16 +1526,12 @@ watch(
     :jumper-limits="JUMPER_LIMITS"
     :jumper-validation-error="jumperValidationError"
     :jumper-test="jumperTest"
-    :jumper-ai-debug="jumperAiDebug"
-    :ai-debug-enabled="AI_DEBUG_ENABLED"
-    @close="showJumperModal = false; resetAIDebugState(jumperAiDebug)"
+    @close="showJumperModal = false"
     @submit="saveJumper"
     @toggle-basic="showJumperBasic = !showJumperBasic"
     @toggle-advanced="showJumperAdvanced = !showJumperAdvanced"
     @key-file-change="onJumperKeyFileChange"
     @test-connection="testJumperConnection"
-    @ai-debug="runJumperAIDebug"
-    @report-ai-content="reportAIDebugContent('jumper', jumperAiDebug)"
   />
 
   <ImportJumperModal
@@ -2113,9 +1567,7 @@ watch(
     :inline-jumper-validation-error="inlineJumperValidationError"
     :tunnel-validation-error="tunnelValidationError"
     :tunnel-test="tunnelTest"
-    :tunnel-ai-debug="tunnelAiDebug"
-    :ai-debug-enabled="AI_DEBUG_ENABLED"
-    @close="showTunnelModal = false; resetAIDebugState(tunnelAiDebug)"
+    @close="showTunnelModal = false"
     @submit="saveTunnel"
     @set-primary-jumper="setPrimaryJumperForTunnelChain"
     @add-jumper="addJumperToTunnelChain"
@@ -2124,8 +1576,6 @@ watch(
     @remove-jumper="removeJumperFromTunnelChain"
     @inline-key-file-change="onInlineJumperKeyFileChange"
     @test-connection="testTunnelConnection"
-    @ai-debug="runTunnelAIDebug"
-    @report-ai-content="reportAIDebugContent('tunnel', tunnelAiDebug)"
   />
 
   <ImportTunnelModal

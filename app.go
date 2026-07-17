@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,14 +12,10 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
-	"github.com/HanZephyr/TunnelBoard/internal/aidebug"
 	"github.com/HanZephyr/TunnelBoard/internal/autostart"
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
 	"github.com/HanZephyr/TunnelBoard/internal/conf"
-	"github.com/HanZephyr/TunnelBoard/internal/device"
-	"github.com/HanZephyr/TunnelBoard/internal/license"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 	"github.com/HanZephyr/TunnelBoard/internal/sshconfig"
 	"github.com/HanZephyr/TunnelBoard/internal/traytext"
@@ -31,43 +26,20 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-const usageHeartbeatInterval = 2 * time.Hour
-const (
-	aiReportSupportEmail = "admin@lorisdev.cc"
-	maxMailtoSubjectLen  = 180
-	maxMailtoBodyLen     = 3500
-)
-
-type OpenReportEmailPayload struct {
-	Subject string `json:"subject"`
-	Body    string `json:"body"`
-}
-
-type OpenReportEmailResult struct {
-	Success bool   `json:"success"`
-	Error   string `json:"error,omitempty"`
-}
-
 // App struct
 type App struct {
-	ctx       context.Context
-	storage   *conf.Storage
-	jumper    *biz.JumperBiz
-	tunnel    *biz.TunnelBiz
-	updater   *updater.Service
-	license   *license.Client
-	aiDebug   *aidebug.Service
-	machineID string
-	initErr   error
+	ctx     context.Context
+	storage *conf.Storage
+	jumper  *biz.JumperBiz
+	tunnel  *biz.TunnelBiz
+	updater *updater.Service
+	initErr error
 
 	trayMu   sync.Mutex
 	trayShow *systray.MenuItem
 	trayQuit *systray.MenuItem
 
 	allowClose atomic.Bool
-
-	usageReporterStop chan struct{}
-	usageReporterWG   sync.WaitGroup
 }
 
 // NewApp creates a new App application struct
@@ -76,72 +48,14 @@ func NewApp() *App {
 	if err != nil {
 		return &App{initErr: err}
 	}
-	level := detectLogLevel()
-	if err := configureLogger(storage.Path(), level); err != nil {
-		fmt.Printf("logger init failed: %v\n", err)
-	}
 	slog.Info("app initialized", "config", storage.Path())
 
-	licenseClient := license.NewDefaultClient()
-	machineID := device.MachineID()
 	return &App{
-		storage:   storage,
-		jumper:    biz.NewJumperBiz(storage),
-		tunnel:    biz.NewTunnelBiz(storage),
-		updater:   updater.NewDefaultService(),
-		license:   licenseClient,
-		aiDebug:   aidebug.NewService(licenseClient.BaseURL(), machineID),
-		machineID: machineID,
+		storage: storage,
+		jumper:  biz.NewJumperBiz(storage),
+		tunnel:  biz.NewTunnelBiz(storage),
+		updater: updater.NewDefaultService(),
 	}
-}
-
-func detectLogLevel() slog.Level {
-	// Explicit override takes highest priority.
-	if raw := strings.TrimSpace(os.Getenv("TUNNELBOARD_LOG_LEVEL")); raw != "" {
-		return parseLogLevel(raw)
-	}
-	// `wails dev` injects `devserver`; use debug logging for dev runtime.
-	if strings.TrimSpace(os.Getenv("devserver")) != "" {
-		return slog.LevelDebug
-	}
-	// Built binary defaults to info.
-	return slog.LevelInfo
-}
-
-func parseLogLevel(raw string) slog.Level {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "debug":
-		return slog.LevelDebug
-	case "warn", "warning":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
-}
-
-func configureLogger(configPath string, level slog.Level) error {
-	dir := filepath.Dir(strings.TrimSpace(configPath))
-	if dir == "" {
-		dir = "."
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create log dir failed: %w", err)
-	}
-
-	logPath := filepath.Join(dir, "tunnelboard.log")
-	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("open log file failed: %w", err)
-	}
-
-	handler := slog.NewTextHandler(file, &slog.HandlerOptions{
-		Level: level,
-	})
-	slog.SetDefault(slog.New(handler))
-	slog.Info("logger initialized", "path", logPath, "level", level.String())
-	return nil
 }
 
 // startup is called when the app starts. The context is saved
@@ -202,10 +116,6 @@ func (a *App) SaveUILocale(locale string) error {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	buildType := wailsruntime.Environment(ctx).BuildType
-	a.license = license.NewClientByBuildType(buildType)
-	a.aiDebug = aidebug.NewService(a.license.BaseURL(), a.machineID)
-	slog.Info("license client initialized", "build_type", buildType, "api_base_url", a.license.BaseURL())
 	slog.Info("app startup")
 	if err := a.ensureReady(); err == nil {
 		a.syncAutoRunWithConfig()
@@ -214,7 +124,6 @@ func (a *App) startup(ctx context.Context) {
 				slog.Error("auto start tunnel failed", "err", err)
 			}
 		}()
-		a.startUsageReporter()
 	}
 }
 
@@ -238,65 +147,8 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 func (a *App) shutdown(ctx context.Context) {
 	_ = ctx
 	slog.Info("app shutdown")
-	a.stopUsageReporter()
 	if a.tunnel != nil {
 		a.tunnel.Shutdown()
-	}
-}
-
-func (a *App) startUsageReporter() {
-	if a.license == nil || strings.TrimSpace(a.machineID) == "" {
-		slog.Warn("usage reporter skipped: missing client or machine id")
-		return
-	}
-	if a.usageReporterStop != nil {
-		return
-	}
-	a.usageReporterStop = make(chan struct{})
-	a.usageReporterWG.Add(1)
-	go func() {
-		defer a.usageReporterWG.Done()
-
-		a.reportUsageEvent("startup")
-
-		ticker := time.NewTicker(usageHeartbeatInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				a.reportUsageEvent("heartbeat")
-			case <-a.usageReporterStop:
-				return
-			}
-		}
-	}()
-}
-
-func (a *App) stopUsageReporter() {
-	if a.usageReporterStop == nil {
-		return
-	}
-	close(a.usageReporterStop)
-	a.usageReporterStop = nil
-	a.usageReporterWG.Wait()
-}
-
-func (a *App) reportUsageEvent(eventType string) {
-	if a.license == nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, err := a.license.ReportUsageEvent(ctx, model.UsageEventRequest{
-		MachineID: a.machineID,
-		EventType: eventType,
-		Platform:  runtime.GOOS,
-		ClientTS:  time.Now().UTC().Format(time.RFC3339),
-	})
-	if err != nil {
-		slog.Warn("report usage event failed", "event_type", eventType, "error", err)
 	}
 }
 
@@ -416,143 +268,6 @@ func (a *App) TestTunnelConnection(payload model.TunnelPayload, inlineJumper *mo
 	}, nil
 }
 
-func (a *App) DebugJumperFailure(payload model.JumperPayload, rawError string, uiLocale string) (model.AIDebugResult, error) {
-	if err := a.ensureReady(); err != nil {
-		return model.AIDebugResult{}, err
-	}
-	if a.aiDebug == nil {
-		return model.AIDebugResult{}, fmt.Errorf("ai debug service is not initialized")
-	}
-
-	jumper := model.Jumper{
-		Name:                   strings.TrimSpace(payload.Name),
-		Host:                   strings.TrimSpace(payload.Host),
-		Port:                   payload.Port,
-		User:                   strings.TrimSpace(payload.User),
-		AuthType:               strings.TrimSpace(payload.AuthType),
-		KeyPath:                strings.TrimSpace(payload.KeyPath),
-		AgentSocketPath:        strings.TrimSpace(payload.AgentSocketPath),
-		BypassHostVerification: payload.BypassHostVerification,
-		KeepAliveIntervalMs:    payload.KeepAliveIntervalMs,
-		TimeoutMs:              payload.TimeoutMs,
-		HostKeyAlgorithms:      strings.TrimSpace(payload.HostKeyAlgorithms),
-		Notes:                  strings.TrimSpace(payload.Notes),
-	}
-
-	return a.aiDebug.Diagnose(context.Background(), aidebug.DiagnosticInput{
-		TargetType:  "jumper_test",
-		RawError:    rawError,
-		UILocale:    uiLocale,
-		JumperChain: []model.Jumper{jumper},
-	})
-}
-
-func (a *App) DebugTunnelFailure(payload model.TunnelPayload, inlineJumper *model.JumperPayload, rawError string, uiLocale string) (model.AIDebugResult, error) {
-	if err := a.ensureReady(); err != nil {
-		return model.AIDebugResult{}, err
-	}
-	if a.aiDebug == nil {
-		return model.AIDebugResult{}, fmt.Errorf("ai debug service is not initialized")
-	}
-
-	chain := make([]model.Jumper, 0, len(payload.JumperIDs)+1)
-	if len(payload.JumperIDs) > 0 {
-		cfg, err := a.storage.Load()
-		if err != nil {
-			return model.AIDebugResult{}, err
-		}
-		jumpers, err := collectJumpersForApp(cfg.Jumpers, payload.JumperIDs)
-		if err != nil {
-			return model.AIDebugResult{}, err
-		}
-		chain = append(chain, jumpers...)
-	}
-	if inlineJumper != nil {
-		chain = append(chain, model.Jumper{
-			Name:                   strings.TrimSpace(inlineJumper.Name),
-			Host:                   strings.TrimSpace(inlineJumper.Host),
-			Port:                   inlineJumper.Port,
-			User:                   strings.TrimSpace(inlineJumper.User),
-			AuthType:               strings.TrimSpace(inlineJumper.AuthType),
-			KeyPath:                strings.TrimSpace(inlineJumper.KeyPath),
-			AgentSocketPath:        strings.TrimSpace(inlineJumper.AgentSocketPath),
-			BypassHostVerification: inlineJumper.BypassHostVerification,
-			KeepAliveIntervalMs:    inlineJumper.KeepAliveIntervalMs,
-			TimeoutMs:              inlineJumper.TimeoutMs,
-			HostKeyAlgorithms:      strings.TrimSpace(inlineJumper.HostKeyAlgorithms),
-			Notes:                  strings.TrimSpace(inlineJumper.Notes),
-		})
-	}
-
-	tunnel := model.Tunnel{
-		Name:        strings.TrimSpace(payload.Name),
-		Mode:        strings.TrimSpace(payload.Mode),
-		JumperIDs:   append([]int{}, payload.JumperIDs...),
-		LocalHost:   strings.TrimSpace(payload.LocalHost),
-		LocalPort:   payload.LocalPort,
-		RemoteHost:  strings.TrimSpace(payload.RemoteHost),
-		RemotePort:  payload.RemotePort,
-		AutoStart:   payload.AutoStart,
-		Status:      strings.TrimSpace(payload.Status),
-		Description: strings.TrimSpace(payload.Description),
-	}
-
-	return a.aiDebug.Diagnose(context.Background(), aidebug.DiagnosticInput{
-		TargetType:  "tunnel_test",
-		RawError:    rawError,
-		UILocale:    uiLocale,
-		Tunnel:      &tunnel,
-		JumperChain: chain,
-	})
-}
-
-func (a *App) DebugSavedTunnelFailure(id int, rawError string, uiLocale string) (model.AIDebugResult, error) {
-	if err := a.ensureReady(); err != nil {
-		return model.AIDebugResult{}, err
-	}
-	if a.aiDebug == nil {
-		return model.AIDebugResult{}, fmt.Errorf("ai debug service is not initialized")
-	}
-	if id <= 0 {
-		return model.AIDebugResult{}, fmt.Errorf("invalid tunnel id")
-	}
-
-	cfg, err := a.storage.Load()
-	if err != nil {
-		return model.AIDebugResult{}, err
-	}
-
-	var tunnel model.Tunnel
-	found := false
-	for _, item := range cfg.Tunnels {
-		if item.ID == id {
-			tunnel = item
-			found = true
-			break
-		}
-	}
-	if !found {
-		return model.AIDebugResult{}, biz.ErrTunnelNotFound
-	}
-
-	jumpers, err := collectJumpersForApp(cfg.Jumpers, tunnel.JumperIDs)
-	if err != nil {
-		return model.AIDebugResult{}, err
-	}
-
-	if strings.TrimSpace(rawError) == "" {
-		rawError = tunnel.LastError
-	}
-
-	return a.aiDebug.Diagnose(context.Background(), aidebug.DiagnosticInput{
-		TargetType:  "tunnel_runtime_error",
-		RawError:    rawError,
-		UILocale:    uiLocale,
-		Tunnel:      &tunnel,
-		JumperChain: jumpers,
-	})
-}
-
 func (a *App) DeleteTunnel(id int) error {
 	if err := a.ensureReady(); err != nil {
 		return err
@@ -586,77 +301,6 @@ func collectJumpersForApp(items []model.Jumper, ids []int) ([]model.Jumper, erro
 	return result, nil
 }
 
-func (a *App) GetMachineID() (string, error) {
-	if err := a.ensureReady(); err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(a.machineID) == "" {
-		a.machineID = device.MachineID()
-	}
-	return a.machineID, nil
-}
-
-func (a *App) GetStoredLicenseCode() (string, error) {
-	if err := a.ensureReady(); err != nil {
-		return "", err
-	}
-	cfg, err := a.storage.Load()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(cfg.License.Code), nil
-}
-
-func (a *App) GetLicenseStatus() (model.LicenseStatus, error) {
-	if err := a.ensureReady(); err != nil {
-		return model.LicenseStatus{}, err
-	}
-	if a.license == nil {
-		return model.LicenseStatus{}, fmt.Errorf("license service is not initialized")
-	}
-	machineID, err := a.GetMachineID()
-	if err != nil {
-		return model.LicenseStatus{}, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	status, err := a.license.GetStatus(ctx, machineID)
-	if err != nil {
-		return model.LicenseStatus{}, err
-	}
-	if err := a.saveLicenseCode(status.Code); err != nil {
-		slog.Warn("save license code failed", "error", err)
-	}
-	return status, nil
-}
-
-func (a *App) RedeemLicenseCode(code string) (model.LicenseRedeemResult, error) {
-	if err := a.ensureReady(); err != nil {
-		return model.LicenseRedeemResult{}, err
-	}
-	if a.license == nil {
-		return model.LicenseRedeemResult{}, fmt.Errorf("license service is not initialized")
-	}
-	machineID, err := a.GetMachineID()
-	if err != nil {
-		return model.LicenseRedeemResult{}, err
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	result, err := a.license.Redeem(ctx, machineID, code)
-	if err != nil {
-		return model.LicenseRedeemResult{}, err
-	}
-	if err := a.saveLicenseCode(result.Code); err != nil {
-		slog.Warn("save license code failed", "error", err)
-	}
-	return result, nil
-}
-
 func (a *App) CheckForUpdates(currentVersion string) (updater.Result, error) {
 	if err := a.ensureReady(); err != nil {
 		return updater.Result{}, err
@@ -667,20 +311,7 @@ func (a *App) CheckForUpdates(currentVersion string) (updater.Result, error) {
 	return a.updater.Check(context.Background(), currentVersion)
 }
 
-func (a *App) saveLicenseCode(code string) error {
-	if a.storage == nil {
-		return fmt.Errorf("storage is not initialized")
-	}
-	trimmed := strings.TrimSpace(code)
-	_, err := a.storage.Update(func(cfg *conf.Config) error {
-		cfg.License.Code = trimmed
-		return nil
-	})
-	return err
-}
-
 // syncAutoRunWithConfig aligns OS auto-run (launch at login) state with config.
-// Called from startup before frontend runs; frontend will later check Pro and may call SetAutoRunEnabled(false).
 func (a *App) syncAutoRunWithConfig() {
 	cfg, err := a.storage.Load()
 	if err != nil {
@@ -871,50 +502,4 @@ func (a *App) OpenConfigDir() error {
 		return fmt.Errorf("open config dir: %w", err)
 	}
 	return nil
-}
-
-// OpenReportEmail opens the default mail client with a prefilled report draft.
-// Success means the OS accepted the open request; it does not guarantee email delivery.
-func (a *App) OpenReportEmail(payload OpenReportEmailPayload) OpenReportEmailResult {
-	subject := trimForMailto(payload.Subject, maxMailtoSubjectLen)
-	body := trimForMailto(payload.Body, maxMailtoBodyLen)
-	mailtoURL := "mailto:" + aiReportSupportEmail + "?subject=" + encodeMailtoQueryValue(subject) + "&body=" + encodeMailtoQueryValue(body)
-
-	name, args := reportEmailCommand(runtime.GOOS, mailtoURL)
-	if strings.TrimSpace(name) == "" {
-		return OpenReportEmailResult{Success: false, Error: "unsupported platform"}
-	}
-
-	cmd := exec.Command(name, args...)
-	if err := cmd.Run(); err != nil {
-		return OpenReportEmailResult{Success: false, Error: err.Error()}
-	}
-	return OpenReportEmailResult{Success: true}
-}
-
-func encodeMailtoQueryValue(value string) string {
-	encoded := url.QueryEscape(value)
-	// Use %20 for spaces to avoid clients showing "+" literally in draft fields.
-	return strings.ReplaceAll(encoded, "+", "%20")
-}
-
-func reportEmailCommand(goos, mailtoURL string) (string, []string) {
-	switch goos {
-	case "darwin":
-		return "open", []string{mailtoURL}
-	case "windows":
-		return "rundll32", []string{"url.dll,FileProtocolHandler", mailtoURL}
-	case "linux":
-		return "xdg-open", []string{mailtoURL}
-	default:
-		return "", nil
-	}
-}
-
-func trimForMailto(value string, limit int) string {
-	value = strings.TrimSpace(value)
-	if limit <= 0 || len(value) <= limit {
-		return value
-	}
-	return strings.TrimSpace(value[:limit])
 }

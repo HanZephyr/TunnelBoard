@@ -2,11 +2,9 @@ import { defineConfig } from 'vitepress'
 
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
-    title: "Loris Tunnel",
+    title: "TunnelBoard",
     description: "A desktop GUI application for managing SSH tunnels — with automatic reconnection and a clean interface.",
     head: [
-        ['script', { async: '', src: 'https://www.googletagmanager.com/gtag/js?id=G-776FG9SDVQ' }],
-        ['script', {}, `window.dataLayer = window.dataLayer || []; function gtag(){dataLayer.push(arguments);} gtag('js', new Date()); gtag('config', 'G-776FG9SDVQ');`],
         ['link', { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' }],
         ['link', { rel: 'shortcut icon', type: 'image/x-icon', href: '/favicon.ico' }]
     ],
@@ -38,11 +36,11 @@ export default defineConfig({
         ],
 
         socialLinks: [
-            { icon: 'github', link: 'https://github.com/RangerWolf/loris-tunnel-app/' }
+            { icon: 'github', link: 'https://github.com/HanZephyr/TunnelBoard/' }
         ],
 
         footer: {
-            message: 'Released under the Apache 2.0 License. <a href="/privacy">Privacy Policy</a> · Contact: <a href="mailto:yang.rangerwolf@gmail.com">yang.rangerwolf@gmail.com</a>',
+            message: 'Released under the Apache 2.0 License. <a href="/privacy">Privacy Policy</a>',
             copyright: 'Copyright © 2024-present'
         }
     }

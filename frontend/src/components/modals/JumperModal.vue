@@ -1,7 +1,6 @@
 <script setup>
 import { onMounted, onUpdated, onBeforeUnmount, ref } from 'vue'
 import { Tooltip } from 'bootstrap'
-import AIDebugResultCard from '../common/AIDebugResultCard.vue'
 
 defineProps({
   show: {
@@ -51,18 +50,10 @@ defineProps({
   jumperTest: {
     type: Object,
     required: true
-  },
-  jumperAiDebug: {
-    type: Object,
-    required: true
-  },
-  aiDebugEnabled: {
-    type: Boolean,
-    default: false
   }
 })
 
-defineEmits(['close', 'submit', 'toggle-basic', 'toggle-advanced', 'key-file-change', 'test-connection', 'ai-debug', 'report-ai-content'])
+defineEmits(['close', 'submit', 'toggle-basic', 'toggle-advanced', 'key-file-change', 'test-connection'])
 
 const keepAliveHintRef = ref(null)
 const bypassHintRef = ref(null)
@@ -371,16 +362,9 @@ onBeforeUnmount(() => {
               {{ jumperTest.status === 'testing' ? $t('app.modals.jumper.testing') : $t('app.modals.jumper.testConnection') }}
             </button>
             <span
-              v-if="!aiDebugEnabled && jumperTest.message"
+              v-if="jumperTest.message"
               class="test-result"
               :class="{ success: jumperTest.status === 'success', error: jumperTest.status === 'error' }"
-            >
-              {{ jumperTest.message }}
-            </span>
-            <span
-              v-else-if="aiDebugEnabled && jumperTest.message && jumperTest.status !== 'error'"
-              class="test-result"
-              :class="{ success: jumperTest.status === 'success' }"
             >
               {{ jumperTest.message }}
             </span>
@@ -389,33 +373,6 @@ onBeforeUnmount(() => {
             <button type="button" class="btn btn-outline-secondary" @click="$emit('close')">{{ $t('app.common.cancel') }}</button>
             <button type="submit" class="btn btn-primary">{{ $t('app.common.save') }}</button>
           </div>
-        </div>
-        <div v-if="aiDebugEnabled && jumperTest.message && jumperTest.status === 'error'" class="ai-debug-inline-panel mt-3">
-          <div class="ai-debug-inline-head">
-            <div>
-              <div class="ai-debug-inline-title">{{ $t('app.aiDebug.connectionFailed') }}</div>
-              <div class="ai-debug-inline-error">{{ jumperTest.message }}</div>
-              <div v-if="jumperTest.debuggable" class="ai-debug-inline-hint">{{ $t('app.aiDebug.inlineHint') }}</div>
-            </div>
-            <button
-              v-if="jumperTest.debuggable"
-              type="button"
-              class="btn btn-sm btn-outline-primary ai-debug-action-btn"
-              :disabled="jumperAiDebug.status === 'analyzing'"
-              @click="$emit('ai-debug')"
-            >
-              <i class="bi" :class="jumperAiDebug.status === 'analyzing' ? 'bi-hourglass-split' : 'bi-magic'" />
-              <span>{{ jumperAiDebug.status === 'analyzing' ? $t('app.aiDebug.analyzing') : $t('app.aiDebug.action') }}</span>
-            </button>
-          </div>
-          <AIDebugResultCard
-            v-if="jumperAiDebug.status !== 'idle'"
-            :state="jumperAiDebug"
-            show-actions
-            @retry-debug="$emit('ai-debug')"
-            @test-again="$emit('test-connection')"
-            @report-content="$emit('report-ai-content')"
-          />
         </div>
       </form>
     </div>

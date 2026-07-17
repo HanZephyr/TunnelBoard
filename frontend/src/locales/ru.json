@@ -13,7 +13,6 @@
             "logsSubtitle": "Просмотр последних операций",
             "config": "Настройки",
             "configSubtitle": "Тема, версия, обновления и продукт",
-            "upgrade": "Обновить",
             "collapse": "Свернуть боковую панель",
             "expand": "Развернуть боковую панель"
         },
@@ -255,47 +254,6 @@
                 "unknown": "Неизвестный сервер"
             }
         },
-        "aiDebug": {
-            "action": "AI диагностика",
-            "analyzing": "Анализ...",
-            "failed": "Сбой AI Debug",
-            "connectionFailed": "Проверка подключения не удалась",
-            "inlineHint": "Запустите диагностику, чтобы проверить SSH клиент, цепочку серверов и журналы ошибок.",
-            "panelTitle": "Диагностика подключения",
-            "panelHint": "Собираем локальные SSH данные и готовим рекомендации.",
-            "resultTitle": "Наиболее вероятная причина",
-            "firstActions": "Сначала попробуйте",
-            "retryDebug": "Запустить снова",
-            "testAgain": "Проверить снова",
-            "viewResult": "Открыть диагностику",
-            "sourceError": "Исходная ошибка",
-            "modalTitle": "AI диагностика для {name}",
-            "savedTunnelFallback": "Текущий туннель",
-            "progress": {
-                "sshClient": "Проверка SSH клиента",
-                "reproduce": "Повторение сбоя",
-                "analyze": "Анализ SSH журналов",
-                "suggest": "Подготовка рекомендаций"
-            },
-            "confidence": {
-                "high": "Высокая",
-                "medium": "Средняя",
-                "low": "Низкая"
-            },
-            "confidenceLabel": "Уверенность: {value}",
-            "reason": "Причина",
-            "steps": "Рекомендуемые шаги",
-            "details": "Технические подробности",
-            "sshClient": "SSH клиент",
-            "matchedRules": "Совпавшие правила",
-            "checks": "Проверки",
-            "rawError": "Исходная ошибка",
-            "debugExcerpt": "Фрагмент SSH-отладки",
-            "fallbackHint": "Показывается локальная диагностика, потому что AI-анализ сейчас недоступен.",
-            "quotaExceeded": "Дневной лимит AI диагностики исчерпан. Free: {freeLimit} в день; Pro: {proLimit} в день.",
-            "providerBusy": "AI сервис сейчас занят. Повторите попытку позже.",
-            "unavailable": "Сервис AI диагностики временно недоступен. Повторите попытку позже."
-        },
         "common": {
             "cancel": "Отмена",
             "close": "Закрыть",
@@ -316,19 +274,11 @@
         "theme": "Тёмная тема",
         "themeDesc": "Переключение светлой и тёмной темы",
         "autoRun": "Запуск при входе",
-        "autoRunDesc": "Запускать TunnelBoard при входе в систему (только Pro)",
-        "autoRunProRequired": "Автозапуск при входе — функция Pro. Обновитесь для включения.",
-        "autoRunExpiredDisabled": "Автозапуск был включён, но лицензия неактивна или истекла. Функция отключена. Обновитесь для повторного включения.",
+        "autoRunDesc": "Запускать TunnelBoard при входе в систему",
         "appInfo": "О приложении",
         "version": "Версия",
         "productUpdates": "Обновления продукта",
-        "licenseManagement": "Лицензия",
         "currentVersion": "Текущая версия",
-        "licenseStatus": "Статус лицензии",
-        "refreshLicenseStatusHint": "Нажмите для обновления статуса",
-        "refreshingLicenseStatus": "Обновление...",
-        "proActivated": "Pro активирован",
-        "freeVersion": "Бесплатная версия",
         "checkUpdates": "Проверить обновления",
         "checkingUpdates": "Проверка...",
         "updateResultTitle": "Результат проверки",
@@ -336,19 +286,6 @@
         "latestVersionIs": "Доступна новая версия: {version}",
         "openDownloadPage": "Открыть страницу загрузки",
         "openReleases": "Релизы",
-        "upgradePro": "Перейти на Pro",
-        "proExpires": "Pro действует до {date}",
-        "proExpiresShort": "До: {date}",
-        "lifetime": "Навсегда",
-        "manageLicense": "Управление лицензией",
-        "licenseCode": "Код лицензии",
-        "redeemDialog": {
-            "title": "Введите код лицензии",
-            "codeLabel": "Код лицензии",
-            "codePlaceholder": "Например: VIP-XXXX-XXXX-XXXX-XXXX",
-            "codeHint": "Сейчас функция все еще в закрытом тестировании. Напишите на yang.rangerwolf@gmail.com, чтобы получить код лицензии.",
-            "submitting": "Отправка..."
-        },
         "configFile": "Файл конфигурации",
         "manageConfig": "Управление конфигурацией",
         "manageConfigDesc": "Экспорт, импорт или открытие папки с конфигурацией",
@@ -377,15 +314,8 @@
         "importSuccess": "Конфигурация импортирована. Автозапуск туннелей перезапущен.",
         "importConfirm": "Текущая конфигурация будет безвозвратно перезаписана. Активные туннели остановятся и перезапустятся. Продолжить?",
         "messages": {
-            "licenseActive": "Лицензия активна ({expiry}).",
-            "licenseInactive": "Лицензия не активирована.",
             "upToDate": "Проверено: {time}.\nТекущая версия ({version}) актуальна.",
-            "updateAvailable": "Доступна новая версия {version}.",
-            "proActive": "Pro активен ({expiry}).",
-            "licenseRedeemed": "Лицензия активирована.",
-            "licenseRedeemedWithExpiry": "Лицензия активирована ({expiry}).",
-            "enterLicenseCode": "Введите код лицензии.",
-            "freePlanRunningLimit": "В бесплатной версии одновременно может работать не более {limit} туннелей. Остановите один перед запуском нового."
+            "updateAvailable": "Доступна новая версия {version}."
         }
     }
 }

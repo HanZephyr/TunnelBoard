@@ -26,27 +26,11 @@ const props = defineProps({
     type: Object,
     required: true
   },
-  isPro: {
-    type: Boolean,
-    required: true
-  },
-  proExpiryLabel: {
-    type: String,
-    required: true
-  },
-  licenseCode: {
-    type: String,
-    default: ''
-  },
   configMessage: {
     type: String,
     default: ''
   },
   isCheckingUpdates: {
-    type: Boolean,
-    default: false
-  },
-  isRefreshingLicenseStatus: {
     type: Boolean,
     default: false
   },
@@ -59,10 +43,8 @@ const props = defineProps({
 const emit = defineEmits([
   'theme-change',
   'check-updates',
-  'upgrade',
   'open-release-page',
   'close-update-check-dialog',
-  'refresh-license-status',
   'set-config-message',
   'reload-state',
   'confirm-action'
@@ -205,11 +187,6 @@ async function onResetConfigDataDir() {
 }
 
 async function onAutoRunChange(checked) {
-  if (checked && !props.isPro) {
-    emit('set-config-message', t('config.autoRunProRequired'))
-    emit('upgrade')
-    return
-  }
   try {
     await SetAutoRunEnabled(!!checked)
     autoRunEnabled.value = !!checked
@@ -432,35 +409,6 @@ watch(locale, async (newLocale) => {
             </button>
           </div>
 
-          <div class="config-row align-items-center">
-            <div>
-              <div class="config-name">{{ t('config.licenseStatus') }}</div>
-              <div class="config-desc">
-                <span v-if="isPro">{{ t('config.licenseCode') }}: {{ licenseCode }}</span>
-                <span v-else class="text-muted">{{ t('config.freeVersion') }}</span>
-              </div>
-            </div>
-            <div class="btn-group" role="group" :aria-label="t('config.licenseStatus')">
-              <button
-                v-if="!isPro"
-                type="button"
-                class="btn btn-sm btn-secondary"
-                @click="$emit('upgrade')"
-              >
-                {{ t('config.upgradePro') }}
-              </button>
-              <button
-                v-else
-                type="button"
-                class="pro-badge pro-badge-btn"
-                :disabled="isRefreshingLicenseStatus"
-                :title="t('config.refreshLicenseStatusHint')"
-                @click="$emit('refresh-license-status')"
-              >
-                {{ isRefreshingLicenseStatus ? t('config.refreshingLicenseStatus') : `Pro · ${proExpiryLabel}` }}
-              </button>
-            </div>
-          </div>
         </div>
       </div>
 

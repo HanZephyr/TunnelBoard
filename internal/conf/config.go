@@ -50,11 +50,6 @@ type Config struct {
 	Jumpers []model.Jumper `toml:"jumpers"`
 	Tunnels []model.Tunnel `toml:"tunnels"`
 	AutoRun bool           `toml:"auto_run"`
-	License LicenseConfig  `toml:"license"`
-}
-
-type LicenseConfig struct {
-	Code string `toml:"code"`
 }
 
 // ResolveConfigPath returns the effective config file path: implicit location
@@ -70,7 +65,6 @@ func DefaultConfig() *Config {
 		Jumpers: []model.Jumper{},
 		Tunnels: []model.Tunnel{},
 		AutoRun: false,
-		License: LicenseConfig{},
 	}
 }
 
@@ -80,7 +74,7 @@ func (c *Config) Clone() *Config {
 		return DefaultConfig()
 	}
 
-	out := &Config{Version: c.Version, AutoRun: c.AutoRun, License: c.License}
+	out := &Config{Version: c.Version, AutoRun: c.AutoRun}
 	out.Jumpers = append(out.Jumpers, c.Jumpers...)
 	out.Tunnels = append(out.Tunnels, c.Tunnels...)
 	return out
@@ -97,7 +91,6 @@ func (c *Config) Normalize() {
 	if c.Tunnels == nil {
 		c.Tunnels = []model.Tunnel{}
 	}
-	c.License.Code = strings.TrimSpace(c.License.Code)
 	// AutoRun defaults to false; no need to set if already present
 	for i := range c.Tunnels {
 		c.Tunnels[i].JumperIDs = normalizeJumperIDs(c.Tunnels[i].JumperIDs)
