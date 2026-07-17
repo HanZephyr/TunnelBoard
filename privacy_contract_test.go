@@ -47,8 +47,14 @@ func TestOnlyUpdaterOwnsAnHTTPClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := os.Stat("frontend/src/utils/backend-api.js"); !os.IsNotExist(err) {
-		t.Fatalf("commercial backend client must be removed, stat error = %v", err)
+	for _, path := range []string{
+		"frontend/src/utils/backend-api.js",
+		"frontend/.env.development",
+		"frontend/.env.production",
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("commercial backend artifact %s must be removed, stat error = %v", path, err)
+		}
 	}
 }
 
