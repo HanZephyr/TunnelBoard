@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"loris-tunnel/internal/model"
+	"github.com/HanZephyr/TunnelBoard/internal/model"
 )
 
 const defaultConfigPath = "config.toml"
@@ -26,24 +26,22 @@ func isDirWritable(dir string) bool {
 	return true
 }
 
-// getDefaultConfigDir returns the default config directory for the app.
-// Priority:
-// 1. Current directory (if writable) - for development and portable mode
-// 2. User config directory (~/.loris-tunnel/) - for installed apps
+const appConfigDirName = "TunnelBoard"
+
+// getDefaultConfigDir returns the operating system's per-user application data
+// directory. TunnelBoard deliberately has no current-directory or portable-mode
+// fallback because daily data must not be written beside the executable/source.
 func getDefaultConfigDir() string {
-	// Try current directory first (for development and portable mode)
-	cwd, err := os.Getwd()
-	if err == nil && isDirWritable(cwd) {
-		return cwd
+	if configDir, err := os.UserConfigDir(); err == nil && strings.TrimSpace(configDir) != "" {
+		return filepath.Join(configDir, appConfigDirName)
 	}
 
-	// Fallback to user config directory
 	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		// Last resort: current directory even if not writable
-		return "."
+	if err == nil && strings.TrimSpace(homeDir) != "" {
+		return filepath.Join(homeDir, ".config", appConfigDirName)
 	}
-	return filepath.Join(homeDir, ".loris-tunnel")
+
+	return filepath.Join(os.TempDir(), appConfigDirName)
 }
 
 // Config is persisted in TOML storage.
@@ -57,16 +55,6 @@ type Config struct {
 
 type LicenseConfig struct {
 	Code string `toml:"code"`
-}
-
-// GetHomeConfigPath returns the absolute path for the home config file
-// (~/.loris-tunnel/config.toml). Empty string if UserHomeDir fails.
-func GetHomeConfigPath() string {
-	homeDir, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(homeDir) == "" {
-		return ""
-	}
-	return filepath.Join(homeDir, ".loris-tunnel", defaultConfigPath)
 }
 
 // ResolveConfigPath returns the effective config file path: implicit location

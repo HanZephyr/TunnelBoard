@@ -1,4 +1,4 @@
-# Loris Tunnel
+# TunnelBoard
 
 <div align="center">
 
@@ -18,7 +18,7 @@
 
 ## Overview
 
-**Loris Tunnel** is a cross-platform desktop app that lets you create, manage, and monitor SSH tunnels through a graphical interface. It wraps the power of SSH port forwarding into a user-friendly UI, with automatic reconnection to keep your tunnels alive even when the network is unstable.
+**TunnelBoard** is a cross-platform desktop app that lets you create, manage, and monitor SSH tunnels through a graphical interface. It wraps the power of SSH port forwarding into a user-friendly UI, with automatic reconnection to keep your tunnels alive even when the network is unstable.
 
 Designed for developers and ops engineers who frequently work with remote servers, databases, and internal services behind firewalls — without touching the command line every time.
 
@@ -79,7 +79,7 @@ When running the macOS version for the first time, you may encounter a system se
 Open Terminal and run the following command (you may need to enter your computer password):
 
 ```bash
-sudo xattr -rd com.apple.quarantine /Applications/loris-tunnel.app
+sudo xattr -rd com.apple.quarantine /Applications/tunnelboard.app
 ```
 
 ### Build from Source
@@ -91,8 +91,8 @@ sudo xattr -rd com.apple.quarantine /Applications/loris-tunnel.app
 - [Wails CLI](https://wails.io/docs/gettingstarted/installation) v2
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/loris-tunnel.git
-cd loris-tunnel
+git clone https://github.com/HanZephyr/TunnelBoard.git
+cd TunnelBoard
 
 # Install frontend dependencies
 cd frontend && pnpm install && cd ..
@@ -108,15 +108,12 @@ wails build
 
 ## Configuration
 
-Loris Tunnel stores its configuration in a TOML file. Resolution rules:
+TunnelBoard currently stores its configuration in a TOML file under the operating system's per-user application data directory.
 
-- **Development (`wails dev`)**:
-  - If the current working directory is writable: `./config.toml`
-  - Otherwise: `~/.loris-tunnel/config.toml`
-- **Built/production binary (including auto-start on login)**:
-  - Always: `~/.loris-tunnel/config.toml`
+- **Windows:** `%AppData%\TunnelBoard\config.toml`
+- **macOS:** `~/Library/Application Support/TunnelBoard/config.toml`
 
-In all cases, if the target config file does not exist or is empty, Loris Tunnel will automatically create it with a default configuration on first run.
+If the target config file does not exist or is empty, TunnelBoard creates a default configuration on first run.
 
 Example configuration:
 

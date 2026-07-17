@@ -6,13 +6,13 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/HanZephyr/TunnelBoard/internal/traytext"
+	"github.com/HanZephyr/TunnelBoard/internal/uilocale"
 	"github.com/energye/systray"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
-	"loris-tunnel/internal/traytext"
-	"loris-tunnel/internal/uilocale"
 )
 
 //go:embed all:frontend/dist
@@ -26,6 +26,11 @@ var trayIconMacOS []byte
 
 //go:embed build/appicon.png
 var trayIconFallback []byte
+
+const (
+	applicationTitle = "TunnelBoard"
+	singleInstanceID = "tunnelboard-single-instance"
+)
 
 func main() {
 	// Create an instance of the app structure
@@ -110,7 +115,7 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:         "Loris Tunnel",
+		Title:         applicationTitle,
 		Width:         1024,
 		Height:        768,
 		DisableResize: true,
@@ -123,7 +128,7 @@ func main() {
 		OnShutdown:        app.shutdown,
 		HideWindowOnClose: runtime.GOOS == "darwin",
 		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId: "loris-tunnel-single-instance",
+			UniqueId: singleInstanceID,
 			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {
 				_ = secondInstanceData
 				showMainWindow()

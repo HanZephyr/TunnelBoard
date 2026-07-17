@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"loris-tunnel/internal/model"
+	"github.com/HanZephyr/TunnelBoard/internal/model"
 )
 
 type configEntry struct {

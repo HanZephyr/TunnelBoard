@@ -11,7 +11,7 @@ func TestResolveEffectiveConfigPath_UsesConfigRoot(t *testing.T) {
 	setFakeHome(t, home)
 	t.Setenv("devserver", "")
 
-	anchor := filepath.Join(home, ".loris-tunnel")
+	anchor := filepath.Join(home, "TunnelBoard")
 	custom := filepath.Join(home, "custom-data")
 	if err := os.MkdirAll(anchor, 0o755); err != nil {
 		t.Fatal(err)
@@ -41,7 +41,7 @@ func TestResolveEffectiveConfigPath_BrokenPointerFallsBack(t *testing.T) {
 	setFakeHome(t, home)
 	t.Setenv("devserver", "")
 
-	anchor := filepath.Join(home, ".loris-tunnel")
+	anchor := filepath.Join(home, "TunnelBoard")
 	if err := os.MkdirAll(anchor, 0o755); err != nil {
 		t.Fatal(err)
 	}

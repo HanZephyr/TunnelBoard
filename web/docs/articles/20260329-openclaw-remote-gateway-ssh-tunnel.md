@@ -1,13 +1,13 @@
 ---
-title: OpenClaw Remote Gateway + SSH Tunnels — Why Loris Tunnel Fits Your Stack
-description: Pair OpenClaw’s remote gateway with Loris Tunnel for stable local port forwarding to ws://127.0.0.1:18789, auto-reconnect, and a desktop UI—without living in the terminal.
+title: OpenClaw Remote Gateway + SSH Tunnels — Why TunnelBoard Fits Your Stack
+description: Pair OpenClaw’s remote gateway with TunnelBoard for stable local port forwarding to ws://127.0.0.1:18789, auto-reconnect, and a desktop UI—without living in the terminal.
 ---
 
-# OpenClaw Remote Gateway + SSH Tunnels — Why Loris Tunnel Fits Your Stack
+# OpenClaw Remote Gateway + SSH Tunnels — Why TunnelBoard Fits Your Stack
 
 If you run **[OpenClaw](https://openclaws.io/)** with a **remote gateway**, you already rely on **SSH local port forwarding**: your desktop app talks to `ws://127.0.0.1:18789` locally, and an SSH tunnel carries that traffic to the gateway on your server. That pattern is simple, secure, and standard—but it breaks the moment the tunnel drops.
 
-**Loris Tunnel** is a desktop GUI for managing SSH tunnels (local, remote, and dynamic forwarding) with **automatic reconnection** and a clear view of connection health. It is a natural companion when you want OpenClaw’s remote-gateway workflow to feel boringly reliable.
+**TunnelBoard** is a desktop GUI for managing SSH tunnels (local, remote, and dynamic forwarding) with **automatic reconnection** and a clear view of connection health. It is a natural companion when you want OpenClaw’s remote-gateway workflow to feel boringly reliable.
 
 ## What OpenClaw expects from your network
 
@@ -31,11 +31,11 @@ For OpenClaw users, the tunnel is not “nice to have”; it is **part of the co
 
 You do not need to remove SSH from the stack—you need a **consistent way to create, monitor, and recover** the same forwards every day.
 
-## How Loris Tunnel supports the same OpenClaw forward
+## How TunnelBoard supports the same OpenClaw forward
 
-Loris Tunnel is built for exactly this class of problem: **long-lived SSH port forwards** with operator-friendly controls.
+TunnelBoard is built for exactly this class of problem: **long-lived SSH port forwards** with operator-friendly controls.
 
-| Need for OpenClaw-style gateways | How Loris Tunnel helps |
+| Need for OpenClaw-style gateways | How TunnelBoard helps |
 | -------------------------------- | ---------------------- |
 | Stable **local forward** to remote `127.0.0.1:18789` | Create a tunnel with local port **18789** → remote **127.0.0.1:18789** (or import from an SSH command). |
 | Recovery after network blips | **Smart reconnection** with backoff instead of manual restarts. |
@@ -44,14 +44,14 @@ Loris Tunnel is built for exactly this class of problem: **long-lived SSH port f
 | SOCKS or other forwards | **Local, remote, and dynamic (SOCKS5)** modes in one app. |
 
 ::: tip Map your existing SSH config
-If you already use `LocalForward 18789 127.0.0.1:18789`, you can often **paste the equivalent `ssh` command** into Loris Tunnel’s importer and adjust labels, jumpers, and auto-start from there. See the [introduction](./20260316-introduction) for the full feature tour.
+If you already use `LocalForward 18789 127.0.0.1:18789`, you can often **paste the equivalent `ssh` command** into TunnelBoard’s importer and adjust labels, jumpers, and auto-start from there. See the [introduction](./20260316-introduction) for the full feature tour.
 :::
 
 ## A practical mental model
 
 1. **Gateway stays on the server** (or VM) where OpenClaw expects it—unchanged.
-2. **Loris Tunnel** on your laptop or workstation holds the **SSH forward** that exposes the gateway WebSocket on your loopback interface.
-3. **OpenClaw.app** keeps using **`ws://127.0.0.1:18789`** locally; it does not care whether `ssh -N` or Loris Tunnel maintains the tunnel—only that the port is reachable and stable.
+2. **TunnelBoard** on your laptop or workstation holds the **SSH forward** that exposes the gateway WebSocket on your loopback interface.
+3. **OpenClaw.app** keeps using **`ws://127.0.0.1:18789`** locally; it does not care whether `ssh -N` or TunnelBoard maintains the tunnel—only that the port is reachable and stable.
 
 ## Who this is for
 
@@ -59,15 +59,15 @@ If you already use `LocalForward 18789 127.0.0.1:18789`, you can often **paste t
 - Anyone who has already followed OpenClaw’s remote-gateway docs and wants **the same semantics with better resilience**.
 - Teams that need **one portable tool** across macOS and Windows for SSH forwarding.
 
-## Get Loris Tunnel
+## Get TunnelBoard
 
-- **Releases**: [GitHub — loris-tunnel-app](https://github.com/RangerWolf/loris-tunnel-app/releases)
-- **Product overview**: [Introduction to Loris Tunnel](./20260316-introduction)
+- **Releases**: [GitHub — TunnelBoard](https://github.com/HanZephyr/TunnelBoard/releases)
+- **Product overview**: [Introduction to TunnelBoard](./20260316-introduction)
 
 ::: info About OpenClaw
-OpenClaw, its gateway, and port conventions are documented on **[openclaws.io](https://openclaws.io/)**. Loris Tunnel is an independent SSH tunnel manager; pairing them is a common operational pattern, not a bundled vendor integration.
+OpenClaw, its gateway, and port conventions are documented on **[openclaws.io](https://openclaws.io/)**. TunnelBoard is an independent SSH tunnel manager; pairing them is a common operational pattern, not a bundled vendor integration.
 :::
 
 ## Summary
 
-**OpenClaw + SSH tunnel** is the right architecture for a **remote gateway**. **Loris Tunnel** makes that architecture **easier to run daily**: visual management, **auto-reconnect**, multi-hop support, and less time spent reviving stale `ssh -N` sessions—so you can focus on the agent, not the pipe.
+**OpenClaw + SSH tunnel** is the right architecture for a **remote gateway**. **TunnelBoard** makes that architecture **easier to run daily**: visual management, **auto-reconnect**, multi-hop support, and less time spent reviving stale `ssh -N` sessions—so you can focus on the agent, not the pipe.

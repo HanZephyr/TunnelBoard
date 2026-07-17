@@ -1,4 +1,4 @@
-module loris-tunnel
+module github.com/HanZephyr/TunnelBoard
 
 go 1.23
 

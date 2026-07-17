@@ -1,4 +1,4 @@
-# Loris Tunnel
+# TunnelBoard
 
 <div align="center">
 
@@ -18,9 +18,9 @@
 
 ## 项目简介
 
-**Loris Tunnel** 是一款跨平台桌面应用，用图形界面帮你创建、管理和监控 SSH 隧道。它把常用的 SSH 端口转发能力整理成易用的桌面界面，并内置自动重连机制，网络波动时也能尽量保持连接稳定。
+**TunnelBoard** 是一款跨平台桌面应用，用图形界面帮你创建、管理和监控 SSH 隧道。它把常用的 SSH 端口转发能力整理成易用的桌面界面，并内置自动重连机制，网络波动时也能尽量保持连接稳定。
 
-如果你经常需要访问远程服务器、数据库，或防火墙后的内网服务，Loris Tunnel 可以把这些隧道集中管理起来，减少反复敲命令和手动排查连接状态的麻烦。
+如果你经常需要访问远程服务器、数据库，或防火墙后的内网服务，TunnelBoard 可以把这些隧道集中管理起来，减少反复敲命令和手动排查连接状态的麻烦。
 
 ![总览](screenshots/screenshot-overview.png)
 
@@ -72,14 +72,14 @@
 
 1. 打开应用并看到安全提示后，点击“取消”
 2. 打开“系统设置” -> “隐私与安全性”
-3. 在安全性区域找到 Loris Tunnel，点击“仍要打开”
+3. 在安全性区域找到 TunnelBoard，点击“仍要打开”
 
 **方法二：通过终端解除限制**
 
 打开终端（Terminal），执行下面的命令。系统可能会要求输入电脑密码。
 
 ```bash
-sudo xattr -rd com.apple.quarantine /Applications/loris-tunnel.app
+sudo xattr -rd com.apple.quarantine /Applications/tunnelboard.app
 ```
 
 ### 从源码构建
@@ -91,8 +91,8 @@ sudo xattr -rd com.apple.quarantine /Applications/loris-tunnel.app
 - [Wails CLI](https://wails.io/docs/gettingstarted/installation) v2
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/loris-tunnel.git
-cd loris-tunnel
+git clone https://github.com/HanZephyr/TunnelBoard.git
+cd TunnelBoard
 
 # 安装前端依赖
 cd frontend && pnpm install && cd ..
@@ -108,15 +108,12 @@ wails build
 
 ## 配置文件
 
-Loris Tunnel 使用 TOML 文件保存配置，配置文件位置按以下规则确定：
+TunnelBoard 当前使用 TOML 文件保存配置，统一放在操作系统的当前用户应用数据目录：
 
-- **开发模式（`wails dev`）**：
-  - 如果当前工作目录可写，使用 `./config.toml`
-  - 否则使用 `~/.loris-tunnel/config.toml`
-- **打包后的正式版本（二进制可执行文件，包括开机自启动）**：
-  - 始终使用 `~/.loris-tunnel/config.toml`
+- **Windows：** `%AppData%\TunnelBoard\config.toml`
+- **macOS：** `~/Library/Application Support/TunnelBoard/config.toml`
 
-无论哪种模式，如果目标配置文件不存在或内容为空，Loris Tunnel 都会在首次运行时自动创建默认配置。
+如果目标配置文件不存在或内容为空，TunnelBoard 会在首次运行时自动创建默认配置。
 
 配置示例：
 

@@ -16,7 +16,7 @@ function detectSystemLocale() {
     return 'en'
 }
 
-const savedLocale = localStorage.getItem('loris-tunnel.locale')
+const savedLocale = localStorage.getItem('tunnelboard.locale')
 const locale = savedLocale || detectSystemLocale()
 
 const i18n = createI18n({

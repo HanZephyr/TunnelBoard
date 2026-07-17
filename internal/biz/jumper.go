@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"loris-tunnel/internal/conf"
-	"loris-tunnel/internal/forward"
-	"loris-tunnel/internal/model"
+	"github.com/HanZephyr/TunnelBoard/internal/conf"
+	"github.com/HanZephyr/TunnelBoard/internal/forward"
+	"github.com/HanZephyr/TunnelBoard/internal/model"
 )
 
 var (

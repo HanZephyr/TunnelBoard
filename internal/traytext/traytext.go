@@ -46,8 +46,8 @@ func fallbackEnglish() Strings {
 		ShowMainTooltip: "Bring the application window to the front",
 		QuitTitle:       "Quit",
 		QuitTooltip:     "Quit the application",
-		IconTooltip:     "Loris Tunnel",
-		AppTitle:        "Loris Tunnel",
+		IconTooltip:     "TunnelBoard",
+		AppTitle:        "TunnelBoard",
 	}
 }
 

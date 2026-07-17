@@ -1,13 +1,13 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
-  "name": "loris-tunnel",
-  "outputfilename": "loris-tunnel",
+  "name": "tunnelboard",
+  "outputfilename": "tunnelboard",
   "frontend:install": "pnpm install",
   "frontend:build": "pnpm run build",
   "frontend:dev:watcher": "pnpm run dev",
   "frontend:dev:serverUrl": "auto",
   "author": {
-    "name": "wenjun",
-    "email": "rangerwolf@aliyun.cn"
+    "name": "HanZephyr",
+    "email": ""
   }
 }

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"loris-tunnel/internal/model"
+	"github.com/HanZephyr/TunnelBoard/internal/model"
 )
 
 func TestMatchRulesPublicKeyOfferedButRejected(t *testing.T) {

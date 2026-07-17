@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"loris-tunnel/internal/autorestart"
-	"loris-tunnel/internal/conf"
-	"loris-tunnel/internal/uilocale"
+	"github.com/HanZephyr/TunnelBoard/internal/autorestart"
+	"github.com/HanZephyr/TunnelBoard/internal/conf"
+	"github.com/HanZephyr/TunnelBoard/internal/uilocale"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )

@@ -1,6 +1,6 @@
-# Introduction to Loris Tunnel
+# Introduction to TunnelBoard
 
-**Loris Tunnel** wraps the power of SSH port forwarding into a user-friendly UI, with automatic reconnection to keep your tunnels alive.
+**TunnelBoard** wraps the power of SSH port forwarding into a user-friendly UI, with automatic reconnection to keep your tunnels alive.
 
 ![Overview](../imgs/screenshot-overview.png)
 
@@ -13,14 +13,10 @@
 
 ![Import](../imgs/screenshot-create-tunnels-from-ssh-command.png)
 
-## Why Loris Tunnel?
+## Why TunnelBoard?
 
 Designed for developers and ops engineers who frequently work with remote servers, databases, and internal services behind firewalls — without touching the command line every time.
 
 ::: tip Getting Started
-Download the latest release for macOS or Windows. Loris Tunnel is built with Wails for a native feel.
+Download the latest release for macOS or Windows. TunnelBoard is built with Wails for a native feel.
 :::
-
-## Community
-
-Join our QQ group (**1009737419**) for discussions and support!

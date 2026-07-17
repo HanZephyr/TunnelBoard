@@ -1,6 +1,6 @@
 {
     "app": {
-        "title": "Loris Tunnel",
+        "title": "TunnelBoard",
         "sidebar": {
             "subtitle": "Менеджер SSH-туннелей",
             "overview": "Обзор",
@@ -316,7 +316,7 @@
         "theme": "Тёмная тема",
         "themeDesc": "Переключение светлой и тёмной темы",
         "autoRun": "Запуск при входе",
-        "autoRunDesc": "Запускать Loris Tunnel при входе в систему (только Pro)",
+        "autoRunDesc": "Запускать TunnelBoard при входе в систему (только Pro)",
         "autoRunProRequired": "Автозапуск при входе — функция Pro. Обновитесь для включения.",
         "autoRunExpiredDisabled": "Автозапуск был включён, но лицензия неактивна или истекла. Функция отключена. Обновитесь для повторного включения.",
         "appInfo": "О приложении",

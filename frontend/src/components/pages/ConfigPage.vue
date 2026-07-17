@@ -271,7 +271,7 @@ async function onOpenConfigDir() {
 
 
 watch(locale, async (newLocale) => {
-  localStorage.setItem('loris-tunnel.locale', newLocale)
+  localStorage.setItem('tunnelboard.locale', newLocale)
   try {
     await SaveUILocale(newLocale)
   } catch (_) {

@@ -1,6 +1,6 @@
 {
     "app": {
-        "title": "Loris Tunnel",
+        "title": "TunnelBoard",
         "sidebar": {
             "subtitle": "SSH 隧道管理",
             "overview": "概覽",
@@ -316,7 +316,7 @@
         "theme": "深色主題",
         "themeDesc": "切換明暗主題",
         "autoRun": "隨系統啟動",
-        "autoRunDesc": "登入時自動啟動 Loris Tunnel（僅 Pro）",
+        "autoRunDesc": "登入時自動啟動 TunnelBoard（僅 Pro）",
         "autoRunProRequired": "隨系統啟動為 Pro 功能，請升級後使用。",
         "autoRunExpiredDisabled": "您已開啟隨系統啟動，但目前未升級或授權已過期，已為您關閉該功能。請升級後重新開啟。",
         "appInfo": "應用程式資訊",

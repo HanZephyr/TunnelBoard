@@ -1,13 +1,13 @@
 ---
-title: Codex SSH Login on Remote Servers — Use Loris Tunnel for a Cleaner Port-Forward Workflow
-description: A practical codex ssh login guide for remote servers. Learn the SSH port-forward workaround from issue #2668 and how Loris Tunnel makes the flow easier to run daily.
+title: Codex SSH Login on Remote Servers — Use TunnelBoard for a Cleaner Port-Forward Workflow
+description: A practical codex ssh login guide for remote servers. Learn the SSH port-forward workaround from issue #2668 and how TunnelBoard makes the flow easier to run daily.
 ---
 
-# Codex SSH Login on Remote Servers — Use Loris Tunnel for a Cleaner Port-Forward Workflow
+# Codex SSH Login on Remote Servers — Use TunnelBoard for a Cleaner Port-Forward Workflow
 
 If you use Codex from a remote Linux server over SSH, you may hit a frustrating login problem: the auth flow expects a localhost callback, but your browser is on your laptop, not on the server.
 
-The community discussion in [openai/codex issue #2668](https://github.com/openai/codex/issues/2668) documents a practical workaround using SSH local port forwarding. This article explains that pattern and shows how **Loris Tunnel** can make the same `codex ssh` workflow easier to operate.
+The community discussion in [openai/codex issue #2668](https://github.com/openai/codex/issues/2668) documents a practical workaround using SSH local port forwarding. This article explains that pattern and shows how **TunnelBoard** can make the same `codex ssh` workflow easier to operate.
 
 ## The problem in `codex ssh` environments
 
@@ -49,11 +49,11 @@ The raw command works, but daily use can become noisy:
 
 For occasional use, that is acceptable. For repeated `codex ssh` operations, a managed tunnel workflow is usually better.
 
-## How Loris Tunnel helps with the same flow
+## How TunnelBoard helps with the same flow
 
-Loris Tunnel does not change the SSH/auth protocol. It manages the tunnel lifecycle in a desktop UI so the workaround is easier to repeat reliably.
+TunnelBoard does not change the SSH/auth protocol. It manages the tunnel lifecycle in a desktop UI so the workaround is easier to repeat reliably.
 
-| Need in codex ssh workflow | Loris Tunnel value |
+| Need in codex ssh workflow | TunnelBoard value |
 | -------------------------- | ------------------ |
 | Keep `localhost` forward alive | Auto-reconnect and health visibility for long-running forwards. |
 | Reuse the same mapping often | Save tunnel profiles with labels and restart quickly. |
@@ -68,7 +68,7 @@ If you currently use:
 ssh -p 2222 -N -L 1455:localhost:1455 root@YOUR_SERVER
 ```
 
-You can model the same path in Loris Tunnel with:
+You can model the same path in TunnelBoard with:
 
 - SSH host: `YOUR_SERVER`
 - SSH port: `2222`
@@ -90,4 +90,4 @@ Then run Codex remotely, copy the printed login URL, and paste it into your loca
 
 ## Final takeaway
 
-The SSH-forward workaround from issue #2668 is the right fix for remote `codex ssh` login callbacks. Loris Tunnel builds on that exact pattern and makes it practical for day-to-day use when you want fewer fragile shell sessions and more reliable tunnel operations.
+The SSH-forward workaround from issue #2668 is the right fix for remote `codex ssh` login callbacks. TunnelBoard builds on that exact pattern and makes it practical for day-to-day use when you want fewer fragile shell sessions and more reliable tunnel operations.

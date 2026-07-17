@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"loris-tunnel/internal/model"
+	"github.com/HanZephyr/TunnelBoard/internal/model"
 )
 
 func TestStorage_LoadUpdate(t *testing.T) {

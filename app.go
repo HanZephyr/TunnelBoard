@@ -15,18 +15,18 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/HanZephyr/TunnelBoard/internal/aidebug"
+	"github.com/HanZephyr/TunnelBoard/internal/autostart"
+	"github.com/HanZephyr/TunnelBoard/internal/biz"
+	"github.com/HanZephyr/TunnelBoard/internal/conf"
+	"github.com/HanZephyr/TunnelBoard/internal/device"
+	"github.com/HanZephyr/TunnelBoard/internal/license"
+	"github.com/HanZephyr/TunnelBoard/internal/model"
+	"github.com/HanZephyr/TunnelBoard/internal/sshconfig"
+	"github.com/HanZephyr/TunnelBoard/internal/traytext"
+	"github.com/HanZephyr/TunnelBoard/internal/uilocale"
+	"github.com/HanZephyr/TunnelBoard/internal/updater"
 	"github.com/energye/systray"
-	"loris-tunnel/internal/aidebug"
-	"loris-tunnel/internal/autostart"
-	"loris-tunnel/internal/biz"
-	"loris-tunnel/internal/conf"
-	"loris-tunnel/internal/device"
-	"loris-tunnel/internal/license"
-	"loris-tunnel/internal/model"
-	"loris-tunnel/internal/sshconfig"
-	"loris-tunnel/internal/traytext"
-	"loris-tunnel/internal/uilocale"
-	"loris-tunnel/internal/updater"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -97,7 +97,7 @@ func NewApp() *App {
 
 func detectLogLevel() slog.Level {
 	// Explicit override takes highest priority.
-	if raw := strings.TrimSpace(os.Getenv("LORIS_TUNNEL_LOG_LEVEL")); raw != "" {
+	if raw := strings.TrimSpace(os.Getenv("TUNNELBOARD_LOG_LEVEL")); raw != "" {
 		return parseLogLevel(raw)
 	}
 	// `wails dev` injects `devserver`; use debug logging for dev runtime.
@@ -130,7 +130,7 @@ func configureLogger(configPath string, level slog.Level) error {
 		return fmt.Errorf("create log dir failed: %w", err)
 	}
 
-	logPath := filepath.Join(dir, "loris-tunnel.log")
+	logPath := filepath.Join(dir, "tunnelboard.log")
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("open log file failed: %w", err)

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"loris-tunnel/internal/model"
+	"github.com/HanZephyr/TunnelBoard/internal/model"
 )
 
 const (

@@ -2,16 +2,16 @@
 layout: home
 
 hero:
-  name: "Loris Tunnel"
+  name: "TunnelBoard"
   text: "A Fast, Reliable SSH Tunnel Manager"
   tagline: "A desktop app that keeps SSH tunnels stable, organized, and easy to manage on macOS and Windows."
   image:
     src: /logo.png
-    alt: Loris Tunnel Logo
+    alt: TunnelBoard Logo
   actions:
     - theme: brand
       text: Download Now
-      link: https://github.com/RangerWolf/loris-tunnel-app/releases
+      link: https://github.com/HanZephyr/TunnelBoard/releases
     - theme: alt
       text: Learn More
       link: /articles/20260316-introduction
@@ -35,10 +35,7 @@ features:
 
 ## Contact
 
-Have questions or feedback? Feel free to reach out to the author:
-
-- 📧 **Email**: [yang.rangerwolf@gmail.com](mailto:yang.rangerwolf@gmail.com)
-- 💬 **QQ Group**: **1009737419**
+For questions, feedback, and release information, use the project's GitHub repository.
 
 </div>
 

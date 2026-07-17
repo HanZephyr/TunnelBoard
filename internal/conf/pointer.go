@@ -14,14 +14,6 @@ const ConfigRootFileName = "config.root"
 // ResolveImplicitConfigPath returns the config file path without applying
 // config.root redirection (legacy ResolveConfigPath semantics).
 func ResolveImplicitConfigPath() string {
-	if strings.TrimSpace(os.Getenv("devserver")) != "" {
-		return filepath.Join(getDefaultConfigDir(), defaultConfigPath)
-	}
-
-	if homePath := GetHomeConfigPath(); homePath != "" {
-		return homePath
-	}
-
 	return filepath.Join(getDefaultConfigDir(), defaultConfigPath)
 }
 

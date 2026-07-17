@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	defaultGithubLatestReleaseAPIURL = "https://api.github.com/repos/RangerWolf/loris-tunnel-app/releases/latest"
-	defaultGithubReleasesPageURL     = "https://github.com/RangerWolf/loris-tunnel-app/releases"
+	defaultGithubLatestReleaseAPIURL = "https://api.github.com/repos/HanZephyr/TunnelBoard/releases/latest"
+	defaultGithubReleasesPageURL     = "https://github.com/HanZephyr/TunnelBoard/releases"
 	githubAPIRequestTimeout          = 10 * time.Second
 )
 
@@ -57,11 +57,11 @@ type semVersion struct {
 func NewGithubReleaseProvider() *GithubReleaseProvider {
 	return &GithubReleaseProvider{
 		latestReleaseAPIURL: firstNonEmpty(
-			strings.TrimSpace(getenv("LORIS_TUNNEL_GITHUB_LATEST_RELEASE_API_URL")),
+			strings.TrimSpace(getenv("TUNNELBOARD_GITHUB_LATEST_RELEASE_API_URL")),
 			defaultGithubLatestReleaseAPIURL,
 		),
 		releasesPageURL: firstNonEmpty(
-			strings.TrimSpace(getenv("LORIS_TUNNEL_GITHUB_RELEASES_PAGE_URL")),
+			strings.TrimSpace(getenv("TUNNELBOARD_GITHUB_RELEASES_PAGE_URL")),
 			defaultGithubReleasesPageURL,
 		),
 		httpClient: &http.Client{Timeout: githubAPIRequestTimeout},
@@ -106,7 +106,7 @@ func (p *GithubReleaseProvider) fetchLatestRelease(ctx context.Context) (githubL
 		return githubLatestRelease{}, fmt.Errorf("create GitHub request failed: %w", err)
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "loris-tunnel-updater")
+	req.Header.Set("User-Agent", "tunnelboard-updater")
 
 	resp, err := p.httpClient.Do(req)
 	if err != nil {

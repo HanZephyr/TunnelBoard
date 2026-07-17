@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	appName        = "loris-tunnel"
-	appDisplayName = "Loris Tunnel"
+	appName        = "tunnelboard"
+	appDisplayName = "TunnelBoard"
 )
 
 // isSupported returns true if the current OS supports launch-at-login.
@@ -20,7 +20,7 @@ func isSupported() bool {
 func newApp() *autostart.App {
 	execPath, _ := os.Executable()
 	if execPath == "" {
-		execPath = "loris-tunnel"
+		execPath = "tunnelboard"
 	}
 	return &autostart.App{
 		Name:        appName,

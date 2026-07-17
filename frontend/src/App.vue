@@ -72,7 +72,7 @@ const sidebarCollapsed = ref(savedSidebarCollapsed === '1')
 const activePage = ref('overview')
 const selectedLogLevel = ref('all')
 const configMessage = ref('')
-const DEFAULT_RELEASES_PAGE_URL = 'https://github.com/RangerWolf/loris-tunnel-app/releases'
+const DEFAULT_RELEASES_PAGE_URL = 'https://github.com/HanZephyr/TunnelBoard/releases'
 const releasePageUrl = ref(DEFAULT_RELEASES_PAGE_URL)
 const showOverviewActive = ref(true)
 const showOverviewActivity = ref(true)
