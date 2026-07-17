@@ -162,6 +162,28 @@ func (b *CatalogBiz) MoveForward(forwardID, targetFolderID int) error {
 	return err
 }
 
+// ResolveChain 按 fw.ChainHostIDs 顺序从 Vault 解析 SSH 主机链；缺 ID 以
+// model.ErrRefMissing 包装报错，供运行时 Module 在拨号前取得完整主机配置。
+func (b *CatalogBiz) ResolveChain(fw model.Forward) ([]model.SSHHost, error) {
+	data, err := b.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[int]model.SSHHost, len(data.SSHHosts))
+	for _, h := range data.SSHHosts {
+		byID[h.ID] = h
+	}
+	hosts := make([]model.SSHHost, 0, len(fw.ChainHostIDs))
+	for _, id := range fw.ChainHostIDs {
+		h, ok := byID[id]
+		if !ok {
+			return nil, fmt.Errorf("%w: forward %q (%d) ssh host %d", model.ErrRefMissing, fw.Name, fw.ID, id)
+		}
+		hosts = append(hosts, h)
+	}
+	return hosts, nil
+}
+
 // 删除规则的哨兵错误，供应用层用 errors.Is 映射为确认流程或提示。
 var (
 	ErrHostInUse      = errors.New("biz: ssh host is referenced by forwards")
