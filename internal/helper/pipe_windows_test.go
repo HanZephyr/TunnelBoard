@@ -26,10 +26,14 @@ func TestPipeRoundTrip(t *testing.T) {
 		Version:   "test-1",
 	}
 	pipePath := `\\.\pipe\tunnelboard-helper-test-` + strconv.Itoa(os.Getpid())
+	owner, ownerErr := helper.CurrentUserSID()
+	if ownerErr != nil {
+		t.Fatalf("CurrentUserSID: %v", ownerErr)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	go func() { _ = helper.ServePipe(ctx, env, pipePath) }()
+	go func() { _ = helper.ServePipe(ctx, env, pipePath, owner) }()
 
 	client := &helper.Client{PipePath: pipePath, Timeout: 3 * time.Second}
 	var version string

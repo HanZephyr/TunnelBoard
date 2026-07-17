@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/HanZephyr/TunnelBoard/internal/helper"
 )
@@ -20,12 +21,20 @@ func main() {
 	install := flag.Bool("install", false, "install and start the Windows service (requires elevation)")
 	uninstall := flag.Bool("uninstall", false, "stop and remove the Windows service (requires elevation)")
 	serve := flag.Bool("serve", false, "run the helper service (used by SCM)")
+	owner := flag.String("owner", "", "SID of the installing (unprivileged) user, used for the pipe ACL")
 	flag.Parse()
 
 	var err error
 	switch {
 	case *install:
-		err = helper.InstallService()
+		ownerSID := strings.TrimSpace(*owner)
+		if ownerSID == "" {
+			// 直接以管理员身份运行 -install 时退化为当前用户（管理员）SID。
+			if ownerSID, err = helper.CurrentUserSID(); err != nil {
+				break
+			}
+		}
+		err = helper.InstallService(ownerSID)
 	case *uninstall:
 		err = helper.UninstallService()
 	default:

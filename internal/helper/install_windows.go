@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -39,14 +40,20 @@ func (c *Client) EnsureInstalled() error {
 }
 
 // elevateInstall 以 runas 提升执行 helper 的 -install（触发一次 UAC 并等待结束）。
+// 当前（普通权限）用户的 SID 显式传给提权进程：管道 DACL 按它授权，
+// 覆盖标准用户借管理员凭据安装的场景（提权进程自身账户并非安装者）。
 func elevateInstall() error {
 	exe, err := helperBinaryPath()
 	if err != nil {
 		return err
 	}
+	u, err := user.Current()
+	if err != nil {
+		return fmt.Errorf("helper: resolve current user: %w", err)
+	}
 	cmd := exec.Command(
 		"powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
-		"Start-Process", "-Verb", "RunAs", "-Wait", "-FilePath", exe, "-ArgumentList", "-install",
+		"Start-Process", "-Verb", "RunAs", "-Wait", "-FilePath", exe, "-ArgumentList", "-install", "-owner", u.Uid,
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("helper: elevated install failed: %w: %s", err, strings.TrimSpace(string(out)))

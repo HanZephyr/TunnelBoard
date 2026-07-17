@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows/svc"
 	"golang.org/x/sys/windows/svc/mgr"
@@ -23,8 +24,12 @@ const serviceDisplayName = "TunnelBoard Helper"
 var errServiceExists = syscall.Errno(1073)
 
 // InstallService 注册并启动 helper 的 Windows 服务（需要管理员权限，由提升的 -install 调用）。
+// ownerSID 是安装者（发起提权的普通用户）的 SID，落盘后供服务运行时构造管道 DACL；
 // 服务已存在时改为确保其启动（幂等，供 EnsureInstalled 的更新路径复用）。
-func InstallService() error {
+func InstallService(ownerSID string) error {
+	if err := writeOwnerSID(ownerSID); err != nil {
+		return fmt.Errorf("helper: persist owner sid: %w", err)
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("helper: resolve executable: %w", err)
@@ -52,6 +57,15 @@ func InstallService() error {
 		existing, openErr := m.OpenService(ServiceName)
 		if openErr != nil {
 			return fmt.Errorf("helper: open existing service: %w", openErr)
+		}
+		// 已存在的服务可能跑着旧版本二进制：先停后启，确保升级生效。
+		_, _ = existing.Control(svc.Stop)
+		for i := 0; i < 20; i++ {
+			st, queryErr := existing.Query()
+			if queryErr == nil && st.State == svc.Stopped {
+				break
+			}
+			time.Sleep(250 * time.Millisecond)
 		}
 		s = existing
 	}
@@ -95,23 +109,32 @@ func RunServiceMain(env Environment) error {
 		return fmt.Errorf("helper: detect service context: %w", err)
 	}
 	if !inService {
-		return ServePipe(ctx, env, PipePath)
+		owner, err := CurrentUserSID()
+		if err != nil {
+			return err
+		}
+		return ServePipe(ctx, env, PipePath, owner)
 	}
-	return svc.Run(ServiceName, &pipeService{ctx: ctx, cancel: cancel, env: env})
+	owner, err := readOwnerSID()
+	if err != nil {
+		return fmt.Errorf("helper: read owner sid (reinstall the service): %w", err)
+	}
+	return svc.Run(ServiceName, &pipeService{ctx: ctx, cancel: cancel, env: env, ownerSID: owner})
 }
 
 // pipeService 适配 Windows 服务控制：Stop/Shutdown 时取消 ServePipe 的上下文。
 type pipeService struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	env    Environment
+	ctx      context.Context
+	cancel   context.CancelFunc
+	env      Environment
+	ownerSID string
 }
 
 func (s *pipeService) Execute(args []string, requests <-chan svc.ChangeRequest, status chan<- svc.Status) (bool, uint32) {
 	status <- svc.Status{State: svc.StartPending}
 	serveDone := make(chan error, 1)
 	go func() {
-		serveDone <- ServePipe(s.ctx, s.env, PipePath)
+		serveDone <- ServePipe(s.ctx, s.env, PipePath, s.ownerSID)
 	}()
 	status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
 

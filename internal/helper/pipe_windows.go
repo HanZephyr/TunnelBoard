@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os/user"
 	"strings"
 
 	winio "github.com/Microsoft/go-winio"
@@ -17,20 +16,21 @@ import (
 // PipePath 是 helper 服务监听的命名管道；主程序经它发送白名单请求。
 const PipePath = `\\.\pipe\tunnelboard-helper`
 
-// pipeSDDL 返回管道 DACL：仅 SYSTEM（服务账户）与当前交互用户可访问。
-// 其他本地用户无法连接该管道发送特权请求。
-func pipeSDDL() (string, error) {
-	u, err := user.Current()
-	if err != nil {
-		return "", fmt.Errorf("helper: resolve current user: %w", err)
+// pipeSDDL 返回管道 DACL：仅 SYSTEM（服务账户）与指定的安装者 SID 可访问。
+// 安装者 SID 在提权安装时由主程序（普通用户身份）显式传入并落盘，
+// 服务运行时读取——绝不使用服务上下文中的账户（那是 SYSTEM 自身，见 issue #1）。
+func pipeSDDL(ownerSID string) (string, error) {
+	ownerSID = strings.TrimSpace(ownerSID)
+	if ownerSID == "" || strings.ContainsAny(ownerSID, " \t\r\n()") {
+		return "", fmt.Errorf("helper: invalid owner SID %q", ownerSID)
 	}
-	return "D:P(A;;GA;;;SY)(A;;GA;;;" + u.Uid + ")", nil
+	return "D:P(A;;GA;;;SY)(A;;GA;;;" + ownerSID + ")", nil
 }
 
 // ServePipe 监听命名管道并逐连接处理换行分隔 JSON 请求，直到 ctx 取消。
 // 单连接单请求：客户端短连接模型，生命周期最简单。
-func ServePipe(ctx context.Context, env Environment, pipePath string) error {
-	sddl, err := pipeSDDL()
+func ServePipe(ctx context.Context, env Environment, pipePath, ownerSID string) error {
+	sddl, err := pipeSDDL(ownerSID)
 	if err != nil {
 		return err
 	}
