@@ -133,13 +133,16 @@ func (a *Adapter) Running() bool {
 
 // Start 冷启动全局 Caddy 进程（配置须已写入 caddy.json）。
 // 经 XDG_DATA_HOME 把 Caddy 存储钉在数据目录内，本地 CA 路径因而确定。
+// 环境变量覆盖的二进制（开发/测试）跳过完整性校验。
 func (a *Adapter) Start() error {
 	bin, err := a.Locate()
 	if err != nil {
 		return err
 	}
-	if err := a.VerifySHA256(bin); err != nil {
-		return err
+	if bin != strings.TrimSpace(os.Getenv(EnvPathOverride)) {
+		if err := a.VerifySHA256(bin); err != nil {
+			return err
+		}
 	}
 	env := append(os.Environ(), "XDG_DATA_HOME="+a.DataDir)
 	return a.StartProcess(bin, []string{"run", "--config", a.configPath()}, a.DataDir, env)
