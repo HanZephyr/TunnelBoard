@@ -63,6 +63,25 @@ func TestHostKeyCallback_RejectPropagatesError(t *testing.T) {
 	}
 }
 
+func TestHostKeyCallback_RejectWrapsSentinel(t *testing.T) {
+	key := testSSHPublicKey(t)
+	want := errors.New("host key mismatch")
+	cb, err := makeHostKeyCallback("example.com", 22, func(host string, port int, k ssh.PublicKey) error {
+		return want
+	})
+	if err != nil {
+		t.Fatalf("makeHostKeyCallback failed: %v", err)
+	}
+
+	cbErr := cb("example.com:22", nil, key)
+	if !errors.Is(cbErr, ErrHostKeyRejected) {
+		t.Fatalf("callback error = %v, want errors.Is ErrHostKeyRejected", cbErr)
+	}
+	if !errors.Is(cbErr, want) {
+		t.Fatalf("callback error = %v, want errors.Is original verifier error", cbErr)
+	}
+}
+
 func TestMakeHostKeyCallback_NilVerifierFailsClosed(t *testing.T) {
 	if _, err := makeHostKeyCallback("example.com", 22, nil); err == nil {
 		t.Fatalf("expected error when verifier is nil")

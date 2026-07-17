@@ -35,6 +35,9 @@ var (
 	sshAgentConn net.Conn
 )
 
+// dialChain 是 dialSSHChain 的可替换接缝：测试注入 fake 以驱动重连路径。
+var dialChain = dialSSHChain
+
 type RuntimeEventType string
 
 const (
@@ -497,7 +500,7 @@ func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), error) {
 		attempt++
 		slog.Info("forward reconnect attempt", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "wait", wait.String())
 
-		client, closeChain, err := dialSSHChain(f.hosts, f.verifier)
+		client, closeChain, err := dialChain(f.hosts, f.verifier)
 		if err == nil {
 			if normalizeForwardMode(f.forward.Mode) == "remote" {
 				ln, listenErr := f.bindRemoteListener(client)
@@ -515,6 +518,12 @@ func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), error) {
 		}
 
 		lastErr = err
+		// 终态错误（指纹被拒、认证失败）重试无意义，立即上抛；bindRemoteListener
+		// 失败（端口冲突）不算终态，走上面的 continue 继续退避。
+		if IsTerminalError(err) {
+			slog.Error("forward reconnect hit terminal error", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "err", err)
+			return nil, nil, err
+		}
 		slog.Warn("forward reconnect failed", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "err", err)
 		wait = nextReconnectWait(wait)
 	}
