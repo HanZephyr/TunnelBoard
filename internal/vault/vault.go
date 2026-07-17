@@ -74,6 +74,11 @@ func Open(dir string) (*Store, error) {
 	}
 }
 
+// Dir 返回 Vault 所在的数据目录。
+func (s *Store) Dir() string {
+	return s.dir
+}
+
 // Load 读取并解密 Vault 数据。
 func (s *Store) Load() (model.VaultData, error) {
 	s.mu.Lock()

@@ -3,11 +3,9 @@ package main
 import (
 	"embed"
 	"os"
-	"path/filepath"
 	"runtime"
 
 	"github.com/HanZephyr/TunnelBoard/internal/traytext"
-	"github.com/HanZephyr/TunnelBoard/internal/uilocale"
 	"github.com/energye/systray"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -35,12 +33,7 @@ const (
 func main() {
 	// Create an instance of the app structure
 	app := NewApp()
-	configDir := "."
-	if app.storage != nil {
-		configDir = filepath.Dir(app.storage.Path())
-	}
-	localeTag := uilocale.Resolve(configDir)
-	trayLabels := traytext.ForLocale(localeTag)
+	trayLabels := traytext.ForLocale(app.UILocale())
 
 	showMainWindow := func() {
 		if app == nil || app.ctx == nil {

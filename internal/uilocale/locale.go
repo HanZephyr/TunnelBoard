@@ -2,12 +2,8 @@ package uilocale
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 )
-
-// FileName is stored next to config.toml so the Go tray can follow the UI language.
-const FileName = "ui.locale"
 
 // Normalize maps arbitrary input to one of the supported vue-i18n locale tags.
 func Normalize(raw string) string {
@@ -46,37 +42,4 @@ func DetectFromEnv() string {
 		return Normalize(base)
 	}
 	return "en"
-}
-
-// ReadFile returns the raw contents of ui.locale, or "" if missing.
-func ReadFile(configDir string) string {
-	if strings.TrimSpace(configDir) == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(configDir, FileName))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-// WriteFile persists the locale tag for the next process / tray refresh.
-func WriteFile(configDir, locale string) error {
-	dir := strings.TrimSpace(configDir)
-	if dir == "" {
-		return os.ErrInvalid
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tag := Normalize(locale)
-	return os.WriteFile(filepath.Join(dir, FileName), []byte(tag+"\n"), 0o644)
-}
-
-// Resolve picks saved preference, otherwise OS locale.
-func Resolve(configDir string) string {
-	if s := ReadFile(configDir); s != "" {
-		return Normalize(s)
-	}
-	return DetectFromEnv()
 }
