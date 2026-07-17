@@ -71,10 +71,10 @@ type HostConflict struct {
 
 // ImportPreview 是导入前预览：实体计数、建议的新顶层文件夹名、冲突清单与私钥文件清单。
 type ImportPreview struct {
-	Counts       map[string]int `json:"counts"`
-	FolderName   string         `json:"folderName"`
+	Counts        map[string]int `json:"counts"`
+	FolderName    string         `json:"folderName"`
 	HostConflicts []HostConflict `json:"hostConflicts"`
-	KeyFiles     []string       `json:"keyFiles"`
+	KeyFiles      []string       `json:"keyFiles"`
 }
 
 // PreviewImport 解密备份包并对照当前 Vault 生成预览；不写入任何数据。
@@ -128,12 +128,12 @@ type ImportPlan struct {
 
 // ImportSummary 报告导入结果；KeyFiles 为备份包内的私钥文件（由 UI 引导用户另存，不自动写盘）。
 type ImportSummary struct {
-	Imported           map[string]int      `json:"imported"`
-	SkippedHosts       int                 `json:"skippedHosts"`
-	FlattenedFolders   int                 `json:"flattenedFolders"`
-	RoutesDeactivated  int                 `json:"routesDeactivated"`
-	KeyFiles           map[string][]byte   `json:"-"`
-	KeyFilePaths       []string            `json:"keyFilePaths"`
+	Imported          map[string]int    `json:"imported"`
+	SkippedHosts      int               `json:"skippedHosts"`
+	FlattenedFolders  int               `json:"flattenedFolders"`
+	RoutesDeactivated int               `json:"routesDeactivated"`
+	KeyFiles          map[string][]byte `json:"-"`
+	KeyFilePaths      []string          `json:"keyFilePaths"`
 }
 
 // ApplyImport 追加导入：全部内容包装到新顶层文件夹；ID 全部重映射并修正引用；
@@ -177,8 +177,8 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 		d.Folders = append(d.Folders, wrapper)
 
 		// 文件夹：顶层挂到 wrapper 下；原第二层压平（其 Forward 并入父文件夹）。
-		folderNewID := map[int]int{}          // 原顶层 ID → 新 ID
-		flattenInto := map[int]int{}          // 原第二层 ID → 其父的原 ID（稍后换为新 ID）
+		folderNewID := map[int]int{} // 原顶层 ID → 新 ID
+		flattenInto := map[int]int{} // 原第二层 ID → 其父的原 ID（稍后换为新 ID）
 		for _, f := range imported.Folders {
 			if f.ParentID == 0 {
 				nf := f
