@@ -12,8 +12,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// TestJumperLatency measures pure SSH channel round-trip latency via keepalive.
-func TestJumperLatency(client *ssh.Client) (time.Duration, error) {
+// TestSSHHostLatency measures pure SSH channel round-trip latency via keepalive.
+func TestSSHHostLatency(client *ssh.Client) (time.Duration, error) {
 	if client == nil {
 		return 0, fmt.Errorf("ssh client is nil")
 	}
@@ -26,19 +26,19 @@ func TestJumperLatency(client *ssh.Client) (time.Duration, error) {
 	return time.Since(start), nil
 }
 
-// TestJumperConnection verifies SSH handshake/auth against the jumper.
-func TestJumperConnection(jumper model.Jumper) error {
-	client, err := dialSSH(jumper)
+// TestSSHHostConnection verifies SSH handshake/auth against the SSH host.
+func TestSSHHostConnection(host model.SSHHost, verifier HostKeyVerifier) error {
+	client, err := dialSSH(host, verifier)
 	if err != nil {
 		return err
 	}
 	return client.Close()
 }
 
-// TestTunnelConnection verifies tunnel prerequisites and target reachability.
+// TestForwardConnection verifies forward prerequisites and target reachability.
 // Currently it supports "local", "remote" and "dynamic" modes only.
-func TestTunnelConnection(tunnel model.Tunnel, jumpers []model.Jumper) (time.Duration, error) {
-	mode := strings.TrimSpace(tunnel.Mode)
+func TestForwardConnection(fw model.Forward, hosts []model.SSHHost, verifier HostKeyVerifier) (time.Duration, error) {
+	mode := strings.TrimSpace(fw.Mode)
 	if mode == "" {
 		mode = "local"
 	}
@@ -47,11 +47,11 @@ func TestTunnelConnection(tunnel model.Tunnel, jumpers []model.Jumper) (time.Dur
 	}
 
 	if mode == "local" || mode == "dynamic" {
-		localHost := strings.TrimSpace(tunnel.LocalHost)
+		localHost := strings.TrimSpace(fw.LocalHost)
 		if localHost == "" {
 			localHost = "127.0.0.1"
 		}
-		localAddr := net.JoinHostPort(localHost, strconv.Itoa(tunnel.LocalPort))
+		localAddr := net.JoinHostPort(localHost, strconv.Itoa(fw.LocalPort))
 		ln, err := net.Listen("tcp", localAddr)
 		if err != nil {
 			return 0, fmt.Errorf("local listen %s failed: %w", localAddr, err)
@@ -59,13 +59,13 @@ func TestTunnelConnection(tunnel model.Tunnel, jumpers []model.Jumper) (time.Dur
 		_ = ln.Close()
 	}
 
-	client, closeChain, err := dialSSHChain(jumpers)
+	client, closeChain, err := dialSSHChain(hosts, verifier)
 	if err != nil {
 		return 0, err
 	}
 	defer closeChain()
 
-	latency, err := TestJumperLatency(client)
+	latency, err := TestSSHHostLatency(client)
 	if err != nil {
 		return 0, fmt.Errorf("measure ssh latency failed: %w", err)
 	}
@@ -77,13 +77,13 @@ func TestTunnelConnection(tunnel model.Tunnel, jumpers []model.Jumper) (time.Dur
 		return latency, nil
 	}
 	if mode == "remote" {
-		if err := probeRemoteListen(client, tunnel.RemoteHost, tunnel.RemotePort); err != nil {
+		if err := probeRemoteListen(client, fw.RemoteHost, fw.RemotePort); err != nil {
 			return 0, err
 		}
 		return latency, nil
 	}
 
-	if err := probeRemoteDial(client, tunnel.RemoteHost, tunnel.RemotePort); err != nil {
+	if err := probeRemoteDial(client, fw.RemoteHost, fw.RemotePort); err != nil {
 		return 0, err
 	}
 	return latency, nil

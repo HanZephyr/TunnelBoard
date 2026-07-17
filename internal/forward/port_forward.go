@@ -1,7 +1,6 @@
 package forward
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +18,6 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
-	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 var ErrUnsupportedMode = errors.New("only local, remote and dynamic modes are supported")
@@ -50,8 +48,9 @@ type RuntimeEvent struct {
 }
 
 type LocalForward struct {
-	tunnel  model.Tunnel
-	jumpers []model.Jumper
+	forward  model.Forward
+	hosts    []model.SSHHost
+	verifier HostKeyVerifier
 
 	mu          sync.Mutex
 	started     bool
@@ -68,15 +67,16 @@ type LocalForward struct {
 	wg          sync.WaitGroup
 }
 
-func NewLocalForward(tunnel model.Tunnel, jumpers []model.Jumper) *LocalForward {
+func NewLocalForward(fw model.Forward, hosts []model.SSHHost, verifier HostKeyVerifier) *LocalForward {
 	return &LocalForward{
-		tunnel:  tunnel,
-		jumpers: append([]model.Jumper{}, jumpers...),
+		forward:  fw,
+		hosts:    append([]model.SSHHost{}, hosts...),
+		verifier: verifier,
 	}
 }
 
 func (f *LocalForward) Start() error {
-	mode := normalizeForwardMode(f.tunnel.Mode)
+	mode := normalizeForwardMode(f.forward.Mode)
 	if mode != "local" && mode != "remote" && mode != "dynamic" {
 		return ErrUnsupportedMode
 	}
@@ -94,35 +94,35 @@ func (f *LocalForward) Start() error {
 	f.mu.Unlock()
 
 	slog.Info(
-		"tunnel forward start",
-		"tunnel_id", f.tunnel.ID,
-		"name", f.tunnel.Name,
-		"jumper_hops", len(f.jumpers),
-		"keepalive_interval_ms", f.lastJumper().KeepAliveIntervalMs,
-		"timeout_ms", f.lastJumper().TimeoutMs,
+		"forward start",
+		"forward_id", f.forward.ID,
+		"name", f.forward.Name,
+		"host_hops", len(f.hosts),
+		"keepalive_interval_ms", f.lastHost().KeepAliveIntervalMs,
+		"timeout_ms", f.lastHost().TimeoutMs,
 	)
 
-	client, closeChain, err := dialSSHChain(f.jumpers)
+	client, closeChain, err := dialSSHChain(f.hosts, f.verifier)
 	if err != nil {
 		f.setRunErr(err)
-		slog.Error("tunnel initial dial failed", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "err", err)
+		slog.Error("forward initial dial failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", err)
 		return err
 	}
 	if mode == "local" {
-		if err := probeRemoteDial(client, f.tunnel.RemoteHost, f.tunnel.RemotePort); err != nil {
+		if err := probeRemoteDial(client, f.forward.RemoteHost, f.forward.RemotePort); err != nil {
 			closeChain()
 			f.setRunErr(err)
 			slog.Error(
-				"tunnel initial remote probe failed",
-				"tunnel_id",
-				f.tunnel.ID, "name", f.tunnel.Name, "err", err)
+				"forward initial remote probe failed",
+				"forward_id",
+				f.forward.ID, "name", f.forward.Name, "err", err)
 			return err
 		}
 	} else if mode == "dynamic" {
 		if err := probeDynamicForwardCapability(client); err != nil {
 			closeChain()
 			f.setRunErr(err)
-			slog.Error("tunnel dynamic probe failed", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "err", err)
+			slog.Error("forward dynamic probe failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", err)
 			return err
 		}
 	}
@@ -133,21 +133,21 @@ func (f *LocalForward) Start() error {
 		if err != nil {
 			closeChain()
 			f.setRunErr(err)
-			slog.Error("tunnel remote listen failed", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "err", err)
+			slog.Error("forward remote listen failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", err)
 			return err
 		}
 	} else {
-		localHost := strings.TrimSpace(f.tunnel.LocalHost)
+		localHost := strings.TrimSpace(f.forward.LocalHost)
 		if localHost == "" {
 			localHost = "127.0.0.1"
 		}
-		localAddr := net.JoinHostPort(localHost, strconv.Itoa(f.tunnel.LocalPort))
+		localAddr := net.JoinHostPort(localHost, strconv.Itoa(f.forward.LocalPort))
 		ln, err = net.Listen("tcp", localAddr)
 		if err != nil {
 			closeChain()
 			runErr := fmt.Errorf("listen %s failed: %w", localAddr, err)
 			f.setRunErr(runErr)
-			slog.Error("tunnel listen failed", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "addr", localAddr, "err", runErr)
+			slog.Error("forward listen failed", "forward_id", f.forward.ID, "name", f.forward.Name, "addr", localAddr, "err", runErr)
 			return runErr
 		}
 	}
@@ -160,7 +160,7 @@ func (f *LocalForward) Start() error {
 	done := f.done
 	f.mu.Unlock()
 
-	if latency, latencyErr := TestJumperLatency(client); latencyErr == nil {
+	if latency, latencyErr := TestSSHHostLatency(client); latencyErr == nil {
 		f.setLastLatency(latency)
 	}
 
@@ -175,7 +175,7 @@ func (f *LocalForward) Start() error {
 
 func (f *LocalForward) Stop() error {
 	f.stopOnce.Do(func() {
-		slog.Info("tunnel forward stop requested", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name)
+		slog.Info("forward stop requested", "forward_id", f.forward.ID, "name", f.forward.Name)
 		f.mu.Lock()
 		f.stopping = true
 		ln := f.listener
@@ -313,11 +313,11 @@ func (f *LocalForward) handleConn(localConn net.Conn) {
 		return
 	}
 
-	if normalizeForwardMode(f.tunnel.Mode) == "dynamic" {
+	if normalizeForwardMode(f.forward.Mode) == "dynamic" {
 		f.handleDynamicConn(localConn, client)
 		return
 	}
-	if normalizeForwardMode(f.tunnel.Mode) == "remote" {
+	if normalizeForwardMode(f.forward.Mode) == "remote" {
 		f.handleRemoteConn(localConn)
 		return
 	}
@@ -325,7 +325,7 @@ func (f *LocalForward) handleConn(localConn net.Conn) {
 }
 
 func (f *LocalForward) handleLocalConn(localConn net.Conn, client *ssh.Client) {
-	remoteAddr := net.JoinHostPort(strings.TrimSpace(f.tunnel.RemoteHost), strconv.Itoa(f.tunnel.RemotePort))
+	remoteAddr := net.JoinHostPort(strings.TrimSpace(f.forward.RemoteHost), strconv.Itoa(f.forward.RemotePort))
 	remoteConn, err := client.Dial("tcp", remoteAddr)
 	if err != nil {
 		_ = localConn.Close()
@@ -359,11 +359,11 @@ func (f *LocalForward) handleDynamicConn(localConn net.Conn, client *ssh.Client)
 }
 
 func (f *LocalForward) handleRemoteConn(remoteConn net.Conn) {
-	localHost := strings.TrimSpace(f.tunnel.LocalHost)
+	localHost := strings.TrimSpace(f.forward.LocalHost)
 	if localHost == "" {
 		localHost = "127.0.0.1"
 	}
-	localAddr := net.JoinHostPort(localHost, strconv.Itoa(f.tunnel.LocalPort))
+	localAddr := net.JoinHostPort(localHost, strconv.Itoa(f.forward.LocalPort))
 	localConn, err := net.Dial("tcp", localAddr)
 	if err != nil {
 		_ = remoteConn.Close()
@@ -381,7 +381,7 @@ func (f *LocalForward) monitorClientLifecycle(client *ssh.Client) {
 			return
 		}
 
-		slog.Warn("tunnel connection lost", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "err", disconnectErr)
+		slog.Warn("forward connection lost", "forward_id", f.forward.ID, "name", f.forward.Name, "err", disconnectErr)
 		f.emitEvent(RuntimeEvent{
 			Type: RuntimeEventDisconnected,
 			Err:  disconnectErr,
@@ -391,7 +391,7 @@ func (f *LocalForward) monitorClientLifecycle(client *ssh.Client) {
 		reconnectedClient, reconnectClose, reconnectErr := f.reconnectWithBackoff()
 		if reconnectErr != nil {
 			f.setRunErr(fmt.Errorf("%v: %w", disconnectErr, reconnectErr))
-			slog.Error("tunnel reconnect failed", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "err", reconnectErr)
+			slog.Error("forward reconnect failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", reconnectErr)
 			f.closeListener()
 			return
 		}
@@ -401,7 +401,7 @@ func (f *LocalForward) monitorClientLifecycle(client *ssh.Client) {
 		f.emitEvent(RuntimeEvent{
 			Type: RuntimeEventReconnected,
 		})
-		slog.Info("tunnel reconnected", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name)
+		slog.Info("forward reconnected", "forward_id", f.forward.ID, "name", f.forward.Name)
 		f.setClient(reconnectedClient, reconnectClose)
 		client = reconnectedClient
 	}
@@ -441,7 +441,7 @@ func (f *LocalForward) waitClientLoss(client *ssh.Client) error {
 		report(nil)
 	}()
 
-	interval := keepAliveInterval(f.lastJumper())
+	interval := keepAliveInterval(f.lastHost())
 	if interval > 0 {
 		go func() {
 			ticker := time.NewTicker(interval)
@@ -495,27 +495,27 @@ func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), error) {
 			return nil, nil, nil
 		}
 		attempt++
-		slog.Info("tunnel reconnect attempt", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "attempt", attempt, "wait", wait.String())
+		slog.Info("forward reconnect attempt", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "wait", wait.String())
 
-		client, closeChain, err := dialSSHChain(f.jumpers)
+		client, closeChain, err := dialSSHChain(f.hosts, f.verifier)
 		if err == nil {
-			if normalizeForwardMode(f.tunnel.Mode) == "remote" {
+			if normalizeForwardMode(f.forward.Mode) == "remote" {
 				ln, listenErr := f.bindRemoteListener(client)
 				if listenErr != nil {
 					closeChain()
 					lastErr = listenErr
-					slog.Warn("tunnel remote listen rebind failed", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "attempt", attempt, "err", listenErr)
+					slog.Warn("forward remote listen rebind failed", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "err", listenErr)
 					wait = nextReconnectWait(wait)
 					continue
 				}
 				f.replaceListener(ln)
 			}
-			slog.Info("tunnel reconnect succeeded", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "attempt", attempt)
+			slog.Info("forward reconnect succeeded", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt)
 			return client, closeChain, nil
 		}
 
 		lastErr = err
-		slog.Warn("tunnel reconnect failed", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "attempt", attempt, "err", err)
+		slog.Warn("forward reconnect failed", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "err", err)
 		wait = nextReconnectWait(wait)
 	}
 
@@ -531,7 +531,7 @@ func nextReconnectWait(current time.Duration) time.Duration {
 	}
 	next := current * 2
 	if next > maxReconnectWait {
-		return maxReconnectWait
+		next = maxReconnectWait
 	}
 	return next
 }
@@ -558,19 +558,19 @@ func minDuration(a, b time.Duration) time.Duration {
 	return b
 }
 
-func keepAliveInterval(jumper model.Jumper) time.Duration {
-	interval := time.Duration(jumper.KeepAliveIntervalMs) * time.Millisecond
+func keepAliveInterval(host model.SSHHost) time.Duration {
+	interval := time.Duration(host.KeepAliveIntervalMs) * time.Millisecond
 	if interval > 0 {
 		return interval
 	}
 	return 0
 }
 
-func (f *LocalForward) lastJumper() model.Jumper {
-	if len(f.jumpers) == 0 {
-		return model.Jumper{}
+func (f *LocalForward) lastHost() model.SSHHost {
+	if len(f.hosts) == 0 {
+		return model.SSHHost{}
 	}
-	return f.jumpers[len(f.jumpers)-1]
+	return f.hosts[len(f.hosts)-1]
 }
 
 func keepAliveRequestTimeout(interval time.Duration) time.Duration {
@@ -602,7 +602,7 @@ func (f *LocalForward) runKeepAliveProbe(
 	result := make(chan keepAliveResult, 1)
 
 	go func() {
-		latency, err := TestJumperLatency(client)
+		latency, err := TestSSHHostLatency(client)
 		result <- keepAliveResult{latency: latency, err: err}
 	}()
 
@@ -617,14 +617,14 @@ func (f *LocalForward) runKeepAliveProbe(
 	case probe := <-result:
 		if probe.err == nil {
 			f.setLastLatency(probe.latency)
-			slog.Debug("tunnel keepalive probe ok", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name)
+			slog.Debug("forward keepalive probe ok", "forward_id", f.forward.ID, "name", f.forward.Name)
 			return true
 		}
 		if f.isStopping() {
 			return false
 		}
 		report(fmt.Errorf("keepalive failed: %w", probe.err))
-		slog.Warn("tunnel keepalive failed", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "err", probe.err)
+		slog.Warn("forward keepalive failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", probe.err)
 		_ = client.Close()
 		return false
 	case <-timer.C:
@@ -633,7 +633,7 @@ func (f *LocalForward) runKeepAliveProbe(
 		}
 		timeoutErr := fmt.Errorf("keepalive timeout after %s", timeout)
 		report(timeoutErr)
-		slog.Warn("tunnel keepalive timeout", "tunnel_id", f.tunnel.ID, "name", f.tunnel.Name, "timeout", timeout.String())
+		slog.Warn("forward keepalive timeout", "forward_id", f.forward.ID, "name", f.forward.Name, "timeout", timeout.String())
 		_ = client.Close()
 		return false
 	}
@@ -734,11 +734,11 @@ func normalizeForwardMode(raw string) string {
 }
 
 func (f *LocalForward) bindRemoteListener(client *ssh.Client) (net.Listener, error) {
-	host := strings.TrimSpace(f.tunnel.RemoteHost)
+	host := strings.TrimSpace(f.forward.RemoteHost)
 	if host == "" {
 		host = "127.0.0.1"
 	}
-	addr := net.JoinHostPort(host, strconv.Itoa(f.tunnel.RemotePort))
+	addr := net.JoinHostPort(host, strconv.Itoa(f.forward.RemotePort))
 	ln, err := client.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("remote listen %s failed: %w", addr, err)
@@ -765,21 +765,17 @@ func bridge(c1, c2 net.Conn) {
 	<-done
 }
 
-func dialSSH(jumper model.Jumper) (*ssh.Client, error) {
-	conf, err := makeSSHClientConfig(jumper)
+func dialSSH(host model.SSHHost, verifier HostKeyVerifier) (*ssh.Client, error) {
+	conf, err := makeSSHClientConfig(host, verifier)
 	if err != nil {
 		return nil, err
 	}
 
-	host := strings.TrimSpace(jumper.Host)
-	if host == "" {
-		return nil, fmt.Errorf("jumper host is required")
+	hostName, port, err := normalizeHostAddress(host)
+	if err != nil {
+		return nil, err
 	}
-	port := jumper.Port
-	if port <= 0 {
-		port = 22
-	}
-	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	addr := net.JoinHostPort(hostName, strconv.Itoa(port))
 
 	client, err := ssh.Dial("tcp", addr, conf)
 	if err != nil {
@@ -788,42 +784,13 @@ func dialSSH(jumper model.Jumper) (*ssh.Client, error) {
 	return client, nil
 }
 
-// ExecuteRemoteCommand runs one shell command on the last hop of an SSH chain.
-func ExecuteRemoteCommand(jumpers []model.Jumper, command string) (string, string, error) {
-	if strings.TrimSpace(command) == "" {
-		return "", "", fmt.Errorf("command is required")
+func dialSSHChain(hosts []model.SSHHost, verifier HostKeyVerifier) (*ssh.Client, func(), error) {
+	if len(hosts) == 0 {
+		return nil, nil, fmt.Errorf("at least one ssh host is required")
 	}
 
-	client, closeChain, err := dialSSHChain(jumpers)
-	if err != nil {
-		return "", "", err
-	}
-	defer closeChain()
-
-	session, err := client.NewSession()
-	if err != nil {
-		return "", "", fmt.Errorf("create ssh session failed: %w", err)
-	}
-	defer session.Close()
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	session.Stdout = &stdout
-	session.Stderr = &stderr
-
-	if err := session.Run(command); err != nil {
-		return stdout.String(), stderr.String(), err
-	}
-	return stdout.String(), stderr.String(), nil
-}
-
-func dialSSHChain(jumpers []model.Jumper) (*ssh.Client, func(), error) {
-	if len(jumpers) == 0 {
-		return nil, nil, fmt.Errorf("at least one jumper is required")
-	}
-
-	clients := make([]*ssh.Client, 0, len(jumpers))
-	first, err := dialSSH(jumpers[0])
+	clients := make([]*ssh.Client, 0, len(hosts))
+	first, err := dialSSH(hosts[0], verifier)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -839,24 +806,20 @@ func dialSSHChain(jumpers []model.Jumper) (*ssh.Client, func(), error) {
 		})
 	}
 
-	for i := 1; i < len(jumpers); i++ {
-		next := jumpers[i]
-		conf, err := makeSSHClientConfig(next)
+	for i := 1; i < len(hosts); i++ {
+		next := hosts[i]
+		conf, err := makeSSHClientConfig(next, verifier)
 		if err != nil {
 			closeAll()
 			return nil, nil, err
 		}
 
-		host := strings.TrimSpace(next.Host)
-		if host == "" {
+		hostName, port, err := normalizeHostAddress(next)
+		if err != nil {
 			closeAll()
-			return nil, nil, fmt.Errorf("jumper[%d] host is required", i)
+			return nil, nil, fmt.Errorf("hop %d: %w", i, err)
 		}
-		port := next.Port
-		if port <= 0 {
-			port = 22
-		}
-		addr := net.JoinHostPort(host, strconv.Itoa(port))
+		addr := net.JoinHostPort(hostName, strconv.Itoa(port))
 
 		conn, err := current.Dial("tcp", addr)
 		if err != nil {
@@ -879,23 +842,41 @@ func dialSSHChain(jumpers []model.Jumper) (*ssh.Client, func(), error) {
 	return current, closeAll, nil
 }
 
-func makeSSHClientConfig(jumper model.Jumper) (*ssh.ClientConfig, error) {
-	user := strings.TrimSpace(jumper.User)
+// normalizeHostAddress 统一地址归一化：去空白、默认端口 22。拨号地址与主机密钥
+// verifier 的 (host, port) 身份必须来自同一归一化结果。
+func normalizeHostAddress(host model.SSHHost) (string, int, error) {
+	hostName := strings.TrimSpace(host.Host)
+	if hostName == "" {
+		return "", 0, fmt.Errorf("ssh host address is required")
+	}
+	port := host.Port
+	if port <= 0 {
+		port = 22
+	}
+	return hostName, port, nil
+}
+
+func makeSSHClientConfig(host model.SSHHost, verifier HostKeyVerifier) (*ssh.ClientConfig, error) {
+	user := strings.TrimSpace(host.User)
 	if user == "" {
-		return nil, fmt.Errorf("jumper user is required")
+		return nil, fmt.Errorf("ssh host user is required")
 	}
 
-	auth, err := makeAuthMethod(jumper)
+	auth, err := makeAuthMethod(host)
 	if err != nil {
 		return nil, err
 	}
 
-	cb, err := makeHostKeyCallback(jumper.BypassHostVerification)
+	hostName, port, err := normalizeHostAddress(host)
+	if err != nil {
+		return nil, err
+	}
+	cb, err := makeHostKeyCallback(hostName, port, verifier)
 	if err != nil {
 		return nil, err
 	}
 
-	timeout := time.Duration(jumper.TimeoutMs) * time.Millisecond
+	timeout := time.Duration(host.TimeoutMs) * time.Millisecond
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
@@ -908,38 +889,38 @@ func makeSSHClientConfig(jumper model.Jumper) (*ssh.ClientConfig, error) {
 	}
 
 	// 添加HostKeyAlgorithms支持
-	if jumper.HostKeyAlgorithms != "" {
-		algorithms := parseHostKeyAlgorithms(jumper.HostKeyAlgorithms)
+	if host.HostKeyAlgorithms != "" {
+		algorithms := parseHostKeyAlgorithms(host.HostKeyAlgorithms)
 		config.HostKeyAlgorithms = algorithms
 	}
 
 	return config, nil
 }
 
-func makeAuthMethod(jumper model.Jumper) (ssh.AuthMethod, error) {
-	switch strings.TrimSpace(jumper.AuthType) {
+func makeAuthMethod(host model.SSHHost) (ssh.AuthMethod, error) {
+	switch strings.TrimSpace(host.AuthType) {
 	case "password":
-		if jumper.Password == "" {
+		if host.Password == "" {
 			return nil, fmt.Errorf("password auth requires password")
 		}
-		return ssh.Password(jumper.Password), nil
+		return ssh.Password(host.Password), nil
 	case "ssh_key":
-		signer, err := loadPrivateSigner(jumper.KeyPath, jumper.Password)
+		signer, err := loadPrivateSigner(host.KeyPath, host.Password)
 		if err != nil {
 			return nil, err
 		}
 		return ssh.PublicKeys(ensureSignerSupportsLegacyRSA(signer)), nil
 	case "ssh_agent":
 		return ssh.PublicKeysCallback(func() ([]ssh.Signer, error) {
-			return getSSHAgentSigners(jumper)
+			return getSSHAgentSigners(host)
 		}), nil
 	default:
-		return nil, fmt.Errorf("unsupported authType: %s", jumper.AuthType)
+		return nil, fmt.Errorf("unsupported authType: %s", host.AuthType)
 	}
 }
 
-func getSSHAgentSigners(jumper model.Jumper) ([]ssh.Signer, error) {
-	a, sock, err := getSSHAgent(jumper.AgentSocketPath)
+func getSSHAgentSigners(host model.SSHHost) ([]ssh.Signer, error) {
+	a, sock, err := getSSHAgent(host.AgentSocketPath)
 	if err != nil {
 		return nil, err
 	}
@@ -949,7 +930,7 @@ func getSSHAgentSigners(jumper model.Jumper) ([]ssh.Signer, error) {
 		// Agent may have restarted while the app keeps running.
 		resetSSHAgent()
 		var retryErr error
-		a, sock, retryErr = getSSHAgent(jumper.AgentSocketPath)
+		a, sock, retryErr = getSSHAgent(host.AgentSocketPath)
 		if retryErr != nil {
 			return nil, retryErr
 		}
@@ -988,24 +969,6 @@ func ensureSignerSupportsLegacyRSA(signer ssh.Signer) ssh.Signer {
 		return signer
 	}
 	return compatibleSigner
-}
-
-func makeHostKeyCallback(bypass bool) (ssh.HostKeyCallback, error) {
-	if bypass {
-		return ssh.InsecureIgnoreHostKey(), nil
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("resolve home dir failed: %w", err)
-	}
-	knownHostsPath := filepath.Join(home, ".ssh", "known_hosts")
-
-	cb, err := knownhosts.New(knownHostsPath)
-	if err != nil {
-		return nil, fmt.Errorf("known_hosts load failed (%s): %w", knownHostsPath, err)
-	}
-	return cb, nil
 }
 
 func loadPrivateSigner(keyPath, passphrase string) (ssh.Signer, error) {

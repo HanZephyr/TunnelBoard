@@ -55,14 +55,14 @@ func TestNextReconnectWaitSequence(t *testing.T) {
 }
 
 func TestKeepAliveIntervalDefault(t *testing.T) {
-	j := model.Jumper{KeepAliveIntervalMs: 0}
+	j := model.SSHHost{KeepAliveIntervalMs: 0}
 	if got := keepAliveInterval(j); got != 0 {
 		t.Fatalf("keepAliveInterval default = %v, want %v", got, 0*time.Second)
 	}
 }
 
-func TestKeepAliveIntervalFromJumper(t *testing.T) {
-	j := model.Jumper{KeepAliveIntervalMs: 7000}
+func TestKeepAliveIntervalFromSSHHost(t *testing.T) {
+	j := model.SSHHost{KeepAliveIntervalMs: 7000}
 	if got := keepAliveInterval(j); got != 7*time.Second {
 		t.Fatalf("keepAliveInterval = %v, want %v", got, 7*time.Second)
 	}
@@ -137,7 +137,7 @@ func TestGetSSHAgentSigners_NoSock(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "")
 	t.Setenv("HOME", t.TempDir())
 
-	_, err := getSSHAgentSigners(model.Jumper{})
+	_, err := getSSHAgentSigners(model.SSHHost{})
 	if err == nil {
 		t.Fatalf("expected error when SSH_AUTH_SOCK is missing")
 	}
@@ -187,7 +187,7 @@ func TestAgentSocketCandidates_Dedup(t *testing.T) {
 	}
 }
 
-func TestAgentSocketCandidates_PreferJumperSocket(t *testing.T) {
+func TestAgentSocketCandidates_PreferConfiguredSocket(t *testing.T) {
 	resetSSHAgent()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
