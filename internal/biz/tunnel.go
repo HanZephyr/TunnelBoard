@@ -190,7 +190,7 @@ func (b *TunnelBiz) Toggle(id int) (model.Tunnel, error) {
 		msg := fmt.Sprintf("mode %s is not supported yet, only local, remote and dynamic forward are implemented", tunnel.Mode)
 		updated, statusErr := b.updateStatus(id, "error", msg)
 		if statusErr != nil {
-			return model.Tunnel{}, fmt.Errorf(msg)
+			return model.Tunnel{}, errors.New(msg)
 		}
 		return updated, nil
 	}
