@@ -3,7 +3,6 @@ module github.com/HanZephyr/TunnelBoard
 go 1.23
 
 require (
-	github.com/BurntSushi/toml v1.6.0
 	github.com/emersion/go-autostart v0.0.0-20250403115856-34830d6457d2
 	github.com/energye/systray v1.0.3
 	github.com/wailsapp/wails/v2 v2.11.0
