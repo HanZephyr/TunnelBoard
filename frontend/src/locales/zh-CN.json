@@ -10,11 +10,14 @@
             "settings": "设置",
             "settingsSubtitle": "偏好、更新与数据目录",
             "collapse": "收起侧边栏",
-            "expand": "展开侧边栏"
+            "expand": "展开侧边栏",
+            "routes": "Web 路由",
+            "routesSubtitle": "将域名映射到本地转发"
         },
         "header": {
             "newForward": "+ 新建 Forward",
-            "newHost": "+ 新建主机"
+            "newHost": "+ 新建主机",
+            "newRoute": "+ 新建 Route"
         },
         "common": {
             "cancel": "取消",
@@ -221,5 +224,64 @@
         "dataDirDesc": "加密 Vault 与应用偏好保存在该目录中。",
         "dataDirUnavailable": "无法读取路径（当前环境后端不可用）。",
         "openDir": "打开目录"
+    },
+    "routes": {
+        "tableTitle": "Web 路由",
+        "newRoute": "新建 Route",
+        "empty": "暂无 Web 路由。",
+        "table": {
+            "domain": "域名",
+            "forward": "关联 Forward",
+            "hosts": "hosts",
+            "caddy": "Caddy",
+            "upstream": "上游",
+            "systemStatus": "系统状态",
+            "actions": "操作"
+        },
+        "status": {
+            "hostsApplied": "hosts 已生效",
+            "hostsNotApplied": "hosts 未生效",
+            "caddyRunning": "Caddy 运行中",
+            "caddyStopped": "Caddy 未运行",
+            "portConflict": "443 端口冲突",
+            "caTrusted": "本地 CA 已信任"
+        },
+        "modal": {
+            "newTitle": "新建 Web 路由",
+            "editTitle": "编辑 Web 路由",
+            "domain": "域名",
+            "domainPlaceholder": "例如 myapp.test",
+            "forward": "关联 Forward",
+            "forwardPlaceholder": "选择 local 模式的 Forward",
+            "noLocalForwardsHint": "暂无 local 模式的 Forward，请先在 Forwards 页创建。",
+            "hostsEnabled": "写入 hosts 记录",
+            "caddyEnabled": "经 Caddy 提供服务（443）",
+            "upstreamScheme": "上游协议",
+            "tlsSni": "TLS SNI",
+            "tlsSniPlaceholder": "例如 backend.internal"
+        },
+        "errors": {
+            "domainRequired": "域名不能为空。",
+            "domainInvalid": "域名需包含 . 且不含空白字符。",
+            "forwardRequired": "请选择关联的 Forward。",
+            "tlsSniRequired": "https 上游必须填写 TLS SNI。"
+        },
+        "confirmations": {
+            "deleteRouteTitle": "删除 Web 路由",
+            "deleteRoute": "删除路由 \"{domain}\"？其 hosts 记录与 Caddy 配置将被撤销。",
+            "dnsOverrideTitle": "确认 DNS 覆盖",
+            "dnsOverrideMessage": "将为以下域名写入 hosts 记录：{domains}",
+            "hostsRecordDomain": "域名",
+            "hostsRecordIp": "IP",
+            "dnsOverrideWarning": "该域名非 .test/.localhost，将在本机覆盖正常 DNS 解析。",
+            "dnsOverrideConfirm": "仍要应用"
+        },
+        "notify": {
+            "saved": "路由 \"{domain}\" 已保存。",
+            "deleted": "路由 \"{domain}\" 已删除。",
+            "applied": "路由已应用到系统。",
+            "needForward": "请先创建 local 模式的 Forward。",
+            "portConflictWarning": "443 被占用，Caddy 未启动，可继续使用 域名+端口 访问。"
+        }
     }
 }

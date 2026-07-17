@@ -14,6 +14,7 @@ import AppSidebar from './components/layout/AppSidebar.vue'
 import AppTopHeader from './components/layout/AppTopHeader.vue'
 import ForwardsPage from './components/pages/ForwardsPage.vue'
 import HostsPage from './components/pages/HostsPage.vue'
+import RoutesPage from './components/pages/RoutesPage.vue'
 import SettingsPage from './components/pages/SettingsPage.vue'
 import './styles/app-shell.css'
 
@@ -22,7 +23,8 @@ const { t, locale } = useI18n()
 const pages = computed(() => [
   { key: 'forwards', title: t('app.sidebar.forwards'), subtitle: t('app.sidebar.forwardsSubtitle'), icon: 'bi-diagram-3' },
   { key: 'hosts', title: t('app.sidebar.hosts'), subtitle: t('app.sidebar.hostsSubtitle'), icon: 'bi-hdd-network' },
-  { key: 'settings', title: t('app.sidebar.settings'), subtitle: t('app.sidebar.settingsSubtitle'), icon: 'bi-sliders2' }
+  { key: 'settings', title: t('app.sidebar.settings'), subtitle: t('app.sidebar.settingsSubtitle'), icon: 'bi-sliders2' },
+  { key: 'routes', title: t('app.sidebar.routes'), subtitle: t('app.sidebar.routesSubtitle'), icon: 'bi-globe2' }
 ])
 
 const savedTheme = typeof window !== 'undefined' ? window.localStorage.getItem('tunnelboard.theme') : null
@@ -75,6 +77,7 @@ function setThemeBySwitch(enabled) {
 const folders = ref([])
 const sshHosts = ref([])
 const forwards = ref([])
+const webRoutes = ref([])
 
 async function loadVault() {
   try {
@@ -82,10 +85,12 @@ async function loadVault() {
     folders.value = Array.isArray(data?.folders) ? data.folders : []
     sshHosts.value = Array.isArray(data?.sshHosts) ? data.sshHosts : []
     forwards.value = Array.isArray(data?.forwards) ? data.forwards : []
+    webRoutes.value = Array.isArray(data?.webRoutes) ? data.webRoutes : []
   } catch (_) {
     folders.value = []
     sshHosts.value = []
     forwards.value = []
+    webRoutes.value = []
   }
 }
 
@@ -153,6 +158,7 @@ async function checkForUpdatesSilently() {
 // ---- 顶栏按钮路由到当前页面 ----
 const forwardsPageRef = ref(null)
 const hostsPageRef = ref(null)
+const routesPageRef = ref(null)
 
 function onNewForward() {
   forwardsPageRef.value?.openNewForward()
@@ -160,6 +166,10 @@ function onNewForward() {
 
 function onNewHost() {
   hostsPageRef.value?.openNewHost()
+}
+
+function onNewRoute() {
+  routesPageRef.value?.openNewRoute()
 }
 
 onMounted(async () => {
@@ -212,6 +222,7 @@ onBeforeUnmount(() => {
         :active-page="activePage"
         @new-forward="onNewForward"
         @new-host="onNewHost"
+        @new-route="onNewRoute"
       />
 
       <main class="page-body">
@@ -230,6 +241,15 @@ onBeforeUnmount(() => {
           ref="hostsPageRef"
           :ssh-hosts="sshHosts"
           :forwards="forwards"
+          @vault-changed="loadVault"
+          @notify="notify"
+        />
+
+        <RoutesPage
+          v-if="activePage === 'routes'"
+          ref="routesPageRef"
+          :forwards="forwards"
+          :web-routes="webRoutes"
           @vault-changed="loadVault"
           @notify="notify"
         />

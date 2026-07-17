@@ -10,11 +10,14 @@
             "settings": "Настройки",
             "settingsSubtitle": "Параметры, обновления и каталог данных",
             "collapse": "Свернуть панель",
-            "expand": "Развернуть панель"
+            "expand": "Развернуть панель",
+            "routes": "Веб-маршруты",
+            "routesSubtitle": "Привязка доменов к локальным форвардам"
         },
         "header": {
             "newForward": "+ Новый форвард",
-            "newHost": "+ Новый хост"
+            "newHost": "+ Новый хост",
+            "newRoute": "+ Новый маршрут"
         },
         "common": {
             "cancel": "Отмена",
@@ -194,5 +197,64 @@
         "data": "Данные",
         "dataDir": "Каталог данных",
         "openDir": "Открыть каталог"
+    },
+    "routes": {
+        "tableTitle": "Веб-маршруты",
+        "newRoute": "Новый маршрут",
+        "empty": "Веб-маршрутов пока нет.",
+        "table": {
+            "domain": "Домен",
+            "forward": "Форвард",
+            "hosts": "hosts",
+            "caddy": "Caddy",
+            "upstream": "Апстрим",
+            "systemStatus": "Состояние",
+            "actions": "Действия"
+        },
+        "status": {
+            "hostsApplied": "hosts активен",
+            "hostsNotApplied": "hosts не активен",
+            "caddyRunning": "Caddy работает",
+            "caddyStopped": "Caddy остановлен",
+            "portConflict": "конфликт порта 443",
+            "caTrusted": "Локальный CA доверен"
+        },
+        "modal": {
+            "newTitle": "Новый веб-маршрут",
+            "editTitle": "Изменить веб-маршрут",
+            "domain": "Домен",
+            "domainPlaceholder": "например myapp.test",
+            "forward": "Форвард",
+            "forwardPlaceholder": "Выберите локальный форвард",
+            "noLocalForwardsHint": "Нет форвардов в режиме local. Сначала создайте его на странице форвардов.",
+            "hostsEnabled": "Записывать в hosts",
+            "caddyEnabled": "Обслуживать через Caddy (443)",
+            "upstreamScheme": "Схема апстрима",
+            "tlsSni": "TLS SNI",
+            "tlsSniPlaceholder": "например backend.internal"
+        },
+        "errors": {
+            "domainRequired": "Укажите домен.",
+            "domainInvalid": "Домен должен содержать точку и не содержать пробелов.",
+            "forwardRequired": "Выберите форвард.",
+            "tlsSniRequired": "Для https-апстрима требуется TLS SNI."
+        },
+        "confirmations": {
+            "deleteRouteTitle": "Удалить веб-маршрут",
+            "deleteRoute": "Удалить маршрут \"{domain}\"? Запись hosts и конфигурация Caddy будут отозваны.",
+            "dnsOverrideTitle": "Подтверждение перезаписи DNS",
+            "dnsOverrideMessage": "Будут записаны hosts-записи для доменов: {domains}",
+            "hostsRecordDomain": "Домен",
+            "hostsRecordIp": "IP",
+            "dnsOverrideWarning": "Этот домен не .test/.localhost — на этом компьютере он переопределит обычное DNS-разрешение.",
+            "dnsOverrideConfirm": "Применить всё равно"
+        },
+        "notify": {
+            "saved": "Маршрут \"{domain}\" сохранён.",
+            "deleted": "Маршрут \"{domain}\" удалён.",
+            "applied": "Маршрут применён к системе.",
+            "needForward": "Сначала создайте форвард в режиме local.",
+            "portConflictWarning": "Порт 443 занят, Caddy не запущен. Сервис по-прежнему доступен по адресу домен:порт."
+        }
     }
 }

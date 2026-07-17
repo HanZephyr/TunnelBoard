@@ -10,11 +10,14 @@
             "settings": "Settings",
             "settingsSubtitle": "Preferences, updates and data directory",
             "collapse": "Collapse sidebar",
-            "expand": "Expand sidebar"
+            "expand": "Expand sidebar",
+            "routes": "Web Routes",
+            "routesSubtitle": "Map domains to local forwards"
         },
         "header": {
             "newForward": "+ New Forward",
-            "newHost": "+ New Host"
+            "newHost": "+ New Host",
+            "newRoute": "+ New Route"
         },
         "common": {
             "cancel": "Cancel",
@@ -221,5 +224,64 @@
         "dataDirDesc": "The encrypted Vault and app preferences are stored in this directory.",
         "dataDirUnavailable": "Unable to read path (backend unavailable in this environment).",
         "openDir": "Open Dir"
+    },
+    "routes": {
+        "tableTitle": "Web Routes",
+        "newRoute": "New Route",
+        "empty": "No web routes yet.",
+        "table": {
+            "domain": "Domain",
+            "forward": "Forward",
+            "hosts": "Hosts",
+            "caddy": "Caddy",
+            "upstream": "Upstream",
+            "systemStatus": "System Status",
+            "actions": "Actions"
+        },
+        "status": {
+            "hostsApplied": "hosts applied",
+            "hostsNotApplied": "hosts pending",
+            "caddyRunning": "caddy running",
+            "caddyStopped": "caddy stopped",
+            "portConflict": "port 443 conflict",
+            "caTrusted": "Local CA trusted"
+        },
+        "modal": {
+            "newTitle": "New Web Route",
+            "editTitle": "Edit Web Route",
+            "domain": "Domain",
+            "domainPlaceholder": "e.g. myapp.test",
+            "forward": "Forward",
+            "forwardPlaceholder": "Select a local forward",
+            "noLocalForwardsHint": "No local-mode forwards yet. Create one on the Forwards page first.",
+            "hostsEnabled": "Write hosts record",
+            "caddyEnabled": "Serve via Caddy (443)",
+            "upstreamScheme": "Upstream Scheme",
+            "tlsSni": "TLS SNI",
+            "tlsSniPlaceholder": "e.g. backend.internal"
+        },
+        "errors": {
+            "domainRequired": "Domain is required.",
+            "domainInvalid": "Domain must contain a dot and no whitespace.",
+            "forwardRequired": "Please select a forward.",
+            "tlsSniRequired": "TLS SNI is required for https upstream."
+        },
+        "confirmations": {
+            "deleteRouteTitle": "Delete Web Route",
+            "deleteRoute": "Delete route \"{domain}\"? Its hosts record and Caddy config will be revoked.",
+            "dnsOverrideTitle": "Confirm DNS Override",
+            "dnsOverrideMessage": "The following hosts records will be written for: {domains}",
+            "hostsRecordDomain": "Domain",
+            "hostsRecordIp": "IP",
+            "dnsOverrideWarning": "This domain is not .test/.localhost. It will override normal DNS resolution for it on this machine.",
+            "dnsOverrideConfirm": "Apply Anyway"
+        },
+        "notify": {
+            "saved": "Route \"{domain}\" saved.",
+            "deleted": "Route \"{domain}\" deleted.",
+            "applied": "Route applied to system.",
+            "needForward": "Create a local-mode forward before adding web routes.",
+            "portConflictWarning": "Port 443 is occupied; Caddy was not started. You can still access the service via domain + port."
+        }
     }
 }

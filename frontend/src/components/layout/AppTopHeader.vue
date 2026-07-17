@@ -10,7 +10,7 @@ defineProps({
   }
 })
 
-defineEmits(['new-forward', 'new-host'])
+defineEmits(['new-forward', 'new-host', 'new-route'])
 </script>
 
 <template>
@@ -25,6 +25,9 @@ defineEmits(['new-forward', 'new-host'])
       </button>
       <button v-if="activePage === 'hosts'" type="button" class="btn btn-primary" @click="$emit('new-host')">
         {{ $t('app.header.newHost') }}
+      </button>
+      <button v-if="activePage === 'routes'" type="button" class="btn btn-primary" @click="$emit('new-route')">
+        {{ $t('app.header.newRoute') }}
       </button>
     </div>
   </header>
