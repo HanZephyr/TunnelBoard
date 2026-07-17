@@ -282,25 +282,6 @@ func (a *App) ToggleTunnel(id int) (model.Tunnel, error) {
 	return a.tunnel.Toggle(id)
 }
 
-func collectJumpersForApp(items []model.Jumper, ids []int) ([]model.Jumper, error) {
-	if len(ids) == 0 {
-		return nil, fmt.Errorf("at least one jumper is required")
-	}
-	index := make(map[int]model.Jumper, len(items))
-	for _, item := range items {
-		index[item.ID] = item
-	}
-	result := make([]model.Jumper, 0, len(ids))
-	for _, id := range ids {
-		jumper, ok := index[id]
-		if !ok {
-			return nil, biz.ErrJumperNotFound
-		}
-		result = append(result, jumper)
-	}
-	return result, nil
-}
-
 func (a *App) CheckForUpdates(currentVersion string) (updater.Result, error) {
 	if err := a.ensureReady(); err != nil {
 		return updater.Result{}, err
