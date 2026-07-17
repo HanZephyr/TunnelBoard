@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/HanZephyr/TunnelBoard/internal/autostart"
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
 	"github.com/HanZephyr/TunnelBoard/internal/caddy"
+	"github.com/HanZephyr/TunnelBoard/internal/diag"
 	"github.com/HanZephyr/TunnelBoard/internal/forward"
 	"github.com/HanZephyr/TunnelBoard/internal/helper"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
@@ -35,6 +37,7 @@ type App struct {
 	runtime *biz.RuntimeBiz
 	router  *biz.RouterBiz
 	backup  *biz.BackupBiz
+	diagBuf *diag.RingBuffer
 	updater *updater.Service
 	initErr error
 
@@ -48,9 +51,13 @@ type App struct {
 // NewApp 打开默认数据目录下的 Vault 并组装应用 Module。
 // 打开失败（含密钥遗失 ErrKeyUnavailable）时仅记录 initErr，由绑定调用方通过 ensureReady 感知。
 func NewApp() *App {
+	// 默认不持久化运行日志：内存环形缓冲 + stderr，排障时手动导出脱敏诊断包。
+	diagBuf := diag.NewRingBuffer(slog.NewTextHandler(os.Stderr, nil), 2000)
+	slog.SetDefault(slog.New(diagBuf))
+
 	store, err := vault.OpenDefault()
 	if err != nil {
-		return &App{initErr: err}
+		return &App{initErr: err, diagBuf: diagBuf}
 	}
 	catalog := biz.NewCatalogBiz(store)
 	caddyAdapter := caddy.New(store.Dir())
@@ -64,6 +71,7 @@ func NewApp() *App {
 			helper.SystemHostsPath(), filepath.Join(store.Dir(), "caddy.json"),
 		),
 		backup:  biz.NewBackupBiz(store),
+		diagBuf: diagBuf,
 		updater: updater.NewDefaultService(),
 	}
 }
@@ -418,6 +426,50 @@ func (a *App) SaveImportKeyFile(srcPath, password, keyPath string) error {
 	if err := os.WriteFile(destPath, content, 0o600); err != nil {
 		return fmt.Errorf("write key file: %w", err)
 	}
+	return nil
+}
+
+// ExportDiagnosticsWithDialog 导出脱敏诊断包（内存日志 + 状态摘要，不含任何秘密）。
+func (a *App) ExportDiagnosticsWithDialog() error {
+	if err := a.ensureReady(); err != nil {
+		return err
+	}
+	summary := map[string]interface{}{}
+	if data, err := a.store.Load(); err == nil {
+		summary["counts"] = map[string]int{
+			"folders": len(data.Folders), "sshHosts": len(data.SSHHosts),
+			"forwards": len(data.Forwards), "webRoutes": len(data.WebRoutes),
+			"hostKeys": len(data.HostKeys),
+		}
+		summary["updateCheckEnabled"] = data.Prefs.UpdateCheckEnabled
+		summary["caTrusted"] = data.Prefs.CATrustedSHA256 != ""
+	}
+	if snapshot, err := a.GetRuntimeSnapshot(); err == nil {
+		summary["runtime"] = snapshot
+	}
+	if routes, err := a.router.RouteStatus(); err == nil {
+		summary["routes"] = routes
+	}
+
+	bundle := a.diagBuf.BuildBundle(appVersion, runtime.GOOS+"/"+runtime.GOARCH, summary)
+	payload, err := json.MarshalIndent(bundle, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode diagnostics: %w", err)
+	}
+	destPath, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		DefaultFilename: "tunnelboard-diagnostics.json",
+		Filters:         []wailsruntime.FileFilter{{DisplayName: "JSON (*.json)", Pattern: "*.json"}},
+	})
+	if err != nil {
+		return fmt.Errorf("file dialog: %w", err)
+	}
+	if strings.TrimSpace(destPath) == "" {
+		return nil // 用户取消
+	}
+	if err := os.WriteFile(destPath, payload, 0o600); err != nil {
+		return fmt.Errorf("write diagnostics: %w", err)
+	}
+	slog.Info("diagnostics exported", "dest", destPath)
 	return nil
 }
 
