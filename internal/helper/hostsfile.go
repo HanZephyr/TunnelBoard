@@ -98,6 +98,24 @@ func rollback(path, bak string, cause error) error {
 	return cause
 }
 
+// ParseManagedHosts 从 hosts 文件内容解析受托管区块内的条目（回读用于快照与回滚）。
+// 无区块或区块为空返回 nil；忽略空行与注释行。
+func ParseManagedHosts(content string) []route.HostEntry {
+	lines := splitLines(content)
+	begin, end := findBlock(lines)
+	if begin < 0 || end < 0 {
+		return nil
+	}
+	var entries []route.HostEntry
+	for _, line := range lines[begin+1 : end] {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && !strings.HasPrefix(fields[0], "#") {
+			entries = append(entries, route.HostEntry{IP: fields[0], Domain: fields[1]})
+		}
+	}
+	return entries
+}
+
 // splitLines 按 \n 切分并剥掉行尾 \r，兼容 LF 与 CRLF 输入；
 // 末尾恰好一个换行不产生空行（即 "a\n" 与 "a" 得到相同的行集合）。
 func splitLines(content string) []string {

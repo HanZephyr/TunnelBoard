@@ -12,7 +12,9 @@ import (
 
 	"github.com/HanZephyr/TunnelBoard/internal/autostart"
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
+	"github.com/HanZephyr/TunnelBoard/internal/caddy"
 	"github.com/HanZephyr/TunnelBoard/internal/forward"
+	"github.com/HanZephyr/TunnelBoard/internal/helper"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 	"github.com/HanZephyr/TunnelBoard/internal/traytext"
 	"github.com/HanZephyr/TunnelBoard/internal/uilocale"
@@ -29,6 +31,7 @@ type App struct {
 	store   *vault.Store
 	catalog *biz.CatalogBiz
 	runtime *biz.RuntimeBiz
+	router  *biz.RouterBiz
 	updater *updater.Service
 	initErr error
 
@@ -46,10 +49,15 @@ func NewApp() *App {
 	if err != nil {
 		return &App{initErr: err}
 	}
+	catalog := biz.NewCatalogBiz(store)
 	return &App{
 		store:   store,
-		catalog: biz.NewCatalogBiz(store),
+		catalog: catalog,
 		runtime: biz.NewRuntimeBiz(store),
+		router: biz.NewRouterBiz(
+			store, catalog, helper.NewClient(), caddy.New(store.Dir()),
+			helper.SystemHostsPath(), filepath.Join(store.Dir(), "caddy.json"),
+		),
 		updater: updater.NewDefaultService(),
 	}
 }
@@ -84,7 +92,7 @@ func (a *App) ensureReady() error {
 	if a.initErr != nil {
 		return a.initErr
 	}
-	if a.store == nil || a.catalog == nil || a.runtime == nil {
+	if a.store == nil || a.catalog == nil || a.runtime == nil || a.router == nil {
 		return fmt.Errorf("app is not initialized")
 	}
 	return nil
@@ -245,7 +253,54 @@ func (a *App) DeleteSelection(sel biz.DeleteSelection) error {
 			}
 		}
 	}
-	return a.catalog.DeleteSelection(sel)
+	err := a.catalog.DeleteSelection(sel)
+	if err == nil {
+		// Forward 删除会级联清理 WebRoute；按 CONTEXT.md:67 同步撤销其 hosts 记录。
+		if _, recErr := a.router.ReconcileRoutes(); recErr != nil {
+			return fmt.Errorf("deleted, but failed to reconcile routes: %w", recErr)
+		}
+	}
+	return err
+}
+
+// SaveWebRoute 新建（ID 为 0）或更新 Web Route（域名、hosts/Caddy 开关、HTTPS SNI）。
+func (a *App) SaveWebRoute(route model.WebRoute) (model.WebRoute, error) {
+	if err := a.ensureReady(); err != nil {
+		return model.WebRoute{}, err
+	}
+	return a.catalog.SaveWebRoute(route)
+}
+
+// PreviewRoute 返回应用前预览：将写入的 hosts 记录、需要确认的域名、443 冲突与 CA 信任需求。
+func (a *App) PreviewRoute(routeID int) (biz.RoutePreview, error) {
+	if err := a.ensureReady(); err != nil {
+		return biz.RoutePreview{}, err
+	}
+	return a.router.PreviewRoute(routeID)
+}
+
+// ApplyRoute 把单条 Route 应用到系统；非本地域名需在 confirmedDomains 中显式确认。
+func (a *App) ApplyRoute(routeID int, confirmedDomains []string) (biz.RouteApplyResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return biz.RouteApplyResult{}, err
+	}
+	return a.router.ApplyRoute(routeID, confirmedDomains)
+}
+
+// RemoveRoute 删除 Route 并重推系统（撤销 hosts 记录；最后一个 Caddy Route 移除后停 Caddy 并撤 CA）。
+func (a *App) RemoveRoute(routeID int) (biz.RouteApplyResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return biz.RouteApplyResult{}, err
+	}
+	return a.router.RemoveRoute(routeID)
+}
+
+// GetRouteStatus 返回全部 Route 的系统生效状态。
+func (a *App) GetRouteStatus() ([]biz.RouteStatusItem, error) {
+	if err := a.ensureReady(); err != nil {
+		return nil, err
+	}
+	return a.router.RouteStatus()
 }
 
 // StartForward 启动单条 Forward 的运行时。
@@ -297,7 +352,7 @@ func (a *App) CheckLocalPortAvailable(host string, port int) error {
 
 // HostKeyStatusResult 是 SSH 主机指纹核验结果（绑定层单返回值包装）。
 type HostKeyStatusResult struct {
-	Entry  model.HostKey    `json:"entry"`
+	Entry  model.HostKey     `json:"entry"`
 	Status model.TrustStatus `json:"status"`
 }
 

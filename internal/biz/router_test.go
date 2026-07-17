@@ -1,0 +1,340 @@
+package biz_test
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/HanZephyr/TunnelBoard/internal/biz"
+	"github.com/HanZephyr/TunnelBoard/internal/helper"
+	"github.com/HanZephyr/TunnelBoard/internal/model"
+	"github.com/HanZephyr/TunnelBoard/internal/route"
+)
+
+type fakeHelperClient struct {
+	calls     []helper.Request
+	failOnOp  map[string]string
+	ensureErr error
+}
+
+func (f *fakeHelperClient) Call(req helper.Request) (helper.Response, error) {
+	f.calls = append(f.calls, req)
+	if msg, ok := f.failOnOp[req.Op]; ok {
+		return helper.Response{OK: false, Error: msg}, nil
+	}
+	return helper.Response{OK: true}, nil
+}
+
+func (f *fakeHelperClient) Ping() (string, error) { return "fake", nil }
+
+func (f *fakeHelperClient) EnsureInstalled() error { return f.ensureErr }
+
+type fakeCaddyAdapter struct {
+	running     bool
+	diagnoseErr error
+	reloadErr   error
+	rootCA      []byte
+	rootCAErr   error
+	reloads     [][]byte
+	stopCalls   int
+}
+
+func (f *fakeCaddyAdapter) DiagnosePort() error { return f.diagnoseErr }
+func (f *fakeCaddyAdapter) Running() bool       { return f.running }
+func (f *fakeCaddyAdapter) Reload(config []byte) error {
+	f.reloads = append(f.reloads, config)
+	if f.reloadErr != nil {
+		return f.reloadErr
+	}
+	f.running = true
+	return nil
+}
+func (f *fakeCaddyAdapter) Stop() error { f.stopCalls++; f.running = false; return nil }
+func (f *fakeCaddyAdapter) RootCACert(time.Duration) ([]byte, error) {
+	return f.rootCA, f.rootCAErr
+}
+
+// routerFixture 组装共享同一 fakeStore 的 catalog 与 router。
+type routerFixture struct {
+	store   *fakeStore
+	catalog *biz.CatalogBiz
+	router  *biz.RouterBiz
+	helper  *fakeHelperClient
+	caddy   *fakeCaddyAdapter
+	hosts   string
+}
+
+func newRouterFixture(t *testing.T) *routerFixture {
+	t.Helper()
+	fs := &fakeStore{data: model.VaultData{Version: 1}}
+	catalog := biz.NewCatalogBiz(fs)
+	fh := &fakeHelperClient{}
+	fc := &fakeCaddyAdapter{}
+	hostsPath := filepath.Join(t.TempDir(), "hosts")
+	caddyConfigPath := filepath.Join(t.TempDir(), "caddy.json")
+	r := biz.NewRouterBiz(fs, catalog, fh, fc, hostsPath, caddyConfigPath)
+	return &routerFixture{store: fs, catalog: catalog, router: r, helper: fh, caddy: fc, hosts: hostsPath}
+}
+
+func (f *routerFixture) seedForward(t *testing.T, mode string, port int) model.Forward {
+	t.Helper()
+	folder, err := f.catalog.CreateFolder("工作", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := f.catalog.SaveSSHHost(model.SSHHost{Name: "h", Host: "10.0.0.1", AuthType: "password", Password: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw, err := f.catalog.SaveForward(model.Forward{FolderID: folder.ID, Name: "fw", Mode: mode, ChainHostIDs: []int{host.ID},
+		LocalHost: "127.0.0.1", LocalPort: port, RemoteHost: "x", RemotePort: 80})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fw
+}
+
+// hosts-only Route 应用后 hosts 区块经 helper 写入，Caddy 不被触碰。
+func TestApplyRouteHostsOnly(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := fx.router.ApplyRoute(rt.ID, nil)
+	if err != nil {
+		t.Fatalf("ApplyRoute: %v", err)
+	}
+	if !result.HostsApplied || result.CaddyApplied || result.PortConflict != "" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if len(fx.helper.calls) != 1 || fx.helper.calls[0].Op != helper.OpApplyManagedHosts {
+		t.Fatalf("helper calls = %+v", fx.helper.calls)
+	}
+	if len(fx.helper.calls[0].Hosts) != 1 || fx.helper.calls[0].Hosts[0].Domain != "db.test" {
+		t.Fatalf("hosts entries = %+v", fx.helper.calls[0].Hosts)
+	}
+	if len(fx.caddy.reloads) != 0 {
+		t.Fatalf("caddy must not be touched, reloads = %d", len(fx.caddy.reloads))
+	}
+}
+
+// 非 .test/.localhost 域名必须确认：未确认拒绝且零副作用，确认后放行。
+func TestApplyRouteDomainConfirmation(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "grafana.example.com", HostsEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := fx.router.ApplyRoute(rt.ID, nil); !errors.Is(err, biz.ErrDomainConfirmationRequired) {
+		t.Fatalf("err = %v, want ErrDomainConfirmationRequired", err)
+	}
+	if len(fx.helper.calls) != 0 {
+		t.Fatalf("rejected apply must have zero side effects, calls = %+v", fx.helper.calls)
+	}
+
+	if _, err := fx.router.ApplyRoute(rt.ID, []string{"grafana.example.com"}); err != nil {
+		t.Fatalf("confirmed apply: %v", err)
+	}
+	if len(fx.helper.calls) != 1 {
+		t.Fatalf("confirmed apply should write hosts once, calls = %+v", fx.helper.calls)
+	}
+}
+
+// 首个 Caddy Route 启用：配置重载后取 CA 并信任，指纹记入 Vault 偏好。
+func TestApplyRouteCaddyTrustFlow(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	fx.caddy.rootCA = []byte("fake-der")
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", CaddyEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := fx.router.ApplyRoute(rt.ID, nil)
+	if err != nil {
+		t.Fatalf("ApplyRoute: %v", err)
+	}
+	if !result.CaddyApplied {
+		t.Fatalf("caddy should be applied: %+v", result)
+	}
+	if len(fx.caddy.reloads) != 1 {
+		t.Fatalf("reloads = %d, want 1", len(fx.caddy.reloads))
+	}
+	sum := sha256.Sum256([]byte("fake-der"))
+	var trustReq *helper.Request
+	for i := range fx.helper.calls {
+		if fx.helper.calls[i].Op == helper.OpTrustLocalCA {
+			trustReq = &fx.helper.calls[i]
+		}
+	}
+	if trustReq == nil {
+		t.Fatalf("TrustLocalCA not called: %+v", fx.helper.calls)
+	}
+	if trustReq.CertSHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("trusted fp = %q, want %q", trustReq.CertSHA256, hex.EncodeToString(sum[:]))
+	}
+	data, _ := fx.store.Load()
+	if data.Prefs.CATrustedSHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("pref not persisted: %+v", data.Prefs)
+	}
+}
+
+// 443 冲突：Caddy 不启动但 hosts 照常生效，结果携带冲突说明且无错误。
+func TestApplyRoutePortConflictKeepsHosts(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	fx.caddy.diagnoseErr = errors.New("caddy: 127.0.0.1:443 unavailable: bind: address in use")
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := fx.router.ApplyRoute(rt.ID, nil)
+	if err != nil {
+		t.Fatalf("port conflict must not fail apply: %v", err)
+	}
+	if result.PortConflict == "" || !result.HostsApplied || result.CaddyApplied {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if len(fx.caddy.reloads) != 0 {
+		t.Fatalf("conflicted caddy must not reload, reloads = %d", len(fx.caddy.reloads))
+	}
+}
+
+// Caddy 重载失败时 hosts 回滚到应用前的区块内容。
+func TestApplyRouteRollbackOnCaddyFailure(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	fx.caddy.reloadErr = errors.New("bad config")
+	prev := helper.BlockBegin + "\r\n127.0.0.1 old.test\r\n" + helper.BlockEnd + "\r\n"
+	if err := os.WriteFile(fx.hosts, []byte(prev), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := fx.router.ApplyRoute(rt.ID, nil); err == nil {
+		t.Fatal("reload failure must fail apply")
+	}
+	if len(fx.helper.calls) != 2 {
+		t.Fatalf("expected apply + rollback calls, got %+v", fx.helper.calls)
+	}
+	if fx.helper.calls[0].Hosts[0].Domain != "db.test" {
+		t.Fatalf("first call should apply new entries: %+v", fx.helper.calls[0].Hosts)
+	}
+	rollback := fx.helper.calls[1].Hosts
+	if len(rollback) != 1 || rollback[0].Domain != "old.test" {
+		t.Fatalf("rollback should restore previous entries, got %+v", rollback)
+	}
+}
+
+// 最后一个 Caddy Route 移除：停止 Caddy 并撤销 CA 信任，偏好清空。
+func TestRemoveRouteStopsCaddyAndUntrusts(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	fx.caddy.running = true
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", CaddyEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.store.Update(func(d *model.VaultData) error {
+		d.Prefs.CATrustedSHA256 = "deadbeef"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := fx.router.RemoveRoute(rt.ID); err != nil {
+		t.Fatalf("RemoveRoute: %v", err)
+	}
+	if fx.caddy.stopCalls != 1 {
+		t.Fatalf("caddy stop calls = %d, want 1", fx.caddy.stopCalls)
+	}
+	var untrusted bool
+	for _, c := range fx.helper.calls {
+		if c.Op == helper.OpUntrustLocalCA && c.CertSHA256 == "deadbeef" {
+			untrusted = true
+		}
+	}
+	if !untrusted {
+		t.Fatalf("UntrustLocalCA not called: %+v", fx.helper.calls)
+	}
+	data, _ := fx.store.Load()
+	if data.Prefs.CATrustedSHA256 != "" {
+		t.Fatalf("pref should be cleared: %+v", data.Prefs)
+	}
+	if len(data.WebRoutes) != 0 {
+		t.Fatalf("route should be deleted: %+v", data.WebRoutes)
+	}
+}
+
+// RouteStatus 反映区块内容、Caddy 运行态与 CA 信任状态。
+func TestRouteStatusReflectsSystem(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	block := helper.BlockBegin + "\r\n127.0.0.1 db.test\r\n" + helper.BlockEnd + "\r\n"
+	if err := os.WriteFile(fx.hosts, []byte(block), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fx.caddy.running = true
+	if _, err := fx.store.Update(func(d *model.VaultData) error {
+		d.Prefs.CATrustedSHA256 = "deadbeef"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := fx.router.RouteStatus()
+	if err != nil {
+		t.Fatalf("RouteStatus: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v", items)
+	}
+	got := items[0]
+	if !got.HostsApplied || !got.CaddyRunning || !got.CATrusted || got.PortConflict {
+		t.Fatalf("unexpected status: %+v", got)
+	}
+}
+
+// PreviewRoute 暴露确认项、端口冲突与 CA 信任需求。
+func TestPreviewRoute(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	fx.caddy.diagnoseErr = errors.New("conflict")
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "grafana.example.com", HostsEnabled: true, CaddyEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	preview, err := fx.router.PreviewRoute(rt.ID)
+	if err != nil {
+		t.Fatalf("PreviewRoute: %v", err)
+	}
+	if len(preview.RequiresConfirmation) != 1 || preview.RequiresConfirmation[0] != "grafana.example.com" {
+		t.Fatalf("RequiresConfirmation = %+v", preview.RequiresConfirmation)
+	}
+	if !preview.PortConflict {
+		t.Fatal("PortConflict should be true")
+	}
+	if !preview.CATrustNeeded {
+		t.Fatal("CATrustNeeded should be true")
+	}
+	if len(preview.HostsRecords) != 1 || preview.HostsRecords[0] != (route.HostEntry{Domain: "grafana.example.com", IP: "127.0.0.1"}) {
+		t.Fatalf("HostsRecords = %+v", preview.HostsRecords)
+	}
+}

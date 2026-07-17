@@ -179,3 +179,20 @@ func TestWriteManagedHostsRollbackOnFailure(t *testing.T) {
 		t.Fatalf("hosts = %q, want original %q after rollback", data, original)
 	}
 }
+
+// ParseManagedHosts 回读受托管区块：用于应用前快照与失败回滚。
+func TestParseManagedHosts(t *testing.T) {
+	content := "# comment\r\n127.0.0.1 localhost\r\n" +
+		helper.BlockBegin + "\r\n127.0.0.1 db.test\r\n127.0.0.1 grafana.example.com\r\n" + helper.BlockEnd + "\r\n"
+	entries := helper.ParseManagedHosts(content)
+	if len(entries) != 2 || entries[0].Domain != "db.test" || entries[1].Domain != "grafana.example.com" {
+		t.Fatalf("entries = %+v", entries)
+	}
+	if got := helper.ParseManagedHosts("# nothing\r\n"); got != nil {
+		t.Fatalf("no block should return nil, got %+v", got)
+	}
+	empty := helper.BlockBegin + "\r\n" + helper.BlockEnd + "\r\n"
+	if got := helper.ParseManagedHosts(empty); len(got) != 0 {
+		t.Fatalf("empty block should return no entries, got %+v", got)
+	}
+}

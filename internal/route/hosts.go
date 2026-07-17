@@ -49,6 +49,11 @@ func PlanHosts(data model.VaultData) (entries []HostEntry, requiresConfirmation 
 	return entries, requiresConfirmation
 }
 
+// NeedsConfirmation 报告写入该域名的 hosts 覆盖是否需要用户明确确认（非本机约定后缀）。
+func NeedsConfirmation(domain string) bool {
+	return !isLocalDomain(domain)
+}
+
 // isLocalDomain 报告域名是否带有本机约定后缀；后缀含前导点（裸 "test"/"localhost" 不算），
 // 比较前按小写归一（DNS 大小写不敏感）。
 func isLocalDomain(domain string) bool {
