@@ -46,10 +46,11 @@ func getDefaultConfigDir() string {
 
 // Config is persisted in TOML storage.
 type Config struct {
-	Version int            `toml:"version"`
-	Jumpers []model.Jumper `toml:"jumpers"`
-	Tunnels []model.Tunnel `toml:"tunnels"`
-	AutoRun bool           `toml:"auto_run"`
+	Version            int            `toml:"version"`
+	Jumpers            []model.Jumper `toml:"jumpers"`
+	Tunnels            []model.Tunnel `toml:"tunnels"`
+	AutoRun            bool           `toml:"auto_run"`
+	UpdateCheckEnabled bool           `toml:"update_check_enabled"`
 }
 
 // ResolveConfigPath returns the effective config file path: implicit location
@@ -61,10 +62,11 @@ func ResolveConfigPath() string {
 // DefaultConfig creates an empty config.
 func DefaultConfig() *Config {
 	return &Config{
-		Version: currentConfigVersion,
-		Jumpers: []model.Jumper{},
-		Tunnels: []model.Tunnel{},
-		AutoRun: false,
+		Version:            currentConfigVersion,
+		Jumpers:            []model.Jumper{},
+		Tunnels:            []model.Tunnel{},
+		AutoRun:            false,
+		UpdateCheckEnabled: true,
 	}
 }
 
@@ -74,7 +76,11 @@ func (c *Config) Clone() *Config {
 		return DefaultConfig()
 	}
 
-	out := &Config{Version: c.Version, AutoRun: c.AutoRun}
+	out := &Config{
+		Version:            c.Version,
+		AutoRun:            c.AutoRun,
+		UpdateCheckEnabled: c.UpdateCheckEnabled,
+	}
 	out.Jumpers = append(out.Jumpers, c.Jumpers...)
 	out.Tunnels = append(out.Tunnels, c.Tunnels...)
 	return out

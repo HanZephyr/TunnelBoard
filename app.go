@@ -311,6 +311,30 @@ func (a *App) CheckForUpdates(currentVersion string) (updater.Result, error) {
 	return a.updater.Check(context.Background(), currentVersion)
 }
 
+// GetUpdateCheckEnabled returns whether TunnelBoard should check GitHub Releases on startup.
+func (a *App) GetUpdateCheckEnabled() (bool, error) {
+	if err := a.ensureReady(); err != nil {
+		return false, err
+	}
+	cfg, err := a.storage.Load()
+	if err != nil {
+		return false, err
+	}
+	return cfg.UpdateCheckEnabled, nil
+}
+
+// SetUpdateCheckEnabled persists the startup update-check preference.
+func (a *App) SetUpdateCheckEnabled(enabled bool) error {
+	if err := a.ensureReady(); err != nil {
+		return err
+	}
+	_, err := a.storage.Update(func(cfg *conf.Config) error {
+		cfg.UpdateCheckEnabled = enabled
+		return nil
+	})
+	return err
+}
+
 // syncAutoRunWithConfig aligns OS auto-run (launch at login) state with config.
 func (a *App) syncAutoRunWithConfig() {
 	cfg, err := a.storage.Load()

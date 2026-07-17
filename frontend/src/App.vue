@@ -7,6 +7,7 @@ import {
   CreateTunnel,
   DeleteJumper,
   DeleteTunnel,
+  GetUpdateCheckEnabled,
   GetSSHConfigImportSources,
   GetState,
   LoadSSHConfigJumpersByPath,
@@ -69,6 +70,7 @@ const updateCheckDialog = reactive({
   visible: false,
   mode: 'idle',
   latestVersion: '',
+  releaseNotes: '',
   message: ''
 })
 const showConfigToast = ref(false)
@@ -483,6 +485,7 @@ async function checkForUpdates() {
       releasePageUrl.value = DEFAULT_RELEASES_PAGE_URL
       updateCheckDialog.mode = 'upToDate'
       updateCheckDialog.latestVersion = ''
+      updateCheckDialog.releaseNotes = ''
       updateCheckDialog.message = ''
       updateCheckDialog.visible = true
       hasNewVersion.value = false
@@ -494,6 +497,7 @@ async function checkForUpdates() {
     releasePageUrl.value = String(result.releasePageUrl || DEFAULT_RELEASES_PAGE_URL).trim() || DEFAULT_RELEASES_PAGE_URL
     updateCheckDialog.mode = 'updateAvailable'
     updateCheckDialog.latestVersion = String(result.latestVersion || '').trim()
+    updateCheckDialog.releaseNotes = String(result.releaseNotes || '').trim()
     updateCheckDialog.message = ''
     updateCheckDialog.visible = true
     logEvent('info', `Update found: ${result.latestVersion}`)
@@ -505,6 +509,7 @@ async function checkForUpdates() {
     const message = errorMessage(err, 'Failed to check updates from GitHub Releases API.')
     updateCheckDialog.mode = 'error'
     updateCheckDialog.latestVersion = ''
+    updateCheckDialog.releaseNotes = ''
     updateCheckDialog.message = message
     updateCheckDialog.visible = true
     hasNewVersion.value = false
@@ -1339,7 +1344,15 @@ onMounted(async () => {
     /* tray locale sync is best-effort */
   }
   stateSyncTimer = window.setInterval(syncStateSilently, STATE_SYNC_INTERVAL_MS)
-  void checkForUpdatesSilently()
+  let updateCheckEnabled = true
+  try {
+    updateCheckEnabled = await GetUpdateCheckEnabled()
+  } catch (_) {
+    /* default to checking when the preference cannot be loaded */
+  }
+  if (updateCheckEnabled) {
+    void checkForUpdatesSilently()
+  }
 })
 
 onBeforeUnmount(() => {

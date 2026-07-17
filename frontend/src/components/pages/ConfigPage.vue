@@ -3,7 +3,9 @@ import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   GetAutoRunEnabled,
+  GetUpdateCheckEnabled,
   SetAutoRunEnabled,
+  SetUpdateCheckEnabled,
   ExportConfigWithDialog,
   SelectImportFile,
   ImportConfig,
@@ -52,6 +54,7 @@ const emit = defineEmits([
 
 const { t, locale } = useI18n()
 const autoRunEnabled = ref(false)
+const updateCheckEnabled = ref(true)
 const configBusy = ref('')
 const configLocationInfo = ref(null)
 
@@ -61,8 +64,25 @@ onMounted(async () => {
   } catch (_) {
     autoRunEnabled.value = false
   }
+  try {
+    updateCheckEnabled.value = await GetUpdateCheckEnabled()
+  } catch (_) {
+    updateCheckEnabled.value = true
+  }
   await loadConfigLocation()
 })
+
+async function onUpdateCheckChange(event) {
+  const previous = updateCheckEnabled.value
+  const enabled = !!event.target.checked
+  updateCheckEnabled.value = enabled
+  try {
+    await SetUpdateCheckEnabled(enabled)
+  } catch (err) {
+    updateCheckEnabled.value = previous
+    emit('set-config-message', String(err))
+  }
+}
 
 async function loadConfigLocation() {
   try {
@@ -393,6 +413,22 @@ watch(locale, async (newLocale) => {
 
           <div class="config-row align-items-center">
             <div>
+              <div class="config-name">{{ t('config.automaticUpdateChecks') }}</div>
+              <div class="config-desc">{{ t('config.automaticUpdateChecksDesc') }}</div>
+            </div>
+            <div class="form-check form-switch mb-0">
+              <input
+                class="form-check-input"
+                type="checkbox"
+                role="switch"
+                :checked="updateCheckEnabled"
+                @change="onUpdateCheckChange"
+              >
+            </div>
+          </div>
+
+          <div class="config-row align-items-center">
+            <div>
               <div class="config-name">{{ t('config.currentVersion') }}</div>
               <div class="config-desc">{{ appMeta.version }}</div>
             </div>
@@ -438,9 +474,15 @@ watch(locale, async (newLocale) => {
           <p v-if="updateCheckDialog.mode === 'upToDate'" class="mb-0 update-check-dialog-text">
             {{ t('config.noUpdatesAvailable') }}
           </p>
-          <p v-else-if="updateCheckDialog.mode === 'updateAvailable'" class="mb-0 update-check-dialog-text">
-            {{ t('config.latestVersionIs', { version: updateCheckDialog.latestVersion }) }}
-          </p>
+          <template v-else-if="updateCheckDialog.mode === 'updateAvailable'">
+            <p class="mb-0 update-check-dialog-text">
+              {{ t('config.latestVersionIs', { version: updateCheckDialog.latestVersion }) }}
+            </p>
+            <div v-if="updateCheckDialog.releaseNotes" class="update-release-notes mt-3">
+              <div class="config-name mb-1">{{ t('config.releaseNotes') }}</div>
+              <div class="config-desc update-release-notes-content">{{ updateCheckDialog.releaseNotes }}</div>
+            </div>
+          </template>
           <p v-else class="mb-0 update-check-dialog-text">{{ updateCheckDialog.message }}</p>
         </div>
         <div class="modal-footer dialog-actions">
