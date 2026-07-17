@@ -224,6 +224,9 @@
         "dataDirDesc": "加密 Vault 与应用偏好保存在该目录中。",
         "dataDirUnavailable": "无法读取路径（当前环境后端不可用）。",
         "openDir": "打开目录",
+        "diagnostics": "诊断信息",
+        "diagnosticsDesc": "导出脱敏诊断包（本次运行的内存日志与状态摘要，不含任何秘密）。",
+        "exportDiagnostics": "导出",
         "backup": {
             "title": "备份与恢复",
             "exportTitle": "导出备份",

@@ -6,6 +6,7 @@ import {
   ApplyTrayLocale,
   CheckForUpdates as CheckForUpdatesAPI,
   ExportBackupWithDialog,
+  ExportDiagnosticsWithDialog,
   GetAutoRunEnabled,
   GetConfigPath,
   GetUpdateCheckEnabled,
@@ -166,6 +167,14 @@ function closeUpdateCheckDialog() {
 async function onOpenConfigDir() {
   try {
     await callBackend(OpenConfigDir)
+  } catch (err) {
+    emit('notify', errorMessage(err))
+  }
+}
+
+async function onExportDiagnostics() {
+  try {
+    await callBackend(ExportDiagnosticsWithDialog)
   } catch (err) {
     emit('notify', errorMessage(err))
   }
@@ -488,6 +497,20 @@ async function onRestoreBackup() {
               @click="onOpenConfigDir"
             >
               {{ t('settings.openDir') }}
+            </button>
+          </div>
+
+          <div class="config-row align-items-center">
+            <div class="flex-grow-1 min-w-0 pe-2">
+              <div class="config-name">{{ t('settings.diagnostics') }}</div>
+              <div class="config-desc">{{ t('settings.diagnosticsDesc') }}</div>
+            </div>
+            <button
+              type="button"
+              class="btn btn-sm btn-secondary flex-shrink-0"
+              @click="onExportDiagnostics"
+            >
+              {{ t('settings.exportDiagnostics') }}
             </button>
           </div>
         </div>

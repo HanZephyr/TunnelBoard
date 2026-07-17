@@ -224,6 +224,9 @@
         "dataDirDesc": "The encrypted Vault and app preferences are stored in this directory.",
         "dataDirUnavailable": "Unable to read path (backend unavailable in this environment).",
         "openDir": "Open Dir",
+        "diagnostics": "Diagnostics",
+        "diagnosticsDesc": "Export a sanitized diagnostics bundle (in-memory logs of this session and status summary; no secrets included).",
+        "exportDiagnostics": "Export",
         "backup": {
             "title": "Backup & Restore",
             "exportTitle": "Export Backup",
