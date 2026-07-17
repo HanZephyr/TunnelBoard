@@ -50,6 +50,8 @@ func NewApp() *App {
 		return &App{initErr: err}
 	}
 	catalog := biz.NewCatalogBiz(store)
+	caddyAdapter := caddy.New(store.Dir())
+	caddyAdapter.ExpectedSHA256 = caddyBundleSHA256
 	return &App{
 		store:   store,
 		catalog: catalog,
