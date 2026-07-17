@@ -32,6 +32,7 @@ type App struct {
 	catalog *biz.CatalogBiz
 	runtime *biz.RuntimeBiz
 	router  *biz.RouterBiz
+	backup  *biz.BackupBiz
 	updater *updater.Service
 	initErr error
 
@@ -57,9 +58,10 @@ func NewApp() *App {
 		catalog: catalog,
 		runtime: biz.NewRuntimeBiz(store),
 		router: biz.NewRouterBiz(
-			store, catalog, helper.NewClient(), caddy.New(store.Dir()),
+			store, catalog, helper.NewClient(), caddyAdapter,
 			helper.SystemHostsPath(), filepath.Join(store.Dir(), "caddy.json"),
 		),
+		backup:  biz.NewBackupBiz(store),
 		updater: updater.NewDefaultService(),
 	}
 }
@@ -94,7 +96,7 @@ func (a *App) ensureReady() error {
 	if a.initErr != nil {
 		return a.initErr
 	}
-	if a.store == nil || a.catalog == nil || a.runtime == nil || a.router == nil {
+	if a.store == nil || a.catalog == nil || a.runtime == nil || a.router == nil || a.backup == nil {
 		return fmt.Errorf("app is not initialized")
 	}
 	return nil
@@ -303,14 +305,6 @@ func (a *App) GetRouteStatus() ([]biz.RouteStatusItem, error) {
 		return nil, err
 	}
 	return a.router.RouteStatus()
-}
-
-// StartForward 启动单条 Forward 的运行时。
-func (a *App) StartForward(id int) error {
-	if err := a.ensureReady(); err != nil {
-		return err
-	}
-	return a.runtime.Start(id)
 }
 
 // StopForward 停止单条 Forward；手动停止不触发自动重连。
