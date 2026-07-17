@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -305,6 +307,126 @@ func (a *App) GetRouteStatus() ([]biz.RouteStatusItem, error) {
 		return nil, err
 	}
 	return a.router.RouteStatus()
+}
+
+// ExportBackupWithDialog 创建密码加密备份包并经保存对话框写盘；返回风险提示（如包含的私钥文件）。
+func (a *App) ExportBackupWithDialog(password string, includeKeyFiles bool) ([]string, error) {
+	if err := a.ensureReady(); err != nil {
+		return nil, err
+	}
+	raw, warnings, err := a.backup.CreateBackup(password, includeKeyFiles)
+	if err != nil {
+		return nil, err
+	}
+	destPath, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		DefaultFilename: "tunnelboard-backup.tbbak",
+		Filters:         []wailsruntime.FileFilter{{DisplayName: "TunnelBoard Backup (*.tbbak)", Pattern: "*.tbbak"}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("file dialog: %w", err)
+	}
+	if strings.TrimSpace(destPath) == "" {
+		return nil, nil // 用户取消
+	}
+	if err := os.MkdirAll(filepath.Dir(destPath), 0o755); err != nil {
+		return nil, fmt.Errorf("create destination directory: %w", err)
+	}
+	if err := os.WriteFile(destPath, raw, 0o600); err != nil {
+		return nil, fmt.Errorf("write backup file: %w", err)
+	}
+	slog.Info("backup exported", "dest", destPath)
+	return warnings, nil
+}
+
+// SelectBackupFile 打开文件选择对话框，返回备份包路径（取消为空串）。
+func (a *App) SelectBackupFile() (string, error) {
+	if err := a.ensureReady(); err != nil {
+		return "", err
+	}
+	srcPath, err := wailsruntime.OpenFileDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		Filters: []wailsruntime.FileFilter{{DisplayName: "TunnelBoard Backup (*.tbbak)", Pattern: "*.tbbak"}},
+	})
+	if err != nil {
+		return "", fmt.Errorf("file dialog: %w", err)
+	}
+	return strings.TrimSpace(srcPath), nil
+}
+
+// PreviewImport 解密备份包并返回导入预览（实体计数、冲突与私钥文件清单）。
+func (a *App) PreviewImport(srcPath, password string) (biz.ImportPreview, error) {
+	if err := a.ensureReady(); err != nil {
+		return biz.ImportPreview{}, err
+	}
+	raw, err := os.ReadFile(strings.TrimSpace(srcPath))
+	if err != nil {
+		return biz.ImportPreview{}, fmt.Errorf("read backup file: %w", err)
+	}
+	return a.backup.PreviewImport(raw, password)
+}
+
+// ApplyImport 追加导入到新顶层文件夹；不改变任何网络行为。
+func (a *App) ApplyImport(srcPath, password string, plan biz.ImportPlan) (biz.ImportSummary, error) {
+	if err := a.ensureReady(); err != nil {
+		return biz.ImportSummary{}, err
+	}
+	raw, err := os.ReadFile(strings.TrimSpace(srcPath))
+	if err != nil {
+		return biz.ImportSummary{}, fmt.Errorf("read backup file: %w", err)
+	}
+	return a.backup.ApplyImport(raw, password, plan)
+}
+
+// RestoreBackup 完全还原：先停止全部 Forward，再整体替换 Vault；必须显式确认。
+func (a *App) RestoreBackup(srcPath, password string, confirmed bool) error {
+	if err := a.ensureReady(); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(strings.TrimSpace(srcPath))
+	if err != nil {
+		return fmt.Errorf("read backup file: %w", err)
+	}
+	a.runtime.Shutdown()
+	return a.backup.RestoreBackup(raw, password, confirmed)
+}
+
+// SaveImportKeyFile 从备份包中取出指定私钥文件并经保存对话框写盘（导入后用户显式另存）。
+func (a *App) SaveImportKeyFile(srcPath, password, keyPath string) error {
+	if err := a.ensureReady(); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(strings.TrimSpace(srcPath))
+	if err != nil {
+		return fmt.Errorf("read backup file: %w", err)
+	}
+	_, keyFiles, err := vault.ParseBackup(raw, password)
+	if err != nil {
+		return err
+	}
+	content, ok := keyFiles[keyPath]
+	if !ok {
+		return fmt.Errorf("key file %s not found in backup", keyPath)
+	}
+	destPath, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		DefaultFilename: filepath.Base(keyPath),
+	})
+	if err != nil {
+		return fmt.Errorf("file dialog: %w", err)
+	}
+	if strings.TrimSpace(destPath) == "" {
+		return nil // 用户取消
+	}
+	if err := os.WriteFile(destPath, content, 0o600); err != nil {
+		return fmt.Errorf("write key file: %w", err)
+	}
+	return nil
+}
+
+// StartForward 启动单条 Forward 的运行时。
+func (a *App) StartForward(id int) error {
+	if err := a.ensureReady(); err != nil {
+		return err
+	}
+	return a.runtime.Start(id)
 }
 
 // StopForward 停止单条 Forward；手动停止不触发自动重连。
