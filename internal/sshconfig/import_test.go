@@ -83,8 +83,14 @@ Host *.corp
 	if second.Alias != "bastion" {
 		t.Fatalf("second alias = %q, want bastion", second.Alias)
 	}
-	if !second.BypassHostVerification {
-		t.Fatalf("bastion bypassHostVerification = false, want true")
+	hostKeyCheckDisabled := false
+	for _, w := range second.Warnings {
+		if w == "host_key_check_disabled" {
+			hostKeyCheckDisabled = true
+		}
+	}
+	if !hostKeyCheckDisabled {
+		t.Fatalf("bastion warnings = %v, want host_key_check_disabled", second.Warnings)
 	}
 	if second.AuthType != "ssh_agent" {
 		t.Fatalf("bastion authType = %q, want ssh_agent", second.AuthType)

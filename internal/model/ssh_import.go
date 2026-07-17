@@ -10,7 +10,6 @@ type SSHConfigImportCandidate struct {
 	AuthType               string   `json:"authType"`
 	KeyPath                string   `json:"keyPath"`
 	AgentSocketPath        string   `json:"agentSocketPath"`
-	BypassHostVerification bool     `json:"bypassHostVerification"`
 	KeepAliveIntervalMs    int      `json:"keepAliveIntervalMs"`
 	TimeoutMs              int      `json:"timeoutMs"`
 	HostKeyAlgorithms      string   `json:"hostKeyAlgorithms"`

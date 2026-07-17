@@ -34,12 +34,14 @@ type resolvedAlias struct {
 	port                   int
 	keyPath                string
 	agentSocketPath        string
-	bypassHostVerification bool
 	keepAliveIntervalMs    int
 	timeoutMs              int
 	hostKeyAlgorithms      string
 	proxyJump              string
 	sourcePath             string
+	// strictHostKeyCheckingOff 记录源配置关闭了主机校验，仅用于生成警告；
+	// TunnelBoard 不提供校验绕过，导入后仍按 TOFU 严格核验指纹。
+	strictHostKeyCheckingOff bool
 }
 
 type parser struct {
@@ -109,7 +111,6 @@ func LoadImportCandidates(configPath string) (model.SSHConfigImportResult, error
 			AuthType:               deriveAuthType(resolved),
 			KeyPath:                resolved.keyPath,
 			AgentSocketPath:        resolved.agentSocketPath,
-			BypassHostVerification: resolved.bypassHostVerification,
 			KeepAliveIntervalMs:    resolved.keepAliveIntervalMs,
 			TimeoutMs:              resolved.timeoutMs,
 			HostKeyAlgorithms:      resolved.hostKeyAlgorithms,
@@ -273,9 +274,7 @@ func resolveAlias(alias string, entries []configEntry) resolvedAlias {
 			case "stricthostkeychecking":
 				switch strings.ToLower(option.value) {
 				case "no", "off":
-					out.bypassHostVerification = true
-				case "yes", "ask", "accept-new":
-					out.bypassHostVerification = false
+					out.strictHostKeyCheckingOff = true
 				}
 			case "serveraliveinterval":
 				if out.keepAliveIntervalMs == 5000 {
@@ -327,6 +326,9 @@ func deriveWarnings(resolved resolvedAlias) []string {
 	}
 	if strings.TrimSpace(resolved.keyPath) == "" && strings.TrimSpace(resolved.agentSocketPath) == "" {
 		warnings = append(warnings, "agent_fallback")
+	}
+	if resolved.strictHostKeyCheckingOff {
+		warnings = append(warnings, "host_key_check_disabled")
 	}
 	return warnings
 }

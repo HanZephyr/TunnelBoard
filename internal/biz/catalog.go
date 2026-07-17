@@ -80,7 +80,7 @@ func (b *CatalogBiz) SaveSSHHost(host model.SSHHost) (model.SSHHost, error) {
 	return saved, nil
 }
 
-// normalizeSSHHost 沿用旧 Jumper 的规范化语义：默认端口 22、默认超时 5000ms、
+// normalizeSSHHost 规范化 SSH 主机资料：默认端口 22、默认超时 5000ms、
 // 默认认证 ssh_key；非 ssh_key 清空 KeyPath，ssh_agent 不保存任何秘密材料。
 func normalizeSSHHost(h model.SSHHost) model.SSHHost {
 	h.Name = strings.TrimSpace(h.Name)
