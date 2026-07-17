@@ -3,256 +3,18 @@
         "title": "TunnelBoard",
         "sidebar": {
             "subtitle": "SSH Tunnel Manager",
-            "overview": "Overview",
-            "overviewSubtitle": "Core operational status and recent activity",
-            "jumpers": "Jumpers",
-            "jumpersSubtitle": "Manage SSH Jumper configurations",
-            "tunnels": "Tunnels",
-            "tunnelsSubtitle": "Create and manage SSH Tunnels",
-            "logs": "Logs",
-            "logsSubtitle": "View recent operation logs",
-            "config": "Config",
-            "configSubtitle": "Theme, version, updates and product entry",
+            "forwards": "Forwards",
+            "forwardsSubtitle": "SSH port forwards organized in folders",
+            "hosts": "SSH Hosts",
+            "hostsSubtitle": "Reusable SSH servers and credentials",
+            "settings": "Settings",
+            "settingsSubtitle": "Preferences, updates and data directory",
             "collapse": "Collapse sidebar",
             "expand": "Expand sidebar"
         },
         "header": {
-            "newJumper": "+ New Jumper",
-            "newTunnel": "+ New Tunnel",
-            "importTunnel": "Import"
-        },
-        "overview": {
-            "totalTunnels": "Total Tunnels",
-            "running": "Running",
-            "stopped": "Stopped",
-            "autoStart": "Auto Start",
-            "activeTunnels": "Active Tunnels",
-            "recentActivity": "Recent Activity",
-            "collapsePanel": "Collapse panel",
-            "expandPanel": "Expand panel",
-            "noRunningTunnels": "No running tunnels",
-            "table": {
-                "name": "Name",
-                "route": "Route",
-                "jumper": "Jumper",
-                "action": "Action"
-            },
-            "actions": {
-                "stopTunnel": "Stop"
-            },
-            "pagination": {
-                "prev": "Previous page",
-                "next": "Next page",
-                "pageInfo": "{current}/{total}"
-            }
-        },
-        "jumpers": {
-            "title": "All Jumpers",
-            "noJumpers": "No jumper yet",
-            "table": {
-                "name": "Name",
-                "connection": "Connection",
-                "auth": "Auth",
-                "notes": "Notes",
-                "action": "Action"
-            },
-            "actions": {
-                "copy": "Copy",
-                "edit": "Edit",
-                "delete": "Delete"
-            }
-        },
-        "tunnels": {
-            "title": "All Tunnels",
-            "noTunnels": "No tunnel yet",
-            "errorReason": "Error",
-            "table": {
-                "name": "Name",
-                "mode": "Mode",
-                "route": "Route",
-                "jumper": "Jumper",
-                "status": "Status",
-                "latency": "Latency",
-                "action": "Action"
-            },
-            "latency": {
-                "measuring": "Measuring..."
-            },
-            "actions": {
-                "stop": "Stop",
-                "start": "Start",
-                "busy": "Starting",
-                "retry": "Retry",
-                "more": "More",
-                "copy": "Copy",
-                "copyError": "Copy error",
-                "copied": "Copied",
-                "expandError": "Show full error",
-                "collapseError": "Hide full error",
-                "edit": "Edit",
-                "delete": "Delete"
-            },
-            "status": {
-                "running": "Running",
-                "stopped": "Stopped",
-                "busy": "Busy",
-                "error": "Error"
-            }
-        },
-        "confirmations": {
-            "deleteTunnel": "Delete tunnel \"{name}\"?",
-            "deleteJumper": "Delete jumper \"{name}\"?",
-            "deleteJumperBlocked": "Cannot delete jumper \"{name}\" because it is used by {count} tunnel(s)."
-        },
-        "logs": {
-            "title": "Operation Logs",
-            "levels": {
-                "all": "All",
-                "info": "Info",
-                "warn": "Warn",
-                "error": "Error"
-            },
-            "table": {
-                "time": "Time",
-                "level": "Level",
-                "message": "Message"
-            },
-            "noLogs": "No logs for this level"
-        },
-        "modals": {
-            "jumper": {
-                "newTitle": "New Jumper",
-                "editTitle": "Edit Jumper",
-                "basicSettings": "Basic Settings",
-                "advancedOptions": "Advanced Options",
-                "name": "Name",
-                "user": "User",
-                "host": "Host",
-                "port": "Port",
-                "authMethod": "Auth Method",
-                "sshKeyFile": "SSH Key File",
-                "browse": "Browse",
-                "password": "Password",
-                "notes": "Notes",
-                "keepAliveInterval": "KeepAlive Interval (ms)",
-                "keepAliveIntervalTooltip": "0 disables keepalive. Positive values define the keepalive ping interval in milliseconds.",
-                "timeout": "Connection Timeout (ms)",
-                "bypassHostCheck": "Bypass Host Check",
-                "testConnection": "Test Connection",
-                "testing": "Testing...",
-                "sshAgentNote": "SSH Agent uses keys loaded in the system, no key file or password needed.",
-                "agentSocketPath": "Agent Socket Path (Optional)",
-                "agentSocketPlaceholder": "~/.ssh/ssh-agent.sock",
-                "agentSocketNote": "Optional. If provided, this socket is preferred over SSH_AUTH_SOCK.",
-                "keyFileNote": "Enter path manually or click Browse to select.",
-                "passwordPlaceholder": "Enter password",
-                "passwordOptionalPlaceholder": "Optional (key passphrase)",
-                "keyPathPlaceholder": "~/.ssh/id_rsa",
-                "bypassTooltip": "Bypass SSH host fingerprint check (recommended only in trusted environments)."
-            },
-            "importTunnel": {
-                "title": "Import Tunnels",
-                "source": "Source",
-                "sshCommand": "SSH Command",
-                "sshCommandPlaceholder": "Paste your SSH command here...\nExample: ssh -N -L 3307:remote:3306 -i key.pem user{'@'}host",
-                "parseCmd": "Parse Command",
-                "parsedTunnels": "Parsed Tunnels",
-                "tunnelName": "Tunnel Name",
-                "mode": "Mode",
-                "route": "Route",
-                "importBtn": "Import",
-                "jumperSectionTitle": "Jumper Handling",
-                "parsedTargetLabel": "Parsed target: {target}",
-                "jumperAction": "Action",
-                "useExistingJumper": "Use existing jumper",
-                "createNewJumper": "Create new jumper",
-                "existingJumper": "Existing jumper",
-                "defaultMatchedJumper": "Matched existing jumper selected by default.",
-                "duplicateExisting": "Duplicate with existing tunnel; unselected by default.",
-                "duplicateBatch": "Duplicate in current parse result; unselected by default.",
-                "warningInvalidLocal": "{count} invalid -L rule(s) were ignored.",
-                "warningInvalidRemote": "{count} invalid -R rule(s) were ignored.",
-                "warningInvalidDynamic": "Invalid -D rule was ignored.",
-                "warningInvalidTarget": "A target token containing {'@'} was found but its format is invalid; failed to parse user{'@'}host.",
-                "warningMissingTarget": "No valid user{'@'}host target found; import is blocked.",
-                "warningDuplicateSkipped": "{count} duplicate tunnel(s) detected and unselected.",
-                "statusSuccess": "Success",
-                "statusError": "Error",
-                "errorDuplicateExisting": "Duplicate route with an existing tunnel.",
-                "errorDuplicateBatch": "Duplicate route in this parse result.",
-                "errorMissingTarget": "SSH command is missing a valid user{'@'}host target; import was blocked.",
-                "errorNoJumper": "No jumper available. Parse with user{'@'}host, or create a jumper first."
-            },
-            "importJumper": {
-                "title": "Import Jumpers",
-                "source": "Source",
-                "loadResult": "Load Result",
-                "load": "Load",
-                "loading": "Reading SSH config...",
-                "emptyTitle": "No importable hosts found",
-                "emptyDesc": "Add explicit Host aliases in ~/.ssh/config, then reload this list.",
-                "jumperName": "Jumper Name",
-                "aliasLabel": "SSH alias: {alias}",
-                "statusReady": "Ready",
-                "statusError": "Blocked",
-                "detailLabel": "Import details",
-                "importBtn": "Import ({count})",
-                "warningAgentFallback": "No IdentityFile found. This entry will default to SSH Agent.",
-                "errorMissingUser": "Missing User in SSH config. Add User for this alias before importing.",
-                "errorMissingHost": "Missing HostName or target host in SSH config.",
-                "errorProxyJump": "ProxyJump is configured ({proxyJump}). Create the jumper chain manually for now.",
-                "errorDuplicateExisting": "A jumper with the same user/host/port already exists.",
-                "errorDuplicateBatch": "This host is duplicated in the current import result."
-            },
-            "tunnel": {
-                "newTitle": "New Tunnel",
-                "editTitle": "Edit Tunnel",
-                "name": "Name",
-                "mode": "Mode",
-                "localHost": "Local Host",
-                "localPort": "Local Port",
-                "remoteHost": "Remote Host",
-                "remotePort": "Remote Port",
-                "jumpers": "Jumpers",
-                "selectPrimaryJumperPlaceholder": "Select primary jumper (#1)",
-                "primaryJumperHint": "The selected primary jumper is hop #1 in the tunnel chain.",
-                "addMoreJumpers": "Add more jumpers",
-                "hideMoreJumpers": "Hide extra jumpers",
-                "jumpersHint": "Use + to append jumpers. Tunnel will hop in the selected order.",
-                "selectAdditionalJumperPlaceholder": "Select a jumper to append",
-                "selectJumperPlaceholder": "Select a jumper to append",
-                "addJumper": "Add jumper",
-                "selectedJumpers": "Selected Jumpers",
-                "selectedJumpersOrderTooltip": "Tunnel connects from #1 to #N in this list order. Use up/down controls to reorder.",
-                "noSelectedJumpers": "No jumper selected yet.",
-                "moveJumperUp": "Move jumper up",
-                "moveJumperDown": "Move jumper down",
-                "removeJumper": "Remove jumper",
-                "appendNewJumper": "Quick create and append one new jumper",
-                "quickCreateJumper": "Quick Create Jumper",
-                "description": "Description",
-                "autoStart": "Auto start with app",
-                "saveTunnel": "Save Tunnel",
-                "testConnection": "Test Connection",
-                "testing": "Testing...",
-                "testPassedWithLatency": "Connection test passed. SSH latency: {latency}."
-            }
-        },
-        "options": {
-            "mode": {
-                "local": "Local Forward",
-                "remote": "Remote Forward",
-                "dynamic": "Dynamic SOCKS5"
-            },
-            "auth": {
-                "password": "Password",
-                "sshKey": "SSH Key",
-                "sshAgent": "SSH Agent",
-                "unknown": "Unknown"
-            },
-            "jumper": {
-                "unknown": "Unknown Jumper"
-            }
+            "newForward": "+ New Forward",
+            "newHost": "+ New Host"
         },
         "common": {
             "cancel": "Cancel",
@@ -261,26 +23,165 @@
             "delete": "Delete",
             "edit": "Edit",
             "save": "Save",
-            "action": "Action",
-            "searchPlaceholder": "Search...",
-            "clearSearch": "Clear search"
+            "create": "Create",
+            "add": "Add",
+            "actions": "Actions",
+            "moveUp": "Move up",
+            "moveDown": "Move down",
+            "remove": "Remove",
+            "none": "--"
         }
     },
-    "config": {
-        "general": "General Settings",
-        "advancedSettings": "Advanced Settings",
+    "forwards": {
+        "foldersTitle": "Folders",
+        "newFolder": "New Folder",
+        "newSubfolder": "New Subfolder",
+        "folderName": "Folder Name",
+        "folderNamePlaceholder": "e.g. Work",
+        "folderNameRequired": "Folder name is required.",
+        "noFoldersHint": "Create a folder to start organizing forwards.",
+        "selectFolderHint": "Select a folder on the left to view its forwards.",
+        "emptyFolder": "No forwards in this folder yet.",
+        "tableTitle": "Forwards",
+        "table": {
+            "name": "Name",
+            "mode": "Mode",
+            "local": "Local",
+            "remote": "Remote",
+            "chain": "Host Chain",
+            "autoStart": "Auto Start",
+            "actions": "Actions"
+        },
+        "mode": {
+            "local": "Local",
+            "remote": "Remote",
+            "dynamic": "Dynamic"
+        },
+        "autoStartYes": "Auto",
+        "selectedCount": "{count} selected",
+        "moveToPlaceholder": "Move to…",
+        "deleteSelected": "Delete",
+        "clearSelection": "Clear selection",
+        "modal": {
+            "newTitle": "New Forward",
+            "editTitle": "Edit Forward",
+            "name": "Name",
+            "namePlaceholder": "e.g. staging-mysql",
+            "mode": "Mode",
+            "folder": "Folder",
+            "chain": "SSH Host Chain",
+            "chainHint": "The forward hops through the selected hosts in order (#1 first).",
+            "chainPlaceholder": "Select a host to append",
+            "chainEmpty": "No hosts selected yet.",
+            "noHostsHint": "No SSH hosts yet. Create one on the SSH Hosts page first.",
+            "noFoldersHint": "No folders yet. Create a folder first.",
+            "localHost": "Local Host",
+            "localPort": "Local Port",
+            "remoteHost": "Remote Host",
+            "remotePort": "Remote Port",
+            "autoStart": "Auto start with app",
+            "description": "Description",
+            "descriptionPlaceholder": "Optional"
+        },
+        "errors": {
+            "nameRequired": "Name is required.",
+            "folderRequired": "Please select a folder.",
+            "chainRequired": "Select at least one SSH host for the chain.",
+            "localHostRequired": "Local host is required.",
+            "portRange": "Port must be between 1 and 65535.",
+            "remoteRequired": "Remote host and port are required for local/remote mode."
+        },
+        "confirmations": {
+            "deleteForward": "Delete forward \"{name}\"?",
+            "deleteSelected": "Delete {count} selected forward(s)?",
+            "deleteFolderNotEmpty": "Folder \"{name}\" is not empty ({folders} subfolder(s), {forwards} forward(s)). Delete it together with all its contents?",
+            "deleteSelectedTitle": "Delete Forwards",
+            "cascadeConfirm": "Delete All",
+            "moveSelected": "Move {count} forward(s) to \"{folder}\"?"
+        },
+        "notify": {
+            "saved": "Forward \"{name}\" saved.",
+            "deleted": "Forward deleted.",
+            "deletedCount": "{count} forward(s) deleted.",
+            "movedCount": "{count} forward(s) moved.",
+            "folderCreated": "Folder \"{name}\" created.",
+            "folderDeleted": "Folder \"{name}\" deleted.",
+            "needFolder": "Create a folder before adding forwards."
+        }
+    },
+    "hosts": {
+        "tableTitle": "SSH Hosts",
+        "empty": "No SSH hosts yet.",
+        "table": {
+            "name": "Name",
+            "connection": "Connection",
+            "auth": "Auth",
+            "notes": "Notes",
+            "actions": "Actions"
+        },
+        "auth": {
+            "password": "Password",
+            "sshKey": "SSH Key",
+            "sshAgent": "SSH Agent",
+            "unknown": "Unknown"
+        },
+        "modal": {
+            "newTitle": "New SSH Host",
+            "editTitle": "Edit SSH Host",
+            "name": "Name",
+            "namePlaceholder": "e.g. bastion-1",
+            "host": "Host",
+            "hostPlaceholder": "e.g. 192.168.1.10 or example.com",
+            "port": "Port",
+            "user": "User",
+            "authType": "Auth Method",
+            "keyPath": "SSH Key File",
+            "keyPathPlaceholder": "~/.ssh/id_rsa",
+            "password": "Password",
+            "passwordPlaceholder": "Enter password",
+            "keyPassphrase": "Key Passphrase",
+            "keyPassphrasePlaceholder": "Optional (private key passphrase)",
+            "agentSocketPath": "Agent Socket Path (optional)",
+            "agentSocketPlaceholder": "~/.ssh/ssh-agent.sock",
+            "advanced": "Advanced Options",
+            "keepAlive": "KeepAlive Interval (ms)",
+            "timeout": "Connection Timeout (ms)",
+            "hostKeyAlgorithms": "Host Key Algorithms",
+            "hostKeyAlgorithmsPlaceholder": "e.g. ssh-ed25519,rsa-sha2-512",
+            "notes": "Notes",
+            "notesPlaceholder": "Optional"
+        },
+        "errors": {
+            "nameRequired": "Name is required.",
+            "hostRequired": "Host is required.",
+            "userRequired": "User is required.",
+            "portRange": "Port must be between 1 and 65535.",
+            "keyPathRequired": "SSH key auth requires a key file path.",
+            "passwordRequired": "Password auth requires a password."
+        },
+        "confirmations": {
+            "deleteHost": "Delete SSH host \"{name}\"?",
+            "deleteHostTitle": "Delete SSH Host",
+            "inUseTitle": "Cannot Delete",
+            "inUse": "SSH host \"{name}\" is still referenced by one or more forwards. Rebind or delete those forwards first."
+        },
+        "notify": {
+            "saved": "SSH host \"{name}\" saved.",
+            "deleted": "SSH host \"{name}\" deleted."
+        }
+    },
+    "settings": {
+        "general": "General",
         "language": "Language",
         "languageDesc": "Choose your preferred language / 选择偏好语言",
         "theme": "Dark Theme",
         "themeDesc": "Switch dark/light theme",
         "autoRun": "Launch at login",
         "autoRunDesc": "Start TunnelBoard when you log in",
-        "appInfo": "App Info",
-        "version": "Version",
-        "productUpdates": "Product Updates",
-        "currentVersion": "Current Version",
+        "updates": "Updates",
         "automaticUpdateChecks": "Automatic Update Checks",
         "automaticUpdateChecksDesc": "Check GitHub Releases when TunnelBoard starts",
+        "currentVersion": "Current Version",
         "checkUpdates": "Check for Updates",
         "checkingUpdates": "Checking...",
         "updateResultTitle": "Update Check Result",
@@ -288,50 +189,10 @@
         "latestVersionIs": "Latest version: {version}",
         "releaseNotes": "Release Notes",
         "openDownloadPage": "Open Download Page",
-        "openReleases": "Releases",
-        "configFile": "Config File",
-        "manageConfig": "Manage Config",
-        "manageConfigDesc": "Export or import your config, or open the local config directory",
-        "exportConfig": "Export Config",
-        "exportConfigBtn": "Export",
-        "exportConfigDesc": "Save a backup copy of config.toml to a chosen location",
-        "importConfig": "Import Config",
-        "importConfigBtn": "Import",
-        "importConfigDesc": "Load config from a TOML file (stops and restarts tunnels)",
-        "openConfigDir": "Open Config Dir",
-        "openConfigDirBtn": "Open Dir",
-        "openConfigDirDesc": "Open the config directory",
-        "configDataDir": "Configuration data directory",
-        "configDirCurrentPathPrefix": "Current path: ",
-        "configDirUnavailable": "Unable to read path (backend unavailable in this environment).",
-        "chooseConfigDirBtn": "Change…",
-        "resetConfigDirBtn": "Restore default",
-        "configDirRelocateConfirm": "Copy config to the selected folder and switch to it? Active tunnels will be stopped. The app will quit — reopen it to continue.\n\n{dir}",
-        "configDirConflictPrompt": "{dir}\n\nThis folder already has configuration files. Overwrite them, or keep using the existing files?",
-        "configDirConflictOverwrite": "Overwrite",
-        "configDirConflictUseExisting": "Use existing",
-        "configDirResetConfirm": "Copy config back to the default directory and remove the redirect? The app will quit — reopen it to continue.",
-        "configDirResetImplicitMissing": "Could not resolve the default configuration directory.",
-        "configDirRelocateQuitHint": "Configuration updated. The app will close; the packaged build should reopen in a moment. Under wails dev, start the app manually again.",
-        "skills": {
-            "title": "Skill Install",
-            "desc": "One-click install for common apps (Cherry Studio / Cursor / Codex)",
-            "installBtn": "One-click Install",
-            "dialogTitle": "Install Skills",
-            "dialogDesc": "Select target apps and write skill files automatically.",
-            "loadingTargets": "Loading install targets...",
-            "installNow": "Install Now",
-            "installing": "Installing...",
-            "resultTitle": "Install Result",
-            "noSelection": "Please select at least one target app.",
-            "installSummary": "Install completed: {success}/{total} succeeded"
-        },
-        "exportSuccess": "Config exported successfully.",
-        "importSuccess": "Config imported. Auto-start tunnels have been restarted.",
-        "importConfirm": "This will permanently overwrite your current config (irreversible). Active tunnels will be stopped and restarted. Continue?",
-        "messages": {
-            "upToDate": "Checked at {time}.\nCurrent version ({version}) is up to date.",
-            "updateAvailable": "New version {version} available."
-        }
+        "data": "Data",
+        "dataDir": "Data Directory",
+        "dataDirDesc": "The encrypted Vault and app preferences are stored in this directory.",
+        "dataDirUnavailable": "Unable to read path (backend unavailable in this environment).",
+        "openDir": "Open Dir"
     }
 }

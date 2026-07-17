@@ -10,7 +10,7 @@ defineProps({
   }
 })
 
-defineEmits(['new-jumper', 'new-tunnel', 'import-tunnel', 'import-jumper'])
+defineEmits(['new-forward', 'new-host'])
 </script>
 
 <template>
@@ -20,19 +20,11 @@ defineEmits(['new-jumper', 'new-tunnel', 'import-tunnel', 'import-jumper'])
       <p class="page-subtitle">{{ currentPage?.subtitle }}</p>
     </div>
     <div class="d-flex align-items-center gap-2">
-      <button v-if="activePage === 'jumpers'" type="button" class="btn btn-outline-primary" @click="$emit('import-jumper')">
-        <i class="bi bi-file-earmark-plus me-1"></i>
-        {{ $t('app.header.importTunnel') }}
+      <button v-if="activePage === 'forwards'" type="button" class="btn btn-primary" @click="$emit('new-forward')">
+        {{ $t('app.header.newForward') }}
       </button>
-      <button v-if="activePage === 'jumpers'" type="button" class="btn btn-primary" @click="$emit('new-jumper')">
-        {{ $t('app.header.newJumper') }}
-      </button>
-      <button v-if="activePage === 'tunnels'" type="button" class="btn btn-outline-primary" @click="$emit('import-tunnel')">
-        <i class="bi bi-file-earmark-plus me-1"></i>
-        {{ $t('app.header.importTunnel') }}
-      </button>
-      <button v-if="activePage === 'tunnels'" type="button" class="btn btn-primary" @click="$emit('new-tunnel')">
-        {{ $t('app.header.newTunnel') }}
+      <button v-if="activePage === 'hosts'" type="button" class="btn btn-primary" @click="$emit('new-host')">
+        {{ $t('app.header.newHost') }}
       </button>
     </div>
   </header>

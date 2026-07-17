@@ -1501,3 +1501,270 @@
     overflow-y: auto;
   }
 }
+
+/* ==== Vault 管理界面（Forwards / Hosts 页） ==== */
+.forwards-layout {
+  display: flex;
+  gap: 0.85rem;
+  align-items: stretch;
+}
+
+.folder-tree-panel {
+  width: 252px;
+  min-width: 252px;
+  flex: 0 0 252px;
+}
+
+.forwards-table-panel {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.36rem 0.42rem;
+  border: 1px solid transparent;
+  border-radius: var(--lt-radius-md);
+  color: var(--lt-ink);
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.folder-row.child {
+  margin-left: 1.15rem;
+}
+
+.folder-row:hover {
+  background: var(--lt-accent-hover);
+}
+
+.folder-row.active {
+  background: var(--lt-accent-active);
+  border-color: var(--lt-accent-border);
+  color: var(--lt-accent-ink);
+}
+
+.folder-icon {
+  color: var(--lt-muted);
+  font-size: 0.82rem;
+  flex: 0 0 auto;
+}
+
+.folder-row.active .folder-icon {
+  color: var(--lt-accent-ink);
+}
+
+.folder-name {
+  flex: 1;
+  min-width: 0;
+}
+
+.folder-count {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  color: var(--lt-neutral-ink);
+  background: var(--lt-neutral-bg);
+  border: 1px solid var(--lt-neutral-border);
+  border-radius: 999px;
+  padding: 0.02rem 0.34rem;
+  line-height: 1.35;
+}
+
+.folder-actions {
+  display: none;
+  align-items: center;
+  gap: 0.1rem;
+  flex: 0 0 auto;
+}
+
+.folder-row:hover .folder-actions,
+.folder-row.active .folder-actions {
+  display: inline-flex;
+}
+
+.folder-action-btn {
+  border: 0;
+  background: transparent;
+  color: var(--lt-muted);
+  padding: 0.08rem 0.24rem;
+  border-radius: 6px;
+  line-height: 1;
+  font-size: 0.72rem;
+}
+
+.folder-action-btn:hover {
+  color: var(--lt-accent-ink);
+  background: var(--lt-accent-hover);
+}
+
+.folder-action-btn.danger:hover {
+  color: var(--lt-danger-ink);
+  background: var(--lt-danger-bg);
+}
+
+.folder-tree-empty {
+  font-size: 0.8rem;
+  color: var(--lt-muted);
+}
+
+.batch-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.batch-count {
+  font-size: 0.78rem;
+  color: var(--lt-muted);
+  white-space: nowrap;
+}
+
+.batch-move-select {
+  width: auto;
+  min-width: 8.5rem;
+}
+
+.forwards-table,
+.hosts-table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.forwards-table .forward-check-cell {
+  width: 34px;
+  max-width: 34px;
+}
+
+.forwards-table .forward-mode-cell {
+  width: 100px;
+  max-width: 100px;
+}
+
+.forwards-table .forward-route-cell {
+  width: 150px;
+  max-width: 150px;
+}
+
+.forwards-table .forward-autostart-cell {
+  width: 92px;
+  max-width: 92px;
+}
+
+.forwards-table .forwards-action-cell {
+  width: 84px;
+  max-width: 84px;
+}
+
+.hosts-table .host-name-cell {
+  width: 170px;
+  max-width: 170px;
+}
+
+.hosts-table .host-conn-cell {
+  width: 250px;
+  max-width: 250px;
+}
+
+.hosts-table .host-auth-cell {
+  width: 130px;
+  max-width: 130px;
+}
+
+.hosts-table .hosts-action-cell {
+  width: 84px;
+  max-width: 84px;
+}
+
+/* Forward 主机链编辑器 */
+.chain-editor {
+  border: 1px solid var(--lt-border);
+  border-radius: var(--lt-radius-md);
+  background: var(--lt-surface-soft);
+  padding: 0.55rem 0.6rem;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.chain-empty {
+  font-size: 0.76rem;
+  color: var(--lt-muted);
+}
+
+.chain-item {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.8rem;
+}
+
+.chain-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  border: 1px solid var(--lt-border);
+  border-radius: 6px;
+  background: var(--lt-surface);
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--lt-muted);
+  flex: 0 0 auto;
+}
+
+.chain-host {
+  flex: 1;
+  min-width: 0;
+}
+
+.chain-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  flex: 0 0 auto;
+}
+
+.chain-action-btn {
+  border: 1px solid var(--lt-border);
+  background: var(--lt-surface);
+  color: var(--lt-muted);
+  border-radius: 6px;
+  padding: 0.08rem 0.3rem;
+  font-size: 0.68rem;
+  line-height: 1.2;
+}
+
+.chain-action-btn:hover:not(:disabled) {
+  color: var(--lt-accent-ink);
+  border-color: var(--lt-accent-border);
+}
+
+.chain-action-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+@media (max-width: 991px) {
+  .forwards-layout {
+    flex-direction: column;
+  }
+
+  .folder-tree-panel {
+    width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+}

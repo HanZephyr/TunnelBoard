@@ -2,85 +2,44 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  ApplyTrayLocale,
   CheckForUpdates as CheckForUpdatesAPI,
-  CreateJumper,
-  CreateTunnel,
-  DeleteJumper,
-  DeleteTunnel,
   GetUpdateCheckEnabled,
-  GetSSHConfigImportSources,
-  GetState,
-  LoadSSHConfigJumpersByPath,
-  SaveUILocale,
-  TestJumperConnection as TestJumperConnectionAPI,
-  TestTunnelConnection as TestTunnelConnectionAPI,
-  ToggleTunnel,
-  UpdateJumper,
-  UpdateTunnel
+  GetVaultData,
+  SaveUILocale
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL } from '../wailsjs/runtime/runtime'
+import { callBackend } from './utils/backend'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppTopHeader from './components/layout/AppTopHeader.vue'
-import OverviewPage from './components/pages/OverviewPage.vue'
-import JumpersPage from './components/pages/JumpersPage.vue'
-import TunnelsPage from './components/pages/TunnelsPage.vue'
-import LogsPage from './components/pages/LogsPage.vue'
-import ConfigPage from './components/pages/ConfigPage.vue'
-import JumperModal from './components/modals/JumperModal.vue'
-import ImportJumperModal from './components/modals/ImportJumperModal.vue'
-import TunnelModal from './components/modals/TunnelModal.vue'
-import ImportTunnelModal from './components/modals/ImportTunnelModal.vue'
+import ForwardsPage from './components/pages/ForwardsPage.vue'
+import HostsPage from './components/pages/HostsPage.vue'
+import SettingsPage from './components/pages/SettingsPage.vue'
 import './styles/app-shell.css'
 
 const { t, locale } = useI18n()
 
 const pages = computed(() => [
-  { key: 'overview', title: t('app.sidebar.overview'), subtitle: t('app.sidebar.overviewSubtitle'), icon: 'bi-speedometer2' },
-  { key: 'jumpers', title: t('app.sidebar.jumpers'), subtitle: t('app.sidebar.jumpersSubtitle'), icon: 'bi-hdd-network' },
-  { key: 'tunnels', title: t('app.sidebar.tunnels'), subtitle: t('app.sidebar.tunnelsSubtitle'), icon: 'bi-diagram-3' },
-  { key: 'logs', title: t('app.sidebar.logs'), subtitle: t('app.sidebar.logsSubtitle'), icon: 'bi-journal-text' },
-  { key: 'config', title: t('app.sidebar.config'), subtitle: t('app.sidebar.configSubtitle'), icon: 'bi-sliders2' }
-])
-
-const modeOptions = computed(() => [
-  { value: 'local', label: t('app.options.mode.local') },
-  { value: 'remote', label: t('app.options.mode.remote') },
-  { value: 'dynamic', label: t('app.options.mode.dynamic') }
-])
-
-const authOptions = computed(() => [
-  { value: 'password', label: t('app.options.auth.password') },
-  { value: 'ssh_key', label: t('app.options.auth.sshKey') },
-  { value: 'ssh_agent', label: t('app.options.auth.sshAgent') }
+  { key: 'forwards', title: t('app.sidebar.forwards'), subtitle: t('app.sidebar.forwardsSubtitle'), icon: 'bi-diagram-3' },
+  { key: 'hosts', title: t('app.sidebar.hosts'), subtitle: t('app.sidebar.hostsSubtitle'), icon: 'bi-hdd-network' },
+  { key: 'settings', title: t('app.sidebar.settings'), subtitle: t('app.sidebar.settingsSubtitle'), icon: 'bi-sliders2' }
 ])
 
 const savedTheme = typeof window !== 'undefined' ? window.localStorage.getItem('tunnelboard.theme') : null
 const savedSidebarCollapsed = typeof window !== 'undefined' ? window.localStorage.getItem('tunnelboard.sidebar.collapsed') : null
 const theme = ref(savedTheme === 'dark' ? 'dark' : 'light')
 const sidebarCollapsed = ref(savedSidebarCollapsed === '1')
-const activePage = ref('overview')
-const selectedLogLevel = ref('all')
-const configMessage = ref('')
-const DEFAULT_RELEASES_PAGE_URL = 'https://github.com/HanZephyr/TunnelBoard/releases'
-const releasePageUrl = ref(DEFAULT_RELEASES_PAGE_URL)
-const showOverviewActive = ref(true)
-const showOverviewActivity = ref(true)
-const isCheckingUpdates = ref(false)
-const updateCheckDialog = reactive({
-  visible: false,
-  mode: 'idle',
-  latestVersion: '',
-  releaseNotes: '',
-  message: ''
-})
-const showConfigToast = ref(false)
-const CONFIG_TOAST_DURATION_MS = 3800
-let configToastTimer = null
+const activePage = ref('forwards')
 
 const appMeta = reactive({
   version: '1.0.3.0'
 })
+const DEFAULT_RELEASES_PAGE_URL = 'https://github.com/HanZephyr/TunnelBoard/releases'
+const releasePageUrl = ref(DEFAULT_RELEASES_PAGE_URL)
 const hasNewVersion = ref(false)
+
+const currentPage = computed(() => pages.value.find((page) => page.key === activePage.value))
+
 watchEffect(() => {
   if (typeof document !== 'undefined') {
     document.documentElement.setAttribute('data-theme', theme.value)
@@ -104,193 +63,66 @@ function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value
 }
 
-watch(configMessage, (message) => {
+function switchPage(pageKey) {
+  activePage.value = pageKey
+}
+
+function setThemeBySwitch(enabled) {
+  theme.value = enabled ? 'dark' : 'light'
+}
+
+// ---- Vault 数据（唯一数据源，页面变更后统一重载）----
+const folders = ref([])
+const sshHosts = ref([])
+const forwards = ref([])
+
+async function loadVault() {
+  try {
+    const data = await callBackend(GetVaultData)
+    folders.value = Array.isArray(data?.folders) ? data.folders : []
+    sshHosts.value = Array.isArray(data?.sshHosts) ? data.sshHosts : []
+    forwards.value = Array.isArray(data?.forwards) ? data.forwards : []
+  } catch (_) {
+    folders.value = []
+    sshHosts.value = []
+    forwards.value = []
+  }
+}
+
+// ---- 全局 toast ----
+const toastMessage = ref('')
+const showToast = ref(false)
+const TOAST_DURATION_MS = 3800
+let toastTimer = null
+
+watch(toastMessage, (message) => {
   if (!message) {
-    hideConfigToast()
+    hideToast()
     return
   }
-  showConfigToast.value = true
-  if (configToastTimer !== null) {
-    window.clearTimeout(configToastTimer)
+  showToast.value = true
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer)
   }
-  configToastTimer = window.setTimeout(() => {
-    showConfigToast.value = false
-    configToastTimer = null
-  }, CONFIG_TOAST_DURATION_MS)
+  toastTimer = window.setTimeout(() => {
+    showToast.value = false
+    toastTimer = null
+  }, TOAST_DURATION_MS)
 })
 
-const jumpers = ref([])
-const tunnels = ref([])
-const jumperSearchQuery = ref('')
-const tunnelSearchQuery = ref('')
-const STATE_SYNC_INTERVAL_MS = 5000
-const pendingToggleTunnelIds = new Set()
-let stateSyncTimer = null
-let stateSyncInFlight = false
-
-const logs = ref([
-  { id: 1, level: 'info', time: nowLabel(), message: 'Config storage mode: TOML' }
-])
-
-const showJumperModal = ref(false)
-const showTunnelModal = ref(false)
-const showImportJumperModal = ref(false)
-const showImportTunnelModal = ref(false)
-const importJumperLoading = ref(false)
-const importJumperError = ref('')
-const importTunnelError = ref('')
-const importJumperHasLoaded = ref(false)
-const sshConfigSources = ref([])
-const selectedImportJumperSourcePath = ref('')
-const sshConfigCandidates = ref([])
-const editingJumperId = ref(null)
-const editingTunnelId = ref(null)
-const showJumperBasic = ref(true)
-const showJumperAdvanced = ref(false)
-
-const jumperForm = reactive(defaultJumperForm())
-const tunnelForm = reactive(defaultTunnelForm())
-const inlineJumperForm = reactive(defaultInlineJumperForm())
-
-const jumperValidationError = ref('')
-const inlineJumperValidationError = ref('')
-const tunnelValidationError = ref('')
-const actionDialog = reactive({
-  visible: false,
-  mode: 'alert',
-  message: '',
-  confirmButtonClass: 'btn-primary',
-  confirmLabel: '',
-  onConfirm: null,
-  secondaryLabel: '',
-  secondaryButtonClass: 'btn-outline-primary',
-  onSecondary: null
-})
-const jumperTest = reactive({
-  status: 'idle',
-  message: ''
-})
-const tunnelTest = reactive({
-  status: 'idle',
-  message: ''
-})
-
-const JUMPER_LIMITS = {
-  name: 20,
-  user: 50,
-  host: 255,
-  keyPath: 260,
-  agentSocketPath: 512,
-  password: 128,
-  notes: 300,
-  keepAliveIntervalMin: 0,
-  keepAliveIntervalMax: 120000,
-  timeoutMin: 100,
-  timeoutMax: 120000
-}
-const TUNNEL_LIMITS = {
-  name: 20
+function notify(message) {
+  toastMessage.value = message || ''
 }
 
-const currentPage = computed(() => pages.value.find((page) => page.key === activePage.value))
-const totalTunnels = computed(() => tunnels.value.length)
-const runningTunnels = computed(() => tunnels.value.filter((tunnel) => tunnel.status === 'running'))
-const stoppedTunnels = computed(() => tunnels.value.filter((tunnel) => tunnel.status === 'stopped' || tunnel.status === 'error'))
-const autoStartTunnels = computed(() => tunnels.value.filter((tunnel) => tunnel.autoStart))
-const filteredLogs = computed(() => {
-  if (selectedLogLevel.value === 'all') return logs.value
-  return logs.value.filter((log) => log.level === selectedLogLevel.value)
-})
-const filteredJumpers = computed(() => {
-  const query = jumperSearchQuery.value.trim().toLowerCase()
-  if (!query) return jumpers.value
-  
-  return jumpers.value.filter(jumper => {
-    return (
-      jumper.name.toLowerCase().includes(query) ||
-      jumper.host.toLowerCase().includes(query) ||
-      jumper.user.toLowerCase().includes(query) ||
-      (jumper.notes && jumper.notes.toLowerCase().includes(query))
-    )
-  })
-})
-
-const filteredTunnels = computed(() => {
-  const query = tunnelSearchQuery.value.trim().toLowerCase()
-  if (!query) return tunnels.value
-  
-  return tunnels.value.filter(tunnel => {
-    const jumperName = getTunnelJumperLabel(tunnel).toLowerCase()
-    return (
-      tunnel.name.toLowerCase().includes(query) ||
-      tunnel.localHost.toLowerCase().includes(query) ||
-      tunnel.remoteHost.toLowerCase().includes(query) ||
-      jumperName.includes(query) ||
-      (tunnel.description && tunnel.description.toLowerCase().includes(query))
-    )
-  })
-})
-
-const jumperNeedsPassword = computed(() => authNeedsPassword(jumperForm.authType))
-const jumperShowsPassword = computed(() => authShowsPassword(jumperForm.authType))
-const jumperNeedsKeyFile = computed(() => authNeedsKeyFile(jumperForm.authType))
-const inlineJumperNeedsPassword = computed(() => authNeedsPassword(inlineJumperForm.authType))
-const inlineJumperShowsPassword = computed(() => authShowsPassword(inlineJumperForm.authType))
-const inlineJumperNeedsKeyFile = computed(() => authNeedsKeyFile(inlineJumperForm.authType))
-function defaultJumperForm() {
-  return {
-    name: '',
-    host: '',
-    port: 22,
-    user: '',
-    authType: 'ssh_key',
-    keyPath: '',
-    agentSocketPath: '',
-    password: '',
-    bypassHostVerification: true,
-    keepAliveIntervalMs: 5000,
-    timeoutMs: 5000,
-    notes: ''
+function hideToast() {
+  showToast.value = false
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer)
+    toastTimer = null
   }
 }
 
-function defaultTunnelForm() {
-  return {
-    name: '',
-    mode: 'local',
-    jumperIds: [],
-    nextJumperId: '',
-    appendNewJumper: false,
-    localHost: '127.0.0.1',
-    localPort: 10022,
-    remoteHost: '',
-    remotePort: 22,
-    autoStart: false,
-    description: ''
-  }
-}
-
-function defaultInlineJumperForm() {
-  return {
-    name: '',
-    host: '',
-    port: 22,
-    user: '',
-    authType: 'ssh_key',
-    keyPath: '',
-    agentSocketPath: '',
-    password: '',
-    bypassHostVerification: true,
-    keepAliveIntervalMs: 5000,
-    timeoutMs: 5000,
-    notes: ''
-  }
-}
-
-function nowLabel() {
-  return new Date().toLocaleString()
-}
-
+// ---- 更新检查（启动时静默检查；手动检查在 Settings 页）----
 function openExternalUrl(url) {
   if (!url) return
   try {
@@ -302,226 +134,13 @@ function openExternalUrl(url) {
   }
 }
 
-function nameUnits(text) {
-  let units = 0
-  for (const char of text || '') {
-    units += /[\u3400-\u9fff\uf900-\ufaff]/.test(char) ? 2 : 1
-  }
-  return units
-}
-
-function nextId(items) {
-  return items.reduce((max, item) => Math.max(max, item.id), 0) + 1
-}
-
-function patchTunnelLocal(id, patch) {
-  const index = tunnels.value.findIndex((item) => item.id === id)
-  if (index === -1) return
-  tunnels.value[index] = { ...tunnels.value[index], ...patch }
-}
-
-function formatLatencyLabel(latencyMs) {
-  const ms = Number(latencyMs)
-  if (!Number.isFinite(ms) || ms <= 0) return '--'
-  if (ms < 1000) return `${Math.round(ms)}ms`
-  if (ms < 60000) return `${(ms / 1000).toFixed(ms < 10000 ? 2 : 1)}s`
-  if (ms < 3600000) return `${(ms / 60000).toFixed(ms < 600000 ? 2 : 1)}m`
-  return `${(ms / 3600000).toFixed(2)}h`
-}
-
-function authNeedsPassword(authType) {
-  return authType === 'password'
-}
-
-function authNeedsKeyFile(authType) {
-  return authType === 'ssh_key'
-}
-
-function authShowsPassword(authType) {
-  return authType === 'password' || authType === 'ssh_key'
-}
-
-function getAuthLabel(authType) {
-  const matched = authOptions.value.find((item) => item.value === authType)
-  return matched ? matched.label : t('app.options.auth.unknown')
-}
-
-function getJumperName(jumperId) {
-  const jumper = jumpers.value.find((item) => item.id === jumperId)
-  return jumper ? jumper.name : t('app.options.jumper.unknown')
-}
-
-function normalizeJumperIdList(ids) {
-  const seen = new Set()
-  return (Array.isArray(ids) ? ids : [])
-    .map((id) => Number(id))
-    .filter((id) => Number.isInteger(id) && id > 0)
-    .filter((id) => {
-      if (seen.has(id)) return false
-      seen.add(id)
-      return true
-    })
-}
-
-function toHostKey(host) {
-  return String(host || '').trim().toLowerCase()
-}
-
-function getTunnelImportSignature(tunnelLike) {
-  const mode = String(tunnelLike?.mode || 'local').trim().toLowerCase()
-  const localHost = toHostKey(tunnelLike?.localHost || '127.0.0.1')
-  const localPort = Number(tunnelLike?.localPort) || 0
-  const remoteHost = mode === 'dynamic' ? '' : toHostKey(tunnelLike?.remoteHost)
-  const remotePort = mode === 'dynamic' ? 0 : (Number(tunnelLike?.remotePort) || 0)
-  const jumperKey = normalizeJumperIdList(tunnelLike?.jumperIds).join(',')
-  return `${mode}|${localHost}|${localPort}|${remoteHost}|${remotePort}|${jumperKey}`
-}
-
-function getNextTunnelJumperCandidate(selectedIds = []) {
-  if (!jumpers.value.length) return ''
-  const selected = new Set(normalizeJumperIdList(selectedIds))
-  const candidate = jumpers.value.find((item) => !selected.has(item.id))
-  return candidate ? candidate.id : jumpers.value[0].id
-}
-
-function getTunnelJumperLabel(tunnel) {
-  const ids = normalizeJumperIdList(tunnel?.jumperIds)
-  if (!ids.length) return t('app.options.jumper.unknown')
-  const names = ids.map((id) => getJumperName(id))
-  return names.join(' -> ')
-}
-
-function normalizeTunnelFromBackend(tunnel) {
-  const rawLatency = Number(tunnel?.latencyMs)
-  return {
-    ...tunnel,
-    jumperIds: normalizeJumperIdList(tunnel?.jumperIds),
-    latencyMs: Number.isFinite(rawLatency) && rawLatency > 0 ? rawLatency : 0
-  }
-}
-
-function logEvent(level, message) {
-  logs.value.unshift({
-    id: nextId(logs.value),
-    level,
-    time: nowLabel(),
-    message
-  })
-}
-
-function errorMessage(err, fallback = 'Operation failed.') {
-  if (!err) return fallback
-  if (typeof err === 'string') return err
-  if (typeof err.message === 'string' && err.message) return err.message
-  return fallback
-}
-
-async function loadStateFromBackend(options = {}) {
-  const { silent = false } = options
-  try {
-    const state = await GetState()
-    jumpers.value = Array.isArray(state?.jumpers) ? state.jumpers : []
-    const backendTunnels = (Array.isArray(state?.tunnels) ? state.tunnels : []).map(normalizeTunnelFromBackend)
-
-    if (pendingToggleTunnelIds.size === 0) {
-      tunnels.value = backendTunnels
-      return
-    }
-
-    const localBusyTunnelIds = new Set(
-      tunnels.value
-        .filter((item) => pendingToggleTunnelIds.has(item.id) && item.status === 'busy')
-        .map((item) => item.id)
-    )
-
-    tunnels.value = backendTunnels.map((item) => {
-      if (!localBusyTunnelIds.has(item.id)) return item
-      return { ...item, status: 'busy', lastError: '', latencyMs: 0 }
-    })
-  } catch (err) {
-    if (silent) return
-    const message = errorMessage(err, 'Failed to load config from backend.')
-    configMessage.value = message
-    logEvent('error', message)
-  }
-}
-
-function syncStateSilently() {
-  if (stateSyncInFlight) return
-  stateSyncInFlight = true
-  loadStateFromBackend({ silent: true }).finally(() => {
-    stateSyncInFlight = false
-  })
-}
-
-function switchPage(pageKey) {
-  activePage.value = pageKey
-}
-
-function setThemeBySwitch(enabled) {
-  theme.value = enabled ? 'dark' : 'light'
-  logEvent('info', `Theme switched to ${theme.value}`)
-}
-
-function setConfigMessage(msg) {
-  configMessage.value = msg || ''
-}
-
-function hideConfigToast() {
-  showConfigToast.value = false
-  if (configToastTimer !== null) {
-    window.clearTimeout(configToastTimer)
-    configToastTimer = null
-  }
-}
-
-async function checkForUpdates() {
-  if (isCheckingUpdates.value) return
-  isCheckingUpdates.value = true
-  try {
-    const result = await CheckForUpdatesAPI(appMeta.version)
-
-    if (!result?.hasUpdate) {
-      releasePageUrl.value = DEFAULT_RELEASES_PAGE_URL
-      updateCheckDialog.mode = 'upToDate'
-      updateCheckDialog.latestVersion = ''
-      updateCheckDialog.releaseNotes = ''
-      updateCheckDialog.message = ''
-      updateCheckDialog.visible = true
-      hasNewVersion.value = false
-      logEvent('info', 'No updates available')
-      return
-    }
-
-    hasNewVersion.value = true
-    releasePageUrl.value = String(result.releasePageUrl || DEFAULT_RELEASES_PAGE_URL).trim() || DEFAULT_RELEASES_PAGE_URL
-    updateCheckDialog.mode = 'updateAvailable'
-    updateCheckDialog.latestVersion = String(result.latestVersion || '').trim()
-    updateCheckDialog.releaseNotes = String(result.releaseNotes || '').trim()
-    updateCheckDialog.message = ''
-    updateCheckDialog.visible = true
-    logEvent('info', `Update found: ${result.latestVersion}`)
-    if (result.releaseNotes) {
-      logEvent('info', `Release notes: ${result.releaseNotes}`)
-    }
-  } catch (err) {
-    releasePageUrl.value = DEFAULT_RELEASES_PAGE_URL
-    const message = errorMessage(err, 'Failed to check updates from GitHub Releases API.')
-    updateCheckDialog.mode = 'error'
-    updateCheckDialog.latestVersion = ''
-    updateCheckDialog.releaseNotes = ''
-    updateCheckDialog.message = message
-    updateCheckDialog.visible = true
-    hasNewVersion.value = false
-    logEvent('error', message)
-  } finally {
-    isCheckingUpdates.value = false
-  }
+function openReleasePage() {
+  openExternalUrl(releasePageUrl.value || DEFAULT_RELEASES_PAGE_URL)
 }
 
 async function checkForUpdatesSilently() {
   try {
-    const result = await CheckForUpdatesAPI(appMeta.version)
+    const result = await callBackend(CheckForUpdatesAPI, appMeta.version)
     if (result?.hasUpdate) {
       hasNewVersion.value = true
       releasePageUrl.value = String(result.releasePageUrl || DEFAULT_RELEASES_PAGE_URL).trim() || DEFAULT_RELEASES_PAGE_URL
@@ -531,822 +150,33 @@ async function checkForUpdatesSilently() {
   }
 }
 
-function openReleasePage() {
-  openExternalUrl(releasePageUrl.value || DEFAULT_RELEASES_PAGE_URL)
+// ---- 顶栏按钮路由到当前页面 ----
+const forwardsPageRef = ref(null)
+const hostsPageRef = ref(null)
+
+function onNewForward() {
+  forwardsPageRef.value?.openNewForward()
 }
 
-function closeUpdateCheckDialog() {
-  updateCheckDialog.visible = false
-}
-
-function resetJumperValidation() {
-  jumperValidationError.value = ''
-}
-
-function resetInlineJumperValidation() {
-  inlineJumperValidationError.value = ''
-}
-
-function resetJumperTest() {
-  jumperTest.status = 'idle'
-  jumperTest.message = ''
-}
-
-function resetTunnelTest() {
-  tunnelTest.status = 'idle'
-  tunnelTest.message = ''
-}
-
-function buildTunnelPayloadForTest() {
-  return {
-    name: tunnelForm.name.trim(),
-    mode: tunnelForm.mode,
-    jumperIds: normalizeJumperIdList(tunnelForm.jumperIds),
-    localHost: tunnelForm.localHost.trim(),
-    localPort: Number(tunnelForm.localPort),
-    remoteHost: tunnelForm.remoteHost.trim(),
-    remotePort: Number(tunnelForm.remotePort),
-    autoStart: !!tunnelForm.autoStart,
-    status: 'stopped',
-    description: tunnelForm.description.trim()
-  }
-}
-
-function buildJumperPayload(form) {
-  const payload = {
-    name: form.name.trim(),
-    host: form.host.trim(),
-    port: Number(form.port),
-    user: form.user.trim(),
-    authType: form.authType,
-    keyPath: form.keyPath.trim(),
-    agentSocketPath: form.agentSocketPath.trim(),
-    password: form.password,
-    bypassHostVerification: !!form.bypassHostVerification,
-    keepAliveIntervalMs: Number(form.keepAliveIntervalMs),
-    timeoutMs: Number(form.timeoutMs),
-    notes: form.notes.trim()
-  }
-
-  if (!authNeedsKeyFile(payload.authType)) payload.keyPath = ''
-  if (!authShowsPassword(payload.authType)) payload.password = ''
-  return payload
-}
-
-function validateJumperPayload(payload) {
-  if (!payload.name) return 'Name is required.'
-  if (nameUnits(payload.name) > JUMPER_LIMITS.name) return 'Name must be <= 20 chars or <= 10 Chinese chars.'
-  if (!payload.host) return 'Host is required.'
-  if (payload.host.length > JUMPER_LIMITS.host) return `Host length must be <= ${JUMPER_LIMITS.host}.`
-  if (!payload.user) return 'User is required.'
-  if (payload.user.length > JUMPER_LIMITS.user) return `User length must be <= ${JUMPER_LIMITS.user}.`
-  if (!Number.isInteger(payload.port) || payload.port < 1 || payload.port > 65535) {
-    return 'Port must be between 1 and 65535.'
-  }
-  if (payload.keyPath.length > JUMPER_LIMITS.keyPath) return `Key path length must be <= ${JUMPER_LIMITS.keyPath}.`
-  if (payload.agentSocketPath.length > JUMPER_LIMITS.agentSocketPath) {
-    return `Agent socket path length must be <= ${JUMPER_LIMITS.agentSocketPath}.`
-  }
-  if (payload.password.length > JUMPER_LIMITS.password) return `Password length must be <= ${JUMPER_LIMITS.password}.`
-  if (payload.notes.length > JUMPER_LIMITS.notes) return `Notes length must be <= ${JUMPER_LIMITS.notes}.`
-  if (authNeedsKeyFile(payload.authType) && !payload.keyPath) {
-    return 'SSH Key mode requires selecting a key file.'
-  }
-  if (authNeedsPassword(payload.authType) && !payload.password) {
-    return 'Current auth method requires a password.'
-  }
-  if (!Number.isInteger(payload.keepAliveIntervalMs) || payload.keepAliveIntervalMs > JUMPER_LIMITS.keepAliveIntervalMax) {
-    return `KeepAlive interval(ms) must be 0 (disable) or between 1000 and ${JUMPER_LIMITS.keepAliveIntervalMax}.`
-  }
-  if (payload.keepAliveIntervalMs > 0 && payload.keepAliveIntervalMs < 1000) {
-    return `KeepAlive interval(ms) must be 0 (disable) or between 1000 and ${JUMPER_LIMITS.keepAliveIntervalMax}.`
-  }
-  if (
-    !Number.isInteger(payload.timeoutMs) ||
-    payload.timeoutMs < JUMPER_LIMITS.timeoutMin ||
-    payload.timeoutMs > JUMPER_LIMITS.timeoutMax
-  ) {
-    return `Timeout(ms) must be between ${JUMPER_LIMITS.timeoutMin} and ${JUMPER_LIMITS.timeoutMax}.`
-  }
-  return ''
-}
-
-function onJumperKeyFileChange(event) {
-  const file = event.target.files && event.target.files[0]
-  if (file) jumperForm.keyPath = file.name
-}
-
-function onInlineJumperKeyFileChange(event) {
-  const file = event.target.files && event.target.files[0]
-  if (file) inlineJumperForm.keyPath = file.name
-}
-
-function openNewJumper() {
-  editingJumperId.value = null
-  Object.assign(jumperForm, defaultJumperForm())
-  showJumperBasic.value = true
-  showJumperAdvanced.value = false
-  resetJumperValidation()
-  resetJumperTest()
-  showJumperModal.value = true
-}
-
-async function loadImportJumperSources() {
-  importJumperError.value = ''
-  try {
-    const sources = await GetSSHConfigImportSources()
-    sshConfigSources.value = Array.isArray(sources) ? sources : []
-    selectedImportJumperSourcePath.value = sshConfigSources.value[0]?.path || ''
-  } catch (err) {
-    sshConfigSources.value = []
-    selectedImportJumperSourcePath.value = ''
-    importJumperError.value = errorMessage(err, 'Failed to load SSH config sources')
-  }
-}
-
-async function loadImportJumpers() {
-  const targetPath = String(selectedImportJumperSourcePath.value || '').trim()
-  if (!targetPath) return
-
-  importJumperLoading.value = true
-  importJumperError.value = ''
-  importJumperHasLoaded.value = false
-  try {
-    const result = await LoadSSHConfigJumpersByPath(targetPath)
-    sshConfigCandidates.value = Array.isArray(result?.candidates) ? result.candidates : []
-    importJumperHasLoaded.value = true
-  } catch (err) {
-    sshConfigCandidates.value = []
-    importJumperError.value = errorMessage(err, 'Failed to load SSH config jumpers')
-  } finally {
-    importJumperLoading.value = false
-  }
-}
-
-function openImportJumper() {
-  showImportJumperModal.value = true
-  importJumperLoading.value = false
-  importJumperError.value = ''
-  importJumperHasLoaded.value = false
-  sshConfigCandidates.value = []
-  void loadImportJumperSources()
-}
-
-function closeImportJumper() {
-  showImportJumperModal.value = false
-  importJumperLoading.value = false
-  importJumperError.value = ''
-  importJumperHasLoaded.value = false
-  sshConfigSources.value = []
-  selectedImportJumperSourcePath.value = ''
-  sshConfigCandidates.value = []
-}
-
-function editJumper(jumper) {
-  editingJumperId.value = jumper.id
-  Object.assign(jumperForm, defaultJumperForm(), jumper)
-  showJumperBasic.value = true
-  showJumperAdvanced.value = false
-  resetJumperValidation()
-  resetJumperTest()
-  showJumperModal.value = true
-}
-
-function fillJumperFormFromJumper(jumper, nameOverride = null) {
-  Object.assign(jumperForm, {
-    name: nameOverride ?? jumper.name,
-    host: jumper.host,
-    port: jumper.port,
-    user: jumper.user,
-    authType: jumper.authType,
-    keyPath: jumper.keyPath || '',
-    agentSocketPath: jumper.agentSocketPath || '',
-    password: jumper.password || '',
-    bypassHostVerification: !!jumper.bypassHostVerification,
-    keepAliveIntervalMs: jumper.keepAliveIntervalMs,
-    timeoutMs: jumper.timeoutMs,
-    notes: jumper.notes || ''
-  })
-}
-
-function copyJumper(jumper) {
-  editingJumperId.value = null
-  fillJumperFormFromJumper(jumper, `copy-${jumper.name}`)
-  showJumperBasic.value = true
-  showJumperAdvanced.value = false
-  resetJumperValidation()
-  resetJumperTest()
-  showJumperModal.value = true
-}
-
-async function saveJumper() {
-  resetJumperValidation()
-  const payload = buildJumperPayload(jumperForm)
-  const error = validateJumperPayload(payload)
-  if (error) {
-    jumperValidationError.value = error
-    return
-  }
-
-  try {
-    if (editingJumperId.value) {
-      await UpdateJumper(editingJumperId.value, payload)
-      logEvent('info', `Jumper ${payload.name} updated`)
-    } else {
-      const created = await CreateJumper(payload)
-      logEvent('info', `Jumper ${created.name} created`)
-    }
-
-    await loadStateFromBackend()
-    showJumperModal.value = false
-  } catch (err) {
-    jumperValidationError.value = errorMessage(err)
-  }
-}
-
-async function importJumpers(jumpersToImport) {
-  try {
-    importJumperError.value = ''
-    let importedCount = 0
-    let skippedCount = 0
-
-    const existingSignatures = new Set(
-      jumpers.value.map((item) => `${String(item.host || '').trim().toLowerCase()}|${String(item.user || '').trim()}|${Number(item.port) || 22}`)
-    )
-
-    for (const item of jumpersToImport) {
-      const payload = {
-        name: String(item.name || '').trim(),
-        host: String(item.host || '').trim(),
-        port: Number(item.port) || 22,
-        user: String(item.user || '').trim(),
-        authType: item.authType || 'ssh_agent',
-        keyPath: String(item.keyPath || '').trim(),
-        agentSocketPath: String(item.agentSocketPath || '').trim(),
-        password: '',
-        bypassHostVerification: !!item.bypassHostVerification,
-        keepAliveIntervalMs: Number(item.keepAliveIntervalMs) || 5000,
-        timeoutMs: Number(item.timeoutMs) || 5000,
-        hostKeyAlgorithms: String(item.hostKeyAlgorithms || '').trim(),
-        notes: `Imported from SSH config alias "${item.alias}" on ${new Date().toLocaleDateString()}`
-      }
-
-      const signature = `${payload.host.toLowerCase()}|${payload.user}|${payload.port}`
-      if (existingSignatures.has(signature)) {
-        skippedCount++
-        continue
-      }
-
-      await CreateJumper(payload)
-      existingSignatures.add(signature)
-      importedCount++
-      logEvent('info', `Jumper ${payload.name} imported from SSH config`)
-    }
-
-    await loadStateFromBackend()
-    closeImportJumper()
-
-    let message = `Successfully imported ${importedCount} jumper(s)`
-    if (skippedCount > 0) {
-      message = `${message}; skipped ${skippedCount} duplicate jumper(s)`
-    }
-    logEvent('info', message)
-  } catch (err) {
-    const message = errorMessage(err, 'Failed to import jumpers')
-    importJumperError.value = message
-    logEvent('error', message)
-  }
-}
-
-async function testJumperConnection() {
-  resetJumperValidation()
-  const payload = buildJumperPayload(jumperForm)
-  const error = validateJumperPayload(payload)
-  if (error) {
-    jumperTest.status = 'error'
-    jumperTest.message = error
-    return
-  }
-
-  resetJumperTest()
-  jumperTest.status = 'testing'
-  jumperTest.message = t('app.modals.jumper.testing')
-  try {
-    await TestJumperConnectionAPI(payload)
-    jumperTest.status = 'success'
-    jumperTest.message = 'Connection test passed.'
-    logEvent('info', `Connection test passed for jumper ${payload.name}`)
-  } catch (err) {
-    jumperTest.status = 'error'
-    jumperTest.message = errorMessage(err)
-    logEvent('error', `Connection test failed for jumper ${payload.name}: ${jumperTest.message}`)
-  }
-}
-
-async function testTunnelConnection() {
-  resetInlineJumperValidation()
-  tunnelValidationError.value = ''
-
-  let inlinePayload = null
-  let selectedJumperIds = normalizeJumperIdList(tunnelForm.jumperIds)
-
-  if (tunnelForm.appendNewJumper) {
-    inlinePayload = buildJumperPayload(inlineJumperForm)
-    const inlineError = validateJumperPayload(inlinePayload)
-    if (inlineError) {
-      tunnelTest.status = 'error'
-      tunnelTest.message = `[Jumper] ${inlineError}`
-      return
-    }
-  }
-
-  if (!selectedJumperIds.length && !inlinePayload) {
-    tunnelTest.status = 'error'
-    tunnelTest.message = 'Please select at least one jumper.'
-    return
-  }
-
-  const payload = buildTunnelPayloadForTest()
-  payload.jumperIds = selectedJumperIds
-
-  if (!payload.name || !payload.localHost || !payload.localPort) {
-    tunnelTest.status = 'error'
-    tunnelTest.message = 'Please fill in required fields.'
-    return
-  }
-  if (payload.mode !== 'dynamic' && (!payload.remoteHost || !payload.remotePort)) {
-    tunnelTest.status = 'error'
-    tunnelTest.message = 'Please fill in required remote host/port.'
-    return
-  }
-
-  resetTunnelTest()
-  tunnelTest.status = 'testing'
-  tunnelTest.message = t('app.modals.tunnel.testing')
-  try {
-    const result = await TestTunnelConnectionAPI(payload, inlinePayload)
-    const latencyText = formatLatencyLabel(result?.latencyMs)
-    tunnelTest.status = 'success'
-    tunnelTest.message = t('app.modals.tunnel.testPassedWithLatency', { latency: latencyText })
-    logEvent('info', `Connection test passed for tunnel ${payload.name}; latency=${latencyText}`)
-  } catch (err) {
-    tunnelTest.status = 'error'
-    tunnelTest.message = errorMessage(err)
-    logEvent('error', `Connection test failed for tunnel ${payload.name}: ${tunnelTest.message}`)
-  }
-}
-
-function openNewTunnel() {
-  editingTunnelId.value = null
-  Object.assign(tunnelForm, defaultTunnelForm())
-  Object.assign(inlineJumperForm, defaultInlineJumperForm())
-  resetInlineJumperValidation()
-  resetTunnelTest()
-  tunnelValidationError.value = ''
-  tunnelForm.jumperIds = jumpers.value.length ? [jumpers.value[0].id] : []
-  tunnelForm.nextJumperId = getNextTunnelJumperCandidate(tunnelForm.jumperIds)
-  tunnelForm.appendNewJumper = jumpers.value.length === 0
-  showTunnelModal.value = true
-}
-
-function openImportTunnel() {
-  importTunnelError.value = ''
-  showImportTunnelModal.value = true
-}
-
-function closeImportTunnel() {
-  showImportTunnelModal.value = false
-  importTunnelError.value = ''
-}
-
-async function importTunnels(tunnelsToImport) {
-  try {
-    importTunnelError.value = ''
-    let importedCount = 0
-    let skippedCount = 0
-    let createdJumperCount = 0
-    const existingSignatures = new Set(tunnels.value.map((item) => getTunnelImportSignature(item)))
-    const createdJumperCache = new Map()
-    
-    for (const tunnelData of tunnelsToImport) {
-      let jumperIds = []
-
-      if (tunnelData.importJumper?.mode === 'existing') {
-        const selectedJumperId = Number(tunnelData.importJumper.jumperId)
-        const selectedJumper = jumpers.value.find((item) => item.id === selectedJumperId)
-        if (!selectedJumper) {
-          throw new Error('Selected existing jumper is missing. Please re-parse and try again.')
-        }
-        jumperIds = [selectedJumper.id]
-      }
-
-      if (tunnelData.importJumper?.mode === 'new' && tunnelData.importJumper?.payload) {
-        const payload = tunnelData.importJumper.payload
-        const existingJumper = jumpers.value.find((item) => {
-          return (
-            String(item.host || '').trim().toLowerCase() === String(payload.host || '').trim().toLowerCase() &&
-            String(item.user || '').trim() === String(payload.user || '').trim() &&
-            Number(item.port) === Number(payload.port)
-          )
-        })
-
-        if (existingJumper) {
-          jumperIds = [existingJumper.id]
-        } else {
-          const cacheKey = JSON.stringify({
-            host: String(payload.host || '').trim().toLowerCase(),
-            user: String(payload.user || '').trim(),
-            port: Number(payload.port),
-            authType: payload.authType,
-            keyPath: String(payload.keyPath || '').trim(),
-            agentSocketPath: String(payload.agentSocketPath || '').trim()
-          })
-
-          if (createdJumperCache.has(cacheKey)) {
-            jumperIds = [createdJumperCache.get(cacheKey)]
-          } else {
-            const createdJumper = await CreateJumper(payload)
-            jumperIds = [createdJumper.id]
-            jumpers.value.push(createdJumper)
-            createdJumperCache.set(cacheKey, createdJumper.id)
-            createdJumperCount++
-            logEvent('info', `Jumper ${createdJumper.name} created from import`)
-          }
-        }
-      }
-
-      // Backward-compatible fallback for old import payload.
-      if (jumperIds.length === 0 && tunnelData.jumperConfig) {
-        const config = tunnelData.jumperConfig
-        const existingJumper = jumpers.value.find(
-          (item) => item.host === config.host && item.user === config.user && item.port === config.port
-        )
-
-        if (existingJumper) {
-          jumperIds = [existingJumper.id]
-        } else {
-          const fallbackPayload = {
-            name: `${config.host.split('.')[0]}-import`,
-            host: config.host,
-            port: config.port,
-            user: config.user,
-            authType: config.keyPath ? 'ssh_key' : 'ssh_agent',
-            keyPath: config.keyPath || '',
-            agentSocketPath: '',
-            password: '',
-            bypassHostVerification: true,
-            keepAliveIntervalMs: config.keepAliveIntervalMs || 5000,
-            timeoutMs: 5000,
-            notes: `Imported from SSH command on ${new Date().toLocaleDateString()}`
-          }
-
-          const createdJumper = await CreateJumper(fallbackPayload)
-          jumperIds = [createdJumper.id]
-          jumpers.value.push(createdJumper)
-          createdJumperCount++
-          logEvent('info', `Jumper ${createdJumper.name} created from import`)
-        }
-      }
-      
-      if (jumperIds.length === 0) {
-        throw new Error(t('app.modals.importTunnel.errorMissingTarget'))
-      }
-      
-      // Create the tunnel
-      const payload = {
-        name: tunnelData.name,
-        mode: tunnelData.mode,
-        jumperIds: jumperIds,
-        localHost: tunnelData.localHost,
-        localPort: tunnelData.localPort,
-        remoteHost: tunnelData.remoteHost,
-        remotePort: tunnelData.remotePort,
-        autoStart: false,
-        status: 'stopped',
-        description: `Imported from SSH command on ${new Date().toLocaleDateString()}`
-      }
-
-      const signature = getTunnelImportSignature(payload)
-      if (existingSignatures.has(signature)) {
-        skippedCount++
-        logEvent('warn', `Tunnel ${payload.name} skipped (duplicate)`)
-        continue
-      }
-      
-      await CreateTunnel(payload)
-      existingSignatures.add(signature)
-      importedCount++
-      logEvent('info', `Tunnel ${payload.name} imported`)
-    }
-    
-    await loadStateFromBackend()
-    closeImportTunnel()
-    
-    let message = createdJumperCount > 0
-      ? `Successfully imported ${importedCount} tunnel(s) and created ${createdJumperCount} jumper(s)`
-      : `Successfully imported ${importedCount} tunnel(s)`
-    if (skippedCount > 0) {
-      message = `${message}; skipped ${skippedCount} duplicate tunnel(s)`
-    }
-    logEvent('info', message)
-  } catch (err) {
-    const message = errorMessage(err, 'Failed to import tunnels')
-    importTunnelError.value = message
-    logEvent('error', message)
-  }
-}
-
-function fillTunnelFormFromTunnel(tunnel, nameOverride = null) {
-  Object.assign(tunnelForm, {
-    name: nameOverride ?? tunnel.name,
-    mode: tunnel.mode,
-    jumperIds: normalizeJumperIdList(tunnel.jumperIds),
-    nextJumperId: getNextTunnelJumperCandidate(tunnel.jumperIds),
-    appendNewJumper: false,
-    localHost: tunnel.localHost,
-    localPort: tunnel.localPort,
-    remoteHost: tunnel.remoteHost,
-    remotePort: tunnel.remotePort,
-    autoStart: tunnel.autoStart,
-    description: tunnel.description
-  })
-}
-
-function editTunnel(tunnel) {
-  editingTunnelId.value = tunnel.id
-  fillTunnelFormFromTunnel(tunnel)
-  Object.assign(inlineJumperForm, defaultInlineJumperForm())
-  resetInlineJumperValidation()
-  resetTunnelTest()
-  tunnelValidationError.value = ''
-  showTunnelModal.value = true
-}
-
-function addJumperToTunnelChain(jumperId) {
-  const id = Number(jumperId)
-  if (!Number.isInteger(id) || id <= 0) return
-  const ids = normalizeJumperIdList(tunnelForm.jumperIds)
-  if (ids.includes(id)) return
-  tunnelForm.jumperIds = [...ids, id]
-  tunnelForm.nextJumperId = getNextTunnelJumperCandidate(tunnelForm.jumperIds)
-}
-
-function setPrimaryJumperForTunnelChain(jumperId) {
-  const id = Number(jumperId)
-  if (!Number.isInteger(id) || id <= 0) return
-  const ids = normalizeJumperIdList(tunnelForm.jumperIds).filter((item) => item !== id)
-  // When the tunnel currently only has one jumper, changing the primary hop
-  // should replace that hop instead of preserving it as an unintended second hop.
-  tunnelForm.jumperIds = ids.length > 0 ? [id, ...ids] : [id]
-  tunnelForm.nextJumperId = getNextTunnelJumperCandidate(tunnelForm.jumperIds)
-}
-
-function removeJumperFromTunnelChain(index) {
-  const ids = normalizeJumperIdList(tunnelForm.jumperIds)
-  if (!Number.isInteger(index) || index < 0 || index >= ids.length) return
-  ids.splice(index, 1)
-  tunnelForm.jumperIds = ids
-  tunnelForm.nextJumperId = getNextTunnelJumperCandidate(tunnelForm.jumperIds)
-}
-
-function moveJumperInTunnelChain(index, offset) {
-  const ids = normalizeJumperIdList(tunnelForm.jumperIds)
-  if (!Number.isInteger(index) || index < 0 || index >= ids.length) return
-  const step = Number(offset)
-  if (!Number.isInteger(step) || step === 0) return
-  const target = index + step
-  if (target < 0 || target >= ids.length) return
-  const temp = ids[target]
-  ids[target] = ids[index]
-  ids[index] = temp
-  tunnelForm.jumperIds = ids
-  tunnelForm.nextJumperId = getNextTunnelJumperCandidate(tunnelForm.jumperIds)
-}
-
-function trimJumperChainToPrimary() {
-  const ids = normalizeJumperIdList(tunnelForm.jumperIds)
-  if (ids.length <= 1) return
-  tunnelForm.jumperIds = [ids[0]]
-  tunnelForm.nextJumperId = getNextTunnelJumperCandidate(tunnelForm.jumperIds)
-}
-
-function copyTunnel(tunnel) {
-  editingTunnelId.value = null
-  fillTunnelFormFromTunnel(tunnel, `copy-${tunnel.name}`)
-  Object.assign(inlineJumperForm, defaultInlineJumperForm())
-  resetInlineJumperValidation()
-  resetTunnelTest()
-  tunnelValidationError.value = ''
-  showTunnelModal.value = true
-}
-
-async function saveTunnel() {
-  let selectedJumperIds = normalizeJumperIdList(tunnelForm.jumperIds)
-  resetInlineJumperValidation()
-  tunnelValidationError.value = ''
-
-  try {
-    if (tunnelForm.appendNewJumper) {
-      const inlinePayload = buildJumperPayload(inlineJumperForm)
-      const inlineError = validateJumperPayload(inlinePayload)
-      if (inlineError) {
-        inlineJumperValidationError.value = inlineError
-        return
-      }
-
-      const createdJumper = await CreateJumper(inlinePayload)
-      selectedJumperIds = [...selectedJumperIds, createdJumper.id]
-      logEvent('info', `Jumper ${createdJumper.name} created from New Tunnel`)
-    }
-
-    const editingStatus = editingTunnelId.value
-      ? tunnels.value.find((item) => item.id === editingTunnelId.value)?.status || 'stopped'
-      : 'stopped'
-    const payload = {
-      name: tunnelForm.name.trim(),
-      mode: tunnelForm.mode,
-      jumperIds: selectedJumperIds,
-      localHost: tunnelForm.localHost.trim(),
-      localPort: Number(tunnelForm.localPort),
-      remoteHost: tunnelForm.remoteHost.trim(),
-      remotePort: Number(tunnelForm.remotePort),
-      autoStart: tunnelForm.autoStart,
-      status: editingStatus === 'busy' ? 'stopped' : editingStatus,
-      description: tunnelForm.description.trim()
-    }
-
-    if (!payload.name || !payload.jumperIds.length || !payload.localHost || !payload.localPort) return
-    if (nameUnits(payload.name) > TUNNEL_LIMITS.name) {
-      tunnelValidationError.value = 'Tunnel name must be <= 20 chars or <= 10 Chinese chars.'
-      return
-    }
-    if (payload.mode !== 'dynamic' && (!payload.remoteHost || !payload.remotePort)) return
-
-    if (editingTunnelId.value) {
-      await UpdateTunnel(editingTunnelId.value, payload)
-      logEvent('info', `Tunnel ${payload.name} updated`)
-    } else {
-      await CreateTunnel(payload)
-      logEvent('info', `Tunnel ${payload.name} created`)
-    }
-
-    await loadStateFromBackend()
-    showTunnelModal.value = false
-  } catch (err) {
-    tunnelValidationError.value = errorMessage(err)
-  }
-}
-
-async function toggleTunnel(tunnel) {
-  if (!tunnel || tunnel.status === 'busy') {
-    return
-  }
-
-  const previousStatus = tunnel.status
-  const previousLastError = tunnel.lastError || ''
-  const shouldShowBusy = previousStatus === 'stopped' || previousStatus === 'error'
-  if (shouldShowBusy) {
-    pendingToggleTunnelIds.add(tunnel.id)
-    patchTunnelLocal(tunnel.id, { status: 'busy', lastError: '', latencyMs: 0 })
-  }
-
-  // 记录启动开始时间
-  const startTime = Date.now()
-
-  try {
-    const updated = await ToggleTunnel(tunnel.id)
-    patchTunnelLocal(updated.id, updated)
-
-    if (updated.status === 'error') {
-      const reason = updated.lastError ? `: ${updated.lastError}` : ''
-      logEvent('error', `Tunnel ${updated.name} failed${reason}`)
-      return
-    }
-
-    if (previousStatus === 'error') {
-      logEvent('info', `Tunnel ${tunnel.name} retry triggered`)
-      return
-    }
-
-    const action = updated.status === 'running' ? 'started' : 'stopped'
-    if (updated.status === 'running') {
-      // 计算启动耗时
-      const duration = Date.now() - startTime
-      const durationText = duration < 1000 ? `${duration}ms` : `${(duration / 1000).toFixed(2)}s`
-      logEvent('info', `Tunnel ${updated.name} started (took ${durationText})`)
-    } else {
-      logEvent('warn', `Tunnel ${updated.name} ${action}`)
-    }
-  } catch (err) {
-    if (shouldShowBusy) {
-      patchTunnelLocal(tunnel.id, { status: previousStatus, lastError: previousLastError })
-    }
-    logEvent('error', errorMessage(err, `Failed to toggle tunnel ${tunnel.name}`))
-  } finally {
-    pendingToggleTunnelIds.delete(tunnel.id)
-  }
-}
-
-function openActionDialog({
-  mode = 'alert',
-  message,
-  confirmButtonClass = 'btn-primary',
-  confirmLabel = '',
-  onConfirm = null,
-  secondaryLabel = '',
-  secondaryButtonClass = 'btn-outline-primary',
-  onSecondary = null
-}) {
-  actionDialog.mode = mode
-  actionDialog.message = message
-  actionDialog.confirmButtonClass = confirmButtonClass
-  actionDialog.confirmLabel = confirmLabel
-  actionDialog.onConfirm = onConfirm
-  actionDialog.secondaryLabel = secondaryLabel
-  actionDialog.secondaryButtonClass = secondaryButtonClass
-  actionDialog.onSecondary = onSecondary
-  actionDialog.visible = true
-}
-
-function closeActionDialog() {
-  actionDialog.visible = false
-  actionDialog.confirmLabel = ''
-  actionDialog.onConfirm = null
-  actionDialog.secondaryLabel = ''
-  actionDialog.onSecondary = null
-}
-
-async function confirmActionDialog() {
-  const handler = actionDialog.onConfirm
-  closeActionDialog()
-  if (typeof handler === 'function') {
-    await handler()
-  }
-}
-
-async function secondaryActionDialog() {
-  const handler = actionDialog.onSecondary
-  closeActionDialog()
-  if (typeof handler === 'function') {
-    await handler()
-  }
-}
-
-function deleteTunnel(tunnel) {
-  openActionDialog({
-    mode: 'confirm',
-    message: t('app.confirmations.deleteTunnel', { name: tunnel.name }),
-    confirmButtonClass: 'btn-danger',
-    onConfirm: async () => {
-      try {
-        await DeleteTunnel(tunnel.id)
-        await loadStateFromBackend()
-        logEvent('warn', `Tunnel ${tunnel.name} deleted`)
-      } catch (err) {
-        logEvent('error', errorMessage(err, `Failed to delete tunnel ${tunnel.name}`))
-      }
-    }
-  })
-}
-
-function deleteJumper(jumper) {
-  const inUseBy = tunnels.value.filter((item) => normalizeJumperIdList(item.jumperIds).includes(jumper.id))
-  if (inUseBy.length > 0) {
-    openActionDialog({
-      mode: 'alert',
-      message: t('app.confirmations.deleteJumperBlocked', { name: jumper.name, count: inUseBy.length }),
-      confirmButtonClass: 'btn-primary'
-    })
-    logEvent('warn', `Delete blocked for jumper ${jumper.name} (still in use)`)
-    return
-  }
-  openActionDialog({
-    mode: 'confirm',
-    message: t('app.confirmations.deleteJumper', { name: jumper.name }),
-    confirmButtonClass: 'btn-danger',
-    onConfirm: async () => {
-      try {
-        await DeleteJumper(jumper.id)
-        await loadStateFromBackend()
-        logEvent('warn', `Jumper ${jumper.name} deleted`)
-      } catch (err) {
-        logEvent('error', errorMessage(err, `Failed to delete jumper ${jumper.name}`))
-      }
-    }
-  })
+function onNewHost() {
+  hostsPageRef.value?.openNewHost()
 }
 
 onMounted(async () => {
-  await loadStateFromBackend()
+  await loadVault()
   try {
-    await SaveUILocale(locale.value)
+    await callBackend(ApplyTrayLocale, locale.value)
   } catch (_) {
     /* tray locale sync is best-effort */
   }
-  stateSyncTimer = window.setInterval(syncStateSilently, STATE_SYNC_INTERVAL_MS)
+  try {
+    await callBackend(SaveUILocale, locale.value)
+  } catch (_) {
+    /* locale persist is best-effort */
+  }
   let updateCheckEnabled = true
   try {
-    updateCheckEnabled = await GetUpdateCheckEnabled()
+    updateCheckEnabled = await callBackend(GetUpdateCheckEnabled)
   } catch (_) {
     /* default to checking when the preference cannot be loaded */
   }
@@ -1356,34 +186,12 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  if (stateSyncTimer !== null) {
-    window.clearInterval(stateSyncTimer)
-    stateSyncTimer = null
-  }
-  if (configToastTimer !== null) {
-    window.clearTimeout(configToastTimer)
-    configToastTimer = null
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer)
+    toastTimer = null
   }
 })
-
-watch(
-  () => jumperForm.authType,
-  (newType) => {
-    if (!authShowsPassword(newType)) jumperForm.password = ''
-    if (!authNeedsKeyFile(newType)) jumperForm.keyPath = ''
-    resetJumperTest()
-  }
-)
-
-watch(
-  () => inlineJumperForm.authType,
-  (newType) => {
-    if (!authShowsPassword(newType)) inlineJumperForm.password = ''
-    if (!authNeedsKeyFile(newType)) inlineJumperForm.keyPath = ''
-  }
-)
 </script>
-
 
 <template>
   <div class="app-shell">
@@ -1402,204 +210,54 @@ watch(
       <AppTopHeader
         :current-page="currentPage"
         :active-page="activePage"
-        @import-jumper="openImportJumper"
-        @new-jumper="openNewJumper"
-        @new-tunnel="openNewTunnel"
-        @import-tunnel="openImportTunnel"
+        @new-forward="onNewForward"
+        @new-host="onNewHost"
       />
 
-      <main class="page-body" :class="{ 'page-body-overview': activePage === 'overview' }">
-        <OverviewPage
-          v-if="activePage === 'overview'"
-          :total-tunnels="totalTunnels"
-          :running-tunnels="runningTunnels"
-          :stopped-tunnels="stoppedTunnels"
-          :auto-start-count="autoStartTunnels.length"
-          :show-overview-active="showOverviewActive"
-          :show-overview-activity="showOverviewActivity"
-          :logs="logs"
-          :get-tunnel-jumper-label="getTunnelJumperLabel"
-          @toggle-overview-active="showOverviewActive = !showOverviewActive"
-          @toggle-overview-activity="showOverviewActivity = !showOverviewActivity"
-          @toggle-tunnel="toggleTunnel"
+      <main class="page-body">
+        <ForwardsPage
+          v-if="activePage === 'forwards'"
+          ref="forwardsPageRef"
+          :folders="folders"
+          :ssh-hosts="sshHosts"
+          :forwards="forwards"
+          @vault-changed="loadVault"
+          @notify="notify"
         />
 
-        <JumpersPage
-          v-if="activePage === 'jumpers'"
-          :jumpers="filteredJumpers"
-          :search-query="jumperSearchQuery"
-          :get-auth-label="getAuthLabel"
-          @update-search-query="jumperSearchQuery = $event"
-          @copy-jumper="copyJumper"
-          @edit-jumper="editJumper"
-          @delete-jumper="deleteJumper"
+        <HostsPage
+          v-if="activePage === 'hosts'"
+          ref="hostsPageRef"
+          :ssh-hosts="sshHosts"
+          :forwards="forwards"
+          @vault-changed="loadVault"
+          @notify="notify"
         />
 
-        <TunnelsPage
-          v-if="activePage === 'tunnels'"
-          :tunnels="filteredTunnels"
-          :search-query="tunnelSearchQuery"
-          :mode-options="modeOptions"
-          :get-tunnel-jumper-label="getTunnelJumperLabel"
-          @update-search-query="tunnelSearchQuery = $event"
-          @toggle-tunnel="toggleTunnel"
-          @copy-tunnel="copyTunnel"
-          @edit-tunnel="editTunnel"
-          @delete-tunnel="deleteTunnel"
-        />
-
-        <LogsPage
-          v-if="activePage === 'logs'"
-          :selected-log-level="selectedLogLevel"
-          :filtered-logs="filteredLogs"
-          @set-log-level="selectedLogLevel = $event"
-        />
-
-        <ConfigPage
-          v-if="activePage === 'config'"
+        <SettingsPage
+          v-if="activePage === 'settings'"
           :theme="theme"
           :app-meta="appMeta"
-          :config-message="configMessage"
-          :is-checking-updates="isCheckingUpdates"
-          :update-check-dialog="updateCheckDialog"
           @theme-change="setThemeBySwitch"
-          @check-updates="checkForUpdates"
-          @open-release-page="openReleasePage"
-          @close-update-check-dialog="closeUpdateCheckDialog"
-          @set-config-message="setConfigMessage"
-          @reload-state="loadStateFromBackend"
-          @confirm-action="openActionDialog"
+          @notify="notify"
         />
       </main>
 
-      <div v-if="showConfigToast && configMessage" class="toast-container position-absolute bottom-0 start-50 translate-middle-x p-3 toast-config-container">
+      <div v-if="showToast && toastMessage" class="toast-container position-absolute bottom-0 start-50 translate-middle-x p-3 toast-config-container">
         <div class="toast show align-items-center text-bg-dark border-0 toast-config-item" role="alert" aria-live="assertive" aria-atomic="true">
           <div class="d-flex">
             <div class="toast-body">
-              {{ configMessage }}
+              {{ toastMessage }}
             </div>
             <button
               type="button"
               class="btn-close btn-close-white me-2 m-auto"
               :aria-label="$t('app.common.close')"
-              @click="hideConfigToast"
+              @click="hideToast"
             />
           </div>
         </div>
       </div>
     </section>
   </div>
-
-  <div v-if="actionDialog.visible" class="overlay">
-    <div class="dialog-card compact-dialog action-confirm-dialog">
-      <div class="dialog-head">
-        <h3 class="dialog-title">{{ $t('app.common.confirm') }}</h3>
-      </div>
-      <div class="dialog-body">
-        <p class="action-dialog-message mb-0">{{ actionDialog.message }}</p>
-      </div>
-      <div class="dialog-footer">
-        <button
-          v-if="actionDialog.mode === 'confirm'"
-          type="button"
-          class="btn btn-outline-secondary"
-          @click="closeActionDialog"
-        >
-          {{ $t('app.common.cancel') }}
-        </button>
-        <button
-          v-if="actionDialog.onSecondary"
-          type="button"
-          class="btn"
-          :class="actionDialog.secondaryButtonClass"
-          @click="secondaryActionDialog"
-        >
-          {{ actionDialog.secondaryLabel }}
-        </button>
-        <button type="button" class="btn" :class="actionDialog.confirmButtonClass" @click="confirmActionDialog">
-          {{
-            actionDialog.confirmLabel ||
-              (actionDialog.mode === 'confirm' ? $t('app.common.delete') : $t('app.common.confirm'))
-          }}
-        </button>
-      </div>
-    </div>
-  </div>
-
-  <JumperModal
-    :show="showJumperModal"
-    :editing-jumper-id="editingJumperId"
-    :jumper-form="jumperForm"
-    :show-jumper-basic="showJumperBasic"
-    :show-jumper-advanced="showJumperAdvanced"
-    :auth-options="authOptions"
-    :jumper-needs-key-file="jumperNeedsKeyFile"
-    :jumper-needs-password="jumperNeedsPassword"
-    :jumper-shows-password="jumperShowsPassword"
-    :jumper-limits="JUMPER_LIMITS"
-    :jumper-validation-error="jumperValidationError"
-    :jumper-test="jumperTest"
-    @close="showJumperModal = false"
-    @submit="saveJumper"
-    @toggle-basic="showJumperBasic = !showJumperBasic"
-    @toggle-advanced="showJumperAdvanced = !showJumperAdvanced"
-    @key-file-change="onJumperKeyFileChange"
-    @test-connection="testJumperConnection"
-  />
-
-  <ImportJumperModal
-    :show="showImportJumperModal"
-    :candidates="sshConfigCandidates"
-    :existing-jumpers="jumpers"
-    :auth-options="authOptions"
-    :jumper-limits="JUMPER_LIMITS"
-    :sources="sshConfigSources"
-    :selected-source-path="selectedImportJumperSourcePath"
-    :loading="importJumperLoading"
-    :load-error="importJumperError"
-    :import-error="importJumperError"
-    :has-loaded="importJumperHasLoaded"
-    @close="closeImportJumper"
-    @update:selected-source-path="selectedImportJumperSourcePath = $event"
-    @load="loadImportJumpers"
-    @import="importJumpers"
-  />
-
-  <TunnelModal
-    :show="showTunnelModal"
-    :editing-tunnel-id="editingTunnelId"
-    :tunnel-form="tunnelForm"
-    :mode-options="modeOptions"
-    :jumpers="jumpers"
-    :inline-jumper-form="inlineJumperForm"
-    :auth-options="authOptions"
-    :inline-jumper-needs-key-file="inlineJumperNeedsKeyFile"
-    :inline-jumper-needs-password="inlineJumperNeedsPassword"
-    :inline-jumper-shows-password="inlineJumperShowsPassword"
-    :jumper-limits="JUMPER_LIMITS"
-    :inline-jumper-validation-error="inlineJumperValidationError"
-    :tunnel-validation-error="tunnelValidationError"
-    :tunnel-test="tunnelTest"
-    @close="showTunnelModal = false"
-    @submit="saveTunnel"
-    @set-primary-jumper="setPrimaryJumperForTunnelChain"
-    @add-jumper="addJumperToTunnelChain"
-    @move-jumper="moveJumperInTunnelChain"
-    @trim-jumpers-to-primary="trimJumperChainToPrimary"
-    @remove-jumper="removeJumperFromTunnelChain"
-    @inline-key-file-change="onInlineJumperKeyFileChange"
-    @test-connection="testTunnelConnection"
-  />
-
-  <ImportTunnelModal
-    :show="showImportTunnelModal"
-    :jumpers="jumpers"
-    :existing-tunnels="tunnels"
-    :mode-options="modeOptions"
-    :auth-options="authOptions"
-    :jumper-limits="JUMPER_LIMITS"
-    :import-error="importTunnelError"
-    @close="closeImportTunnel"
-    @import="importTunnels"
-  />
 </template>

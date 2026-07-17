@@ -3,256 +3,18 @@
         "title": "TunnelBoard",
         "sidebar": {
             "subtitle": "Менеджер SSH-туннелей",
-            "overview": "Обзор",
-            "overviewSubtitle": "Основное состояние и недавняя активность",
-            "jumpers": "Бастионы",
-            "jumpersSubtitle": "Управление SSH-бастионами",
-            "tunnels": "Туннели",
-            "tunnelsSubtitle": "Создание и управление SSH-туннелями",
-            "logs": "Журнал",
-            "logsSubtitle": "Просмотр последних операций",
-            "config": "Настройки",
-            "configSubtitle": "Тема, версия, обновления и продукт",
-            "collapse": "Свернуть боковую панель",
-            "expand": "Развернуть боковую панель"
+            "forwards": "Форварды",
+            "forwardsSubtitle": "SSH-форварды, сгруппированные по папкам",
+            "hosts": "SSH-хосты",
+            "hostsSubtitle": "Многоразовые SSH-серверы и учётные данные",
+            "settings": "Настройки",
+            "settingsSubtitle": "Параметры, обновления и каталог данных",
+            "collapse": "Свернуть панель",
+            "expand": "Развернуть панель"
         },
         "header": {
-            "newJumper": "+ Новый прыжковый сервер",
-            "newTunnel": "+ Новый туннель",
-            "importTunnel": "Импорт"
-        },
-        "overview": {
-            "totalTunnels": "Всего туннелей",
-            "running": "Запущено",
-            "stopped": "Остановлено",
-            "autoStart": "Автозапуск",
-            "activeTunnels": "Активные туннели",
-            "recentActivity": "Недавняя активность",
-            "collapsePanel": "Свернуть панель",
-            "expandPanel": "Развернуть панель",
-            "noRunningTunnels": "Нет запущенных туннелей",
-            "table": {
-                "name": "Имя",
-                "route": "Маршрут",
-                "jumper": "Прыжковый сервер",
-                "action": "Действие"
-            },
-            "actions": {
-                "stopTunnel": "Остановить"
-            },
-            "pagination": {
-                "prev": "Предыдущая страница",
-                "next": "Следующая страница",
-                "pageInfo": "{current}/{total}"
-            }
-        },
-        "jumpers": {
-            "title": "Все прыжковые серверы",
-            "noJumpers": "Прыжковых серверов пока нет",
-            "table": {
-                "name": "Имя",
-                "connection": "Подключение",
-                "auth": "Аутентификация",
-                "notes": "Заметки",
-                "action": "Действие"
-            },
-            "actions": {
-                "copy": "Копировать",
-                "edit": "Изменить",
-                "delete": "Удалить"
-            }
-        },
-        "tunnels": {
-            "title": "Все туннели",
-            "noTunnels": "Туннелей пока нет",
-            "errorReason": "Ошибка",
-            "table": {
-                "name": "Имя",
-                "mode": "Режим",
-                "route": "Маршрут",
-                "jumper": "Прыжковый сервер",
-                "status": "Статус",
-                "latency": "Задержка",
-                "action": "Действие"
-            },
-            "latency": {
-                "measuring": "Измерение..."
-            },
-            "actions": {
-                "stop": "Остановить",
-                "start": "Запустить",
-                "busy": "Запуск...",
-                "retry": "Повторить",
-                "more": "Ещё",
-                "copy": "Копировать",
-                "copyError": "Копировать ошибку",
-                "copied": "Скопировано",
-                "expandError": "Показать полный текст ошибки",
-                "collapseError": "Скрыть полный текст ошибки",
-                "edit": "Изменить",
-                "delete": "Удалить"
-            },
-            "status": {
-                "running": "Работает",
-                "stopped": "Остановлен",
-                "busy": "Занят",
-                "error": "Ошибка"
-            }
-        },
-        "confirmations": {
-            "deleteTunnel": "Удалить туннель «{name}»?",
-            "deleteJumper": "Удалить прыжковый сервер «{name}»?",
-            "deleteJumperBlocked": "Нельзя удалить «{name}»: используется в {count} туннеле(ях)."
-        },
-        "logs": {
-            "title": "Журнал операций",
-            "levels": {
-                "all": "Все",
-                "info": "Инфо",
-                "warn": "Предупреждения",
-                "error": "Ошибки"
-            },
-            "table": {
-                "time": "Время",
-                "level": "Уровень",
-                "message": "Сообщение"
-            },
-            "noLogs": "Для этого уровня записей нет"
-        },
-        "modals": {
-            "jumper": {
-                "newTitle": "Новый прыжковый сервер",
-                "editTitle": "Изменить прыжковый сервер",
-                "basicSettings": "Основные параметры",
-                "advancedOptions": "Дополнительно",
-                "name": "Имя",
-                "user": "Пользователь",
-                "host": "Хост",
-                "port": "Порт",
-                "authMethod": "Способ входа",
-                "sshKeyFile": "Файл SSH-ключа",
-                "browse": "Обзор",
-                "password": "Пароль",
-                "notes": "Заметки",
-                "keepAliveInterval": "Интервал KeepAlive (мс)",
-                "keepAliveIntervalTooltip": "0 — отключено. Положительное значение — интервал keepalive в миллисекундах.",
-                "timeout": "Таймаут подключения (мс)",
-                "bypassHostCheck": "Пропуск проверки хоста",
-                "testConnection": "Проверить подключение",
-                "testing": "Проверка...",
-                "sshAgentNote": "SSH Agent использует ключи из системы; файл ключа или пароль не нужны.",
-                "agentSocketPath": "Путь к сокету Agent (необязательно)",
-                "agentSocketPlaceholder": "~/.ssh/ssh-agent.sock",
-                "agentSocketNote": "Необязательно. Если указан, используется вместо SSH_AUTH_SOCK.",
-                "keyFileNote": "Введите путь вручную или нажмите «Обзор».",
-                "passwordPlaceholder": "Введите пароль",
-                "passwordOptionalPlaceholder": "Необязательно (пароль ключа)",
-                "keyPathPlaceholder": "~/.ssh/id_rsa",
-                "bypassTooltip": "Пропустить проверку отпечатка SSH-хоста (только в доверенной среде)."
-            },
-            "importTunnel": {
-                "title": "Импорт туннелей",
-                "source": "Источник",
-                "sshCommand": "Команда SSH",
-                "sshCommandPlaceholder": "Вставьте команду SSH...\nПример: ssh -N -L 3307:remote:3306 -i key.pem user{'@'}host",
-                "parseCmd": "Разобрать команду",
-                "parsedTunnels": "Разобранные туннели",
-                "tunnelName": "Имя туннеля",
-                "mode": "Режим",
-                "route": "Маршрут",
-                "importBtn": "Импорт",
-                "jumperSectionTitle": "Прыжковый сервер",
-                "parsedTargetLabel": "Разобранная цель: {target}",
-                "jumperAction": "Действие",
-                "useExistingJumper": "Использовать существующий",
-                "createNewJumper": "Создать новый",
-                "existingJumper": "Существующий сервер",
-                "defaultMatchedJumper": "По умолчанию выбран подходящий существующий сервер.",
-                "duplicateExisting": "Дубликат существующего туннеля; по умолчанию снято.",
-                "duplicateBatch": "Дубликат в текущем разборе; по умолчанию снято.",
-                "warningInvalidLocal": "Проигнорировано неверных правил -L: {count}.",
-                "warningInvalidRemote": "Проигнорировано неверных правил -R: {count}.",
-                "warningInvalidDynamic": "Неверное правило -D проигнорировано.",
-                "warningInvalidTarget": "Найден токен с {'@'}, но формат неверный; не удалось разобрать user{'@'}host.",
-                "warningMissingTarget": "Нет корректного user{'@'}host; импорт заблокирован.",
-                "warningDuplicateSkipped": "Обнаружено дубликатов туннелей: {count}; снято с выбора.",
-                "statusSuccess": "Успех",
-                "statusError": "Ошибка",
-                "errorDuplicateExisting": "Маршрут совпадает с существующим туннелем.",
-                "errorDuplicateBatch": "Дубликат маршрута в этом разборе.",
-                "errorMissingTarget": "В команде SSH нет корректного user{'@'}host; импорт заблокирован.",
-                "errorNoJumper": "Нет доступного прыжкового сервера. Укажите user{'@'}host в команде или создайте сервер."
-            },
-            "importJumper": {
-                "title": "Импорт jump host",
-                "source": "Источник",
-                "loadResult": "Результат загрузки",
-                "load": "Загрузить",
-                "loading": "Читаем SSH config...",
-                "emptyTitle": "Подходящие хосты не найдены",
-                "emptyDesc": "Добавьте явные алиасы Host в ~/.ssh/config и повторите загрузку.",
-                "jumperName": "Имя jump host",
-                "aliasLabel": "SSH alias: {alias}",
-                "statusReady": "Готово",
-                "statusError": "Блок",
-                "detailLabel": "Детали импорта",
-                "importBtn": "Импорт ({count})",
-                "warningAgentFallback": "IdentityFile не найден. По умолчанию будет использован SSH Agent.",
-                "errorMissingUser": "В SSH config отсутствует User. Добавьте его перед импортом.",
-                "errorMissingHost": "В SSH config отсутствует HostName или целевой хост.",
-                "errorProxyJump": "Для алиаса настроен ProxyJump ({proxyJump}). Пока создайте цепочку jump host вручную.",
-                "errorDuplicateExisting": "Jump host с тем же user/host/port уже существует.",
-                "errorDuplicateBatch": "Этот хост дублируется в текущем результате импорта."
-            },
-            "tunnel": {
-                "newTitle": "Новый туннель",
-                "editTitle": "Изменить туннель",
-                "name": "Имя",
-                "mode": "Режим",
-                "localHost": "Локальный хост",
-                "localPort": "Локальный порт",
-                "remoteHost": "Удалённый хост",
-                "remotePort": "Удалённый порт",
-                "jumpers": "Прыжковые серверы",
-                "selectPrimaryJumperPlaceholder": "Выберите основной сервер (#1)",
-                "primaryJumperHint": "Выбранный основной сервер — первый прыжок (#1) в цепочке.",
-                "addMoreJumpers": "Добавить серверы",
-                "hideMoreJumpers": "Скрыть дополнительные",
-                "jumpersHint": "Нажмите + чтобы добавить серверы; туннель идёт в указанном порядке.",
-                "selectAdditionalJumperPlaceholder": "Выберите сервер для добавления",
-                "selectJumperPlaceholder": "Выберите сервер для добавления",
-                "addJumper": "Добавить сервер",
-                "selectedJumpers": "Выбранные серверы",
-                "selectedJumpersOrderTooltip": "Подключение от #1 до #N по списку. Кнопки вверх/вниз меняют порядок.",
-                "noSelectedJumpers": "Серверы ещё не выбраны.",
-                "moveJumperUp": "Выше",
-                "moveJumperDown": "Ниже",
-                "removeJumper": "Убрать сервер",
-                "appendNewJumper": "Быстро создать и добавить сервер",
-                "quickCreateJumper": "Быстрое создание",
-                "description": "Описание",
-                "autoStart": "Автозапуск с приложением",
-                "saveTunnel": "Сохранить туннель",
-                "testConnection": "Проверить подключение",
-                "testing": "Проверка...",
-                "testPassedWithLatency": "Проверка успешна. Задержка SSH: {latency}."
-            }
-        },
-        "options": {
-            "mode": {
-                "local": "Локальная переадресация",
-                "remote": "Удалённая переадресация",
-                "dynamic": "Динамический SOCKS5"
-            },
-            "auth": {
-                "password": "Пароль",
-                "sshKey": "SSH-ключ",
-                "sshAgent": "SSH Agent",
-                "unknown": "Неизвестно"
-            },
-            "jumper": {
-                "unknown": "Неизвестный сервер"
-            }
+            "newForward": "+ Новый форвард",
+            "newHost": "+ Новый хост"
         },
         "common": {
             "cancel": "Отмена",
@@ -261,64 +23,149 @@
             "delete": "Удалить",
             "edit": "Изменить",
             "save": "Сохранить",
-            "action": "Действие",
-            "searchPlaceholder": "Поиск...",
-            "clearSearch": "Очистить поиск"
+            "create": "Создать",
+            "add": "Добавить",
+            "actions": "Действия",
+            "moveUp": "Вверх",
+            "moveDown": "Вниз",
+            "remove": "Убрать",
+            "none": "--"
         }
     },
-    "config": {
+    "forwards": {
+        "foldersTitle": "Папки",
+        "newFolder": "Новая папка",
+        "newSubfolder": "Новая подпапка",
+        "folderName": "Имя папки",
+        "folderNameRequired": "Имя папки обязательно.",
+        "emptyFolder": "В этой папке пока нет форвардов.",
+        "tableTitle": "Форварды",
+        "table": {
+            "name": "Имя",
+            "mode": "Режим",
+            "local": "Локальный",
+            "remote": "Удалённый",
+            "chain": "Цепочка хостов",
+            "autoStart": "Автозапуск",
+            "actions": "Действия"
+        },
+        "mode": {
+            "local": "Локальный",
+            "remote": "Удалённый",
+            "dynamic": "Динамический"
+        },
+        "autoStartYes": "Авто",
+        "selectedCount": "Выбрано: {count}",
+        "moveToPlaceholder": "Переместить в…",
+        "deleteSelected": "Удалить",
+        "modal": {
+            "newTitle": "Новый форвард",
+            "editTitle": "Изменить форвард",
+            "name": "Имя",
+            "mode": "Режим",
+            "folder": "Папка",
+            "chain": "Цепочка SSH-хостов",
+            "chainPlaceholder": "Выберите хост для добавления",
+            "chainEmpty": "Хосты ещё не выбраны.",
+            "localHost": "Локальный адрес",
+            "localPort": "Локальный порт",
+            "remoteHost": "Удалённый адрес",
+            "remotePort": "Удалённый порт",
+            "autoStart": "Запускать вместе с приложением",
+            "description": "Описание"
+        },
+        "errors": {
+            "nameRequired": "Имя обязательно.",
+            "folderRequired": "Выберите папку.",
+            "chainRequired": "Выберите хотя бы один SSH-хост для цепочки.",
+            "localHostRequired": "Локальный адрес обязателен.",
+            "portRange": "Порт должен быть от 1 до 65535.",
+            "remoteRequired": "Для локального/удалённого режима нужны удалённый адрес и порт."
+        },
+        "confirmations": {
+            "deleteForward": "Удалить форвард \"{name}\"?",
+            "deleteSelected": "Удалить выбранные форварды ({count})?",
+            "deleteSelectedTitle": "Удалить форварды",
+            "cascadeConfirm": "Удалить всё"
+        },
+        "notify": {
+            "saved": "Форвард \"{name}\" сохранён.",
+            "deleted": "Форвард удалён.",
+            "deletedCount": "Удалено форвардов: {count}.",
+            "movedCount": "Перемещено форвардов: {count}.",
+            "folderCreated": "Папка \"{name}\" создана.",
+            "folderDeleted": "Папка \"{name}\" удалена."
+        }
+    },
+    "hosts": {
+        "tableTitle": "SSH-хосты",
+        "empty": "SSH-хостов пока нет.",
+        "table": {
+            "name": "Имя",
+            "connection": "Подключение",
+            "auth": "Аутентификация",
+            "notes": "Заметки",
+            "actions": "Действия"
+        },
+        "auth": {
+            "password": "Пароль",
+            "sshKey": "SSH-ключ",
+            "sshAgent": "SSH-агент",
+            "unknown": "Неизвестно"
+        },
+        "modal": {
+            "newTitle": "Новый SSH-хост",
+            "editTitle": "Изменить SSH-хост",
+            "name": "Имя",
+            "host": "Хост",
+            "port": "Порт",
+            "user": "Пользователь",
+            "authType": "Метод аутентификации",
+            "keyPath": "Файл SSH-ключа",
+            "password": "Пароль",
+            "keyPassphrase": "Парольная фраза ключа",
+            "agentSocketPath": "Путь к сокету агента (необязательно)",
+            "advanced": "Дополнительные параметры",
+            "keepAlive": "Интервал KeepAlive (мс)",
+            "timeout": "Тайм-аут подключения (мс)",
+            "hostKeyAlgorithms": "Алгоритмы ключа хоста",
+            "notes": "Заметки"
+        },
+        "errors": {
+            "nameRequired": "Имя обязательно.",
+            "hostRequired": "Хост обязателен.",
+            "userRequired": "Пользователь обязателен.",
+            "portRange": "Порт должен быть от 1 до 65535.",
+            "keyPathRequired": "Для аутентификации по ключу нужен путь к файлу ключа.",
+            "passwordRequired": "Для аутентификации по паролю нужен пароль."
+        },
+        "confirmations": {
+            "deleteHost": "Удалить SSH-хост \"{name}\"?",
+            "deleteHostTitle": "Удалить SSH-хост",
+            "inUseTitle": "Нельзя удалить"
+        },
+        "notify": {
+            "saved": "SSH-хост \"{name}\" сохранён.",
+            "deleted": "SSH-хост \"{name}\" удалён."
+        }
+    },
+    "settings": {
         "general": "Общие",
-        "advancedSettings": "Дополнительно",
         "language": "Язык",
-        "languageDesc": "Выберите язык интерфейса / Choose your preferred language",
         "theme": "Тёмная тема",
-        "themeDesc": "Переключение светлой и тёмной темы",
-        "autoRun": "Запуск при входе",
-        "autoRunDesc": "Запускать TunnelBoard при входе в систему",
-        "appInfo": "О приложении",
-        "version": "Версия",
-        "productUpdates": "Обновления продукта",
-        "currentVersion": "Текущая версия",
+        "autoRun": "Запускать при входе в систему",
+        "updates": "Обновления",
         "automaticUpdateChecks": "Автоматическая проверка обновлений",
-        "automaticUpdateChecksDesc": "Проверять GitHub Releases при запуске TunnelBoard",
+        "currentVersion": "Текущая версия",
         "checkUpdates": "Проверить обновления",
-        "checkingUpdates": "Проверка...",
-        "updateResultTitle": "Результат проверки",
-        "noUpdatesAvailable": "Нет доступных обновлений.",
-        "latestVersionIs": "Доступна новая версия: {version}",
+        "checkingUpdates": "Проверка…",
+        "updateResultTitle": "Результат проверки обновлений",
+        "noUpdatesAvailable": "Обновлений нет.",
+        "latestVersionIs": "Последняя версия: {version}",
         "releaseNotes": "Примечания к выпуску",
         "openDownloadPage": "Открыть страницу загрузки",
-        "openReleases": "Релизы",
-        "configFile": "Файл конфигурации",
-        "manageConfig": "Управление конфигурацией",
-        "manageConfigDesc": "Экспорт, импорт или открытие папки с конфигурацией",
-        "exportConfig": "Экспорт конфигурации",
-        "exportConfigBtn": "Экспорт",
-        "exportConfigDesc": "Сохранить резервную копию config.toml",
-        "importConfig": "Импорт конфигурации",
-        "importConfigBtn": "Импорт",
-        "importConfigDesc": "Загрузить из TOML (остановит и перезапустит туннели)",
-        "openConfigDir": "Открыть папку конфигурации",
-        "openConfigDirBtn": "Открыть папку",
-        "openConfigDirDesc": "Открыть каталог с конфигурацией",
-        "configDataDir": "Каталог данных конфигурации",
-        "configDirCurrentPathPrefix": "Текущий каталог: ",
-        "configDirUnavailable": "Не удалось получить путь (возможно, нет бэкенда).",
-        "chooseConfigDirBtn": "Изменить…",
-        "resetConfigDirBtn": "По умолчанию",
-        "configDirRelocateConfirm": "Скопировать конфигурацию в выбранную папку и переключиться? Активные туннели будут остановлены. Приложение закроется — запустите снова.\n\n{dir}",
-        "configDirConflictPrompt": "{dir}\n\nВ папке уже есть файлы конфигурации. Перезаписать или оставить существующие?",
-        "configDirConflictOverwrite": "Перезаписать",
-        "configDirConflictUseExisting": "Оставить существующие",
-        "configDirResetConfirm": "Скопировать конфигурацию в каталог по умолчанию и убрать перенаправление? Приложение закроется — запустите снова.",
-        "configDirResetImplicitMissing": "Не удалось определить каталог конфигурации по умолчанию.",
-        "configDirRelocateQuitHint": "Конфигурация обновлена. Приложение закроется и собранная версия обычно перезапустится через секунду. В режиме wails dev запустите вручную.",
-        "exportSuccess": "Конфигурация успешно экспортирована.",
-        "importSuccess": "Конфигурация импортирована. Автозапуск туннелей перезапущен.",
-        "importConfirm": "Текущая конфигурация будет безвозвратно перезаписана. Активные туннели остановятся и перезапустятся. Продолжить?",
-        "messages": {
-            "upToDate": "Проверено: {time}.\nТекущая версия ({version}) актуальна.",
-            "updateAvailable": "Доступна новая версия {version}."
-        }
+        "data": "Данные",
+        "dataDir": "Каталог данных",
+        "openDir": "Открыть каталог"
     }
 }
