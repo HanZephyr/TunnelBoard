@@ -28,6 +28,44 @@ func newCatalog() *biz.CatalogBiz {
 	return biz.NewCatalogBiz(&fakeStore{data: model.VaultData{Version: 1}})
 }
 
+// SaveWebRoute 新建/更新 Web Route：仅允许引用 local 模式 Forward，HTTPS 上游必须带 SNI；
+// DeleteWebRoute 删除并级联校验。
+func TestSaveAndDeleteWebRoute(t *testing.T) {
+	c := newCatalog()
+	folder, _ := c.CreateFolder("工作", 0)
+	host, _ := c.SaveSSHHost(model.SSHHost{Name: "h", Host: "10.0.0.1", AuthType: "password", Password: "x"})
+	local, _ := c.SaveForward(model.Forward{FolderID: folder.ID, Name: "l", Mode: "local", ChainHostIDs: []int{host.ID},
+		LocalHost: "127.0.0.1", LocalPort: 8080, RemoteHost: "x", RemotePort: 80})
+	remote, _ := c.SaveForward(model.Forward{FolderID: folder.ID, Name: "r", Mode: "remote", ChainHostIDs: []int{host.ID},
+		LocalHost: "127.0.0.1", LocalPort: 8081, RemoteHost: "x", RemotePort: 81})
+
+	created, err := c.SaveWebRoute(model.WebRoute{ForwardID: local.ID, Domain: " DB.Test ", HostsEnabled: true})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.ID == 0 || created.Domain != "db.test" || created.UpstreamScheme != "http" {
+		t.Fatalf("normalize failed: %+v", created)
+	}
+
+	if _, err := c.SaveWebRoute(model.WebRoute{ForwardID: remote.ID, Domain: "x.test"}); !errors.Is(err, model.ErrRouteNeedsLocalForward) {
+		t.Fatalf("err = %v, want ErrRouteNeedsLocalForward", err)
+	}
+	if _, err := c.SaveWebRoute(model.WebRoute{ForwardID: local.ID, Domain: "s.test", UpstreamScheme: "https"}); !errors.Is(err, model.ErrRouteNeedsTLSSNI) {
+		t.Fatalf("err = %v, want ErrRouteNeedsTLSSNI", err)
+	}
+
+	if err := c.DeleteWebRoute(created.ID); err != nil {
+		t.Fatalf("DeleteWebRoute: %v", err)
+	}
+	data, _ := c.Data()
+	if len(data.WebRoutes) != 0 {
+		t.Fatalf("route not deleted: %+v", data.WebRoutes)
+	}
+	if err := c.DeleteWebRoute(created.ID); err == nil {
+		t.Fatal("deleting missing route must fail")
+	}
+}
+
 // DeleteSelection 的删除与引用规则：Forward 批量删除并清理其 WebRoute；
 // 被引用 SSH 主机禁删（与引用者同选删除除外）；非空文件夹须显式级联。
 func TestDeleteSelectionRules(t *testing.T) {

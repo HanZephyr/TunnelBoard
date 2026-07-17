@@ -113,6 +113,59 @@ func indexSSHHost(hosts []model.SSHHost, id int) int {
 	return -1
 }
 
+// SaveWebRoute 新建（ID 为 0）或更新 Web Route；引用与模式规则由 Validate 兜底。
+func (b *CatalogBiz) SaveWebRoute(r model.WebRoute) (model.WebRoute, error) {
+	r.Domain = strings.TrimSpace(strings.ToLower(r.Domain))
+	r.TLSSNI = strings.TrimSpace(r.TLSSNI)
+	if r.UpstreamScheme == "" {
+		r.UpstreamScheme = "http"
+	}
+	var saved model.WebRoute
+	_, err := b.store.Update(func(d *model.VaultData) error {
+		if r.ID == 0 {
+			r.ID = nextID(len(d.WebRoutes), func(i int) int { return d.WebRoutes[i].ID })
+			d.WebRoutes = append(d.WebRoutes, r)
+		} else {
+			idx := indexWebRoute(d.WebRoutes, r.ID)
+			if idx < 0 {
+				return fmt.Errorf("web route %d not found", r.ID)
+			}
+			d.WebRoutes[idx] = r
+		}
+		if err := d.Validate(); err != nil {
+			return err
+		}
+		saved = r
+		return nil
+	})
+	if err != nil {
+		return model.WebRoute{}, err
+	}
+	return saved, nil
+}
+
+// DeleteWebRoute 删除指定 Web Route；删除 Forward 时的级联清理由 DeleteSelection 负责。
+func (b *CatalogBiz) DeleteWebRoute(id int) error {
+	_, err := b.store.Update(func(d *model.VaultData) error {
+		idx := indexWebRoute(d.WebRoutes, id)
+		if idx < 0 {
+			return fmt.Errorf("web route %d not found", id)
+		}
+		d.WebRoutes = append(d.WebRoutes[:idx], d.WebRoutes[idx+1:]...)
+		return d.Validate()
+	})
+	return err
+}
+
+func indexWebRoute(routes []model.WebRoute, id int) int {
+	for i, r := range routes {
+		if r.ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
 // SaveForward 新建（ID 为 0）或更新 Forward，引用完整性由 Validate 兜底。
 func (b *CatalogBiz) SaveForward(fw model.Forward) (model.Forward, error) {
 	fw.Name = strings.TrimSpace(fw.Name)
