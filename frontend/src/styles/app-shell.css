@@ -872,6 +872,10 @@
   max-width: 100%;
 }
 
+.forwards-table-wrap {
+  overflow-x: auto;
+}
+
 .tunnels-table-wrap {
   overflow-x: auto !important;
   overflow-y: visible !important;
@@ -1640,6 +1644,7 @@
 .forwards-table,
 .hosts-table {
   width: 100%;
+  min-width: 860px;
   table-layout: fixed;
 }
 

@@ -112,7 +112,9 @@ func main() {
 		Title:         applicationTitle,
 		Width:         1024,
 		Height:        768,
-		DisableResize: true,
+		MinWidth:      1024,
+		MinHeight:     768,
+		DisableResize: false,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
