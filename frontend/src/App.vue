@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import {
   ApplyTrayLocale,
   CheckForUpdates as CheckForUpdatesAPI,
+  GetAppVersion,
   GetUpdateCheckEnabled,
   GetVaultData,
   SaveUILocale
@@ -34,7 +35,7 @@ const sidebarCollapsed = ref(savedSidebarCollapsed === '1')
 const activePage = ref('forwards')
 
 const appMeta = reactive({
-  version: '1.0.3.0'
+  version: '0.0.0'
 })
 const DEFAULT_RELEASES_PAGE_URL = 'https://github.com/HanZephyr/TunnelBoard/releases'
 const releasePageUrl = ref(DEFAULT_RELEASES_PAGE_URL)
@@ -174,6 +175,11 @@ function onNewRoute() {
 
 onMounted(async () => {
   await loadVault()
+  try {
+    appMeta.version = await callBackend(GetAppVersion)
+  } catch (_) {
+    /* version display falls back to placeholder */
+  }
   try {
     await callBackend(ApplyTrayLocale, locale.value)
   } catch (_) {

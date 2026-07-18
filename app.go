@@ -554,6 +554,11 @@ func (a *App) ReplaceHostKey(host string, port int, keyType, fingerprint string)
 	return a.catalog.ReplaceHostKey(host, port, keyType, fingerprint)
 }
 
+// GetAppVersion 返回应用版本（构建常量，界面与更新检查的唯一来源）。
+func (a *App) GetAppVersion() string {
+	return appVersion
+}
+
 // CheckForUpdates 查询 GitHub Releases 是否有新版本（只读检查，不做自更新）。
 func (a *App) CheckForUpdates(currentVersion string) (updater.Result, error) {
 	if err := a.ensureReady(); err != nil {
