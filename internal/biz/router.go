@@ -222,6 +222,58 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 	return result, nil
 }
 
+// ResumeCaddy 在应用启动时恢复 Caddy 运行：存在启用 Caddy 的 Route 时按 Vault 状态重启进程。
+// 与 ApplyRoute 的区别：不重写 hosts（已持久化）、绝不触发特权安装（不弹 UAC）；
+// CA 未信任时仅在 helper 可达时补信任，否则如实记录，待用户手动应用。
+func (b *RouterBiz) ResumeCaddy() error {
+	data, err := b.store.Load()
+	if err != nil {
+		return err
+	}
+	if !hasCaddyEnabledRoute(data) {
+		return nil
+	}
+	caddyConfig, err := route.CompileCaddy(data)
+	if err != nil {
+		return err
+	}
+	if b.caddy.Running() {
+		slog.Info("caddy already running at resume")
+	} else {
+		if err := b.caddy.DiagnosePort(); err != nil {
+			// 443 冲突：与 ApplyRoute 同策略，保持 hosts-only，不视为启动失败。
+			slog.Warn("caddy port conflict at resume, routes stay hosts-only", "err", err)
+			return nil
+		}
+		if err := b.caddy.Reload(caddyConfig); err != nil {
+			return fmt.Errorf("resume caddy reload: %w", err)
+		}
+		slog.Info("caddy resumed at startup")
+	}
+
+	if data.Prefs.CATrustedSHA256 != "" {
+		return nil
+	}
+	// CA 未信任：仅在 helper 可达（服务已装）时补信任，绝不触发提权安装。
+	if _, err := b.helper.Ping(); err != nil {
+		slog.Warn("helper unreachable at resume, local ca stays untrusted until manual apply", "err", err)
+		return nil
+	}
+	der, err := b.caddy.RootCACert(b.caWaitTimeout)
+	if err != nil {
+		slog.Error("read local ca at resume failed", "err", err)
+		return nil
+	}
+	sum := sha256.Sum256(der)
+	fp := hex.EncodeToString(sum[:])
+	if err := b.callHelper(helper.Request{Op: helper.OpTrustLocalCA, CertDER: der, CertSHA256: fp}); err != nil {
+		slog.Error("trust local ca at resume failed", "err", err)
+		return nil
+	}
+	slog.Info("local ca trusted at resume", "sha256_prefix", fp[:12])
+	return b.setCATrusted(fp)
+}
+
 // RouteStatus 汇总每条 Route 的系统生效状态。
 func (b *RouterBiz) RouteStatus() ([]RouteStatusItem, error) {
 	data, err := b.store.Load()

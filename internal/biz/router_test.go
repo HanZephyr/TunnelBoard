@@ -16,9 +16,11 @@ import (
 )
 
 type fakeHelperClient struct {
-	calls     []helper.Request
-	failOnOp  map[string]string
-	ensureErr error
+	calls       []helper.Request
+	failOnOp    map[string]string
+	ensureErr   error
+	ensureCalls int
+	pingErr     error
 }
 
 func (f *fakeHelperClient) Call(req helper.Request) (helper.Response, error) {
@@ -29,9 +31,17 @@ func (f *fakeHelperClient) Call(req helper.Request) (helper.Response, error) {
 	return helper.Response{OK: true}, nil
 }
 
-func (f *fakeHelperClient) Ping() (string, error) { return "fake", nil }
+func (f *fakeHelperClient) Ping() (string, error) {
+	if f.pingErr != nil {
+		return "", f.pingErr
+	}
+	return "fake", nil
+}
 
-func (f *fakeHelperClient) EnsureInstalled() error { return f.ensureErr }
+func (f *fakeHelperClient) EnsureInstalled() error {
+	f.ensureCalls++
+	return f.ensureErr
+}
 
 type fakeCaddyAdapter struct {
 	running     bool
@@ -337,4 +347,115 @@ func TestPreviewRoute(t *testing.T) {
 	if len(preview.HostsRecords) != 1 || preview.HostsRecords[0] != (route.HostEntry{Domain: "grafana.example.com", IP: "127.0.0.1"}) {
 		t.Fatalf("HostsRecords = %+v", preview.HostsRecords)
 	}
+}
+
+// 启动时恢复 Caddy：启用 Caddy 的 Route 存在时按 Vault 状态重启进程，不碰 hosts、不触发特权安装。
+func TestResumeCaddyStartsWhenEnabled(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", CaddyEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.store.Update(func(d *model.VaultData) error {
+		d.Prefs.CATrustedSHA256 = "deadbeef"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fx.router.ResumeCaddy(); err != nil {
+		t.Fatalf("ResumeCaddy: %v", err)
+	}
+	if len(fx.caddy.reloads) != 1 {
+		t.Fatalf("reloads = %d, want 1", len(fx.caddy.reloads))
+	}
+	if fx.helper.ensureCalls != 0 {
+		t.Fatalf("resume must never trigger privilege install, ensureCalls = %d", fx.helper.ensureCalls)
+	}
+	for _, c := range fx.helper.calls {
+		if c.Op == helper.OpApplyManagedHosts {
+			t.Fatal("resume must not rewrite hosts")
+		}
+	}
+}
+
+// 无启用 Caddy 的 Route：完全不动。
+func TestResumeCaddyNoopWithoutEnabledRoutes(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.router.ResumeCaddy(); err != nil {
+		t.Fatalf("ResumeCaddy: %v", err)
+	}
+	if len(fx.caddy.reloads) != 0 || len(fx.helper.calls) != 0 {
+		t.Fatalf("must be noop, reloads = %d, helper calls = %+v", len(fx.caddy.reloads), fx.helper.calls)
+	}
+}
+
+// 443 冲突时按 hosts-only 处理，不报错、不重载。
+func TestResumeCaddyPortConflict(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	fx.caddy.diagnoseErr = errors.New("caddy: 127.0.0.1:443 unavailable: bind: address in use")
+	if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", CaddyEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.router.ResumeCaddy(); err != nil {
+		t.Fatalf("port conflict must not fail resume: %v", err)
+	}
+	if len(fx.caddy.reloads) != 0 {
+		t.Fatalf("conflicted caddy must not reload, reloads = %d", len(fx.caddy.reloads))
+	}
+}
+
+// CA 未信任：helper 可达时补信任；不可达时只记录不失败。
+func TestResumeCaddyTrustsCAOnlyWhenHelperReachable(t *testing.T) {
+	newFixtureWithRoute := func(t *testing.T) *routerFixture {
+		fx := newRouterFixture(t)
+		fw := fx.seedForward(t, "local", 8080)
+		fx.caddy.rootCA = []byte("fake-der")
+		if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", CaddyEnabled: true}); err != nil {
+			t.Fatal(err)
+		}
+		return fx
+	}
+
+	t.Run("helper 可达补信任", func(t *testing.T) {
+		fx := newFixtureWithRoute(t)
+		if err := fx.router.ResumeCaddy(); err != nil {
+			t.Fatalf("ResumeCaddy: %v", err)
+		}
+		var trusted bool
+		for _, c := range fx.helper.calls {
+			if c.Op == helper.OpTrustLocalCA {
+				trusted = true
+			}
+		}
+		if !trusted {
+			t.Fatalf("TrustLocalCA not called: %+v", fx.helper.calls)
+		}
+		data, _ := fx.store.Load()
+		if data.Prefs.CATrustedSHA256 == "" {
+			t.Fatal("pref should record trusted fingerprint")
+		}
+	})
+
+	t.Run("helper 不可达不失败", func(t *testing.T) {
+		fx := newFixtureWithRoute(t)
+		fx.helper.pingErr = errors.New("pipe not found")
+		if err := fx.router.ResumeCaddy(); err != nil {
+			t.Fatalf("unreachable helper must not fail resume: %v", err)
+		}
+		for _, c := range fx.helper.calls {
+			if c.Op == helper.OpTrustLocalCA {
+				t.Fatal("must not trust when helper unreachable")
+			}
+		}
+		data, _ := fx.store.Load()
+		if data.Prefs.CATrustedSHA256 != "" {
+			t.Fatal("pref should stay empty")
+		}
+	})
 }

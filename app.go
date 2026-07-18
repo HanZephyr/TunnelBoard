@@ -106,6 +106,11 @@ func (a *App) startup(ctx context.Context) {
 				}
 			}
 		}()
+		go func() {
+			if err := a.router.ResumeCaddy(); err != nil {
+				slog.Error("resume caddy failed", "err", err)
+			}
+		}()
 	}
 }
 
