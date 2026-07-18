@@ -111,7 +111,7 @@ func TestReloadUsesAdminAPIWhenRunning(t *testing.T) {
 	a := caddy.New(t.TempDir())
 	a.AdminURL = srv.URL
 	started := false
-	a.StartProcess = func(bin string, args []string, dir string, env []string) error {
+	a.StartProcess = func(bin string, args []string, dir string, env []string, logFile *os.File) error {
 		started = true
 		return nil
 	}
@@ -146,7 +146,7 @@ func TestReloadColdStartsWhenNotRunning(t *testing.T) {
 	a := caddy.New(t.TempDir())
 	a.AdminURL = srv.URL
 	var startedBin string
-	a.StartProcess = func(bin string, args []string, dir string, env []string) error {
+	a.StartProcess = func(bin string, args []string, dir string, env []string, logFile *os.File) error {
 		startedBin = bin
 		return nil
 	}

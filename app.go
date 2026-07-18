@@ -57,13 +57,14 @@ func NewApp() *App {
 	store, err := vault.OpenDefault()
 
 	// 运行日志持久化到数据目录 logs/（滚动 2MiB 一档），同时保留 stderr 与内存环（诊断包）。
-	// Vault 打不开时仅 stderr。
+	// Vault 打不开时仅 stderr。注意顺序：GUI 应用无控制台，stderr 写入会失败，
+	// 而 io.MultiWriter 遇错即中断后续 writer——文件必须写在第一个。
 	var logWriter io.Writer = os.Stderr
 	var logFile *diag.LogFile
 	if err == nil {
 		if lf, lerr := diag.OpenLogFile(filepath.Join(store.Dir(), "logs", "tunnelboard.log"), 2<<20); lerr == nil {
 			logFile = lf
-			logWriter = io.MultiWriter(os.Stderr, lf)
+			logWriter = io.MultiWriter(lf, os.Stderr)
 		}
 	}
 	diagBuf := diag.NewRingBuffer(slog.NewTextHandler(logWriter, nil), 2000)
@@ -575,6 +576,50 @@ func (a *App) ReplaceHostKey(host string, port int, keyType, fingerprint string)
 		return model.HostKey{}, err
 	}
 	return a.catalog.ReplaceHostKey(host, port, keyType, fingerprint)
+}
+
+// LogTailResult 是日志文件的增量读取结果：新行与下一次读取偏移。
+type LogTailResult struct {
+	Lines  []string `json:"lines"`
+	Offset int64    `json:"offset"`
+}
+
+// GetLogTail 从 offset 增量读取日志文件（name 仅允许 tunnelboard | caddy）。
+// offset 超过文件大小（文件被滚动替换）时重置到末尾，不回放旧内容。
+func (a *App) GetLogTail(name string, offset int64) (LogTailResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return LogTailResult{}, err
+	}
+	if name != "tunnelboard" && name != "caddy" {
+		return LogTailResult{}, fmt.Errorf("unknown log name %q", name)
+	}
+	f, err := os.Open(filepath.Join(a.store.Dir(), "logs", name+".log"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return LogTailResult{Lines: []string{}, Offset: 0}, nil
+		}
+		return LogTailResult{}, fmt.Errorf("open log: %w", err)
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return LogTailResult{}, err
+	}
+	if offset > st.Size() {
+		offset = st.Size()
+	}
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return LogTailResult{}, err
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return LogTailResult{}, err
+	}
+	text := strings.TrimSuffix(string(data), "\n")
+	if text == "" {
+		return LogTailResult{Lines: []string{}, Offset: st.Size()}, nil
+	}
+	return LogTailResult{Lines: strings.Split(text, "\n"), Offset: st.Size()}, nil
 }
 
 // GetAppVersion 返回应用版本（构建常量，界面与更新检查的唯一来源）。

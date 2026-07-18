@@ -38,8 +38,9 @@ type Adapter struct {
 	// AdminURL 默认 127.0.0.1:2019；测试可指向 httptest.Server。
 	AdminURL string
 
-	// StartProcess 是进程启动接缝（默认 detach 启动，测试可替换）。
-	StartProcess func(bin string, args []string, dir string, env []string) error
+	// StartProcess 是进程启动接缝（默认 detach 启动，测试可替换）；
+	// logFile 接收子进程 stdout/stderr（Caddy 日志）。
+	StartProcess func(bin string, args []string, dir string, env []string, logFile *os.File) error
 	httpClient   *http.Client
 }
 
@@ -132,7 +133,8 @@ func (a *Adapter) Running() bool {
 }
 
 // Start 冷启动全局 Caddy 进程（配置须已写入 caddy.json）。
-// 经 XDG_DATA_HOME 把 Caddy 存储钉在数据目录内，本地 CA 路径因而确定。
+// 经 XDG_DATA_HOME 把 Caddy 存储钉在数据目录内，本地 CA 路径因而确定；
+// stdout/stderr 追加写入 logs/caddy.log 供日志页查阅。
 // 环境变量覆盖的二进制（开发/测试）跳过完整性校验。
 func (a *Adapter) Start() error {
 	bin, err := a.Locate()
@@ -144,8 +146,28 @@ func (a *Adapter) Start() error {
 			return err
 		}
 	}
+	logFile, err := a.openLogFile()
+	if err != nil {
+		return err
+	}
 	env := append(os.Environ(), "XDG_DATA_HOME="+a.DataDir)
-	return a.StartProcess(bin, []string{"run", "--config", a.configPath()}, a.DataDir, env)
+	err = a.StartProcess(bin, []string{"run", "--config", a.configPath()}, a.DataDir, env, logFile)
+	// 父进程句柄可立即关闭：子进程持有自己的副本继续写入（Windows 上不关闭会锁住文件）。
+	_ = logFile.Close()
+	return err
+}
+
+// openLogFile 打开（创建）Caddy 的日志文件；进程生命周期随父进程退出，无需显式关闭。
+func (a *Adapter) openLogFile() (*os.File, error) {
+	dir := filepath.Join(a.DataDir, "logs")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("caddy: create log dir: %w", err)
+	}
+	f, err := os.OpenFile(filepath.Join(dir, "caddy.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("caddy: open log file: %w", err)
+	}
+	return f, nil
 }
 
 // Reload 原子写入 caddy.json；进程在运行则经 admin API /load 热重载，否则冷启动。
