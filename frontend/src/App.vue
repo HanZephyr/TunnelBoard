@@ -15,6 +15,7 @@ import AppSidebar from './components/layout/AppSidebar.vue'
 import AppTopHeader from './components/layout/AppTopHeader.vue'
 import ForwardsPage from './components/pages/ForwardsPage.vue'
 import HostsPage from './components/pages/HostsPage.vue'
+import LogsPage from './components/pages/LogsPage.vue'
 import RoutesPage from './components/pages/RoutesPage.vue'
 import SettingsPage from './components/pages/SettingsPage.vue'
 import './styles/app-shell.css'
@@ -25,6 +26,7 @@ const pages = computed(() => [
   { key: 'forwards', title: t('app.sidebar.forwards'), subtitle: t('app.sidebar.forwardsSubtitle'), icon: 'bi-diagram-3' },
   { key: 'hosts', title: t('app.sidebar.hosts'), subtitle: t('app.sidebar.hostsSubtitle'), icon: 'bi-hdd-network' },
   { key: 'routes', title: t('app.sidebar.routes'), subtitle: t('app.sidebar.routesSubtitle'), icon: 'bi-globe2' },
+  { key: 'logs', title: t('app.sidebar.logs'), subtitle: t('app.sidebar.logsSubtitle'), icon: 'bi-journal-text' },
   { key: 'settings', title: t('app.sidebar.settings'), subtitle: t('app.sidebar.settingsSubtitle'), icon: 'bi-sliders2' }
 ])
 
@@ -259,6 +261,8 @@ onBeforeUnmount(() => {
           @vault-changed="loadVault"
           @notify="notify"
         />
+
+        <LogsPage v-if="activePage === 'logs'" />
 
         <SettingsPage
           v-if="activePage === 'settings'"

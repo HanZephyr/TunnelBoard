@@ -12,7 +12,9 @@
             "collapse": "收合側邊欄",
             "expand": "展開側邊欄",
             "routes": "Web 路由",
-            "routesSubtitle": "將網域對應到本機轉發"
+            "routesSubtitle": "將網域對應到本機轉發",
+            "logs": "日誌",
+            "logsSubtitle": "即時檢視應用程式與 Caddy 日誌"
         },
         "header": {
             "newForward": "+ 新增 Forward",
@@ -331,5 +333,18 @@
             "needForward": "請先建立 local 模式的 Forward。",
             "portConflictWarning": "443 被佔用，Caddy 未啟動，可繼續使用 網域+連接埠 存取。"
         }
+    },
+    "logs": {
+        "sourceLabel": "日誌來源",
+        "source": {
+            "app": "應用程式",
+            "caddy": "Caddy"
+        },
+        "pause": "暫停",
+        "resume": "繼續",
+        "clear": "清空檢視",
+        "autoScroll": "自動捲動",
+        "empty": "暫無日誌。",
+        "loadFailed": "讀取日誌失敗：{error}"
     }
 }

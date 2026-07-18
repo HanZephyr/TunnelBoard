@@ -12,7 +12,9 @@
             "collapse": "Collapse sidebar",
             "expand": "Expand sidebar",
             "routes": "Web Routes",
-            "routesSubtitle": "Map domains to local forwards"
+            "routesSubtitle": "Map domains to local forwards",
+            "logs": "Logs",
+            "logsSubtitle": "Live app and Caddy logs"
         },
         "header": {
             "newForward": "+ New Forward",
@@ -331,5 +333,18 @@
             "needForward": "Create a local-mode forward before adding web routes.",
             "portConflictWarning": "Port 443 is occupied; Caddy was not started. You can still access the service via domain + port."
         }
+    },
+    "logs": {
+        "sourceLabel": "Log source",
+        "source": {
+            "app": "Application",
+            "caddy": "Caddy"
+        },
+        "pause": "Pause",
+        "resume": "Resume",
+        "clear": "Clear view",
+        "autoScroll": "Auto scroll",
+        "empty": "No log lines yet.",
+        "loadFailed": "Failed to read logs: {error}"
     }
 }
