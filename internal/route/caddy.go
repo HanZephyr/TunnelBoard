@@ -22,6 +22,22 @@ type caddyAdmin struct {
 type caddyApps struct {
 	HTTP caddyHTTPApp `json:"http"`
 	TLS  caddyTLSApp  `json:"tls"`
+	PKI  caddyPKIApp  `json:"pki"`
+}
+
+// caddyPKIApp 配置本地 CA：禁止 Caddy 自动安装根证书——
+// 安装/撤销本地 CA 信任只能由受限特权辅助服务完成（CONTEXT.md 红线），
+// 且该步骤在无控制台/无交互环境下会挂起启动流程。
+type caddyPKIApp struct {
+	CertificateAuthorities caddyPKIAuthorities `json:"certificate_authorities"`
+}
+
+type caddyPKIAuthorities struct {
+	Local caddyPKILocal `json:"local"`
+}
+
+type caddyPKILocal struct {
+	InstallTrust bool `json:"install_trust"`
 }
 
 type caddyHTTPApp struct {
@@ -148,6 +164,11 @@ func CompileCaddy(data model.VaultData) ([]byte, error) {
 						Subjects: subjects,
 						Issuers:  []caddyIssuer{{Module: "internal"}},
 					}},
+				},
+			},
+			PKI: caddyPKIApp{
+				CertificateAuthorities: caddyPKIAuthorities{
+					Local: caddyPKILocal{InstallTrust: false},
 				},
 			},
 		},

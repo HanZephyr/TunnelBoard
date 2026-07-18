@@ -126,6 +126,11 @@ func TestCompileCaddyHTTPUpstream(t *testing.T) {
 	if got := cfg.Apps.TLS.Automation.Policies[0].Subjects; len(got) != 1 || got[0] != "db.test" {
 		t.Fatalf("subjects = %v, want [db.test]", got)
 	}
+	// pki.install_trust 必须为 false：根证书信任只允许经特权辅助服务安装，
+	// 且 Caddy 自动安装步骤在无控制台环境会挂起启动。
+	if !strings.Contains(string(raw), `"install_trust":false`) {
+		t.Fatal("pki install_trust must be disabled")
+	}
 }
 
 // HTTPS 上游：transport 带显式 SNI，请求头重写 Host，且不出现跳过校验与 ACME。
