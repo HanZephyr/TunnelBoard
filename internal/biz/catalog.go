@@ -114,11 +114,17 @@ func indexSSHHost(hosts []model.SSHHost, id int) int {
 }
 
 // SaveWebRoute 新建（ID 为 0）或更新 Web Route；引用与模式规则由 Validate 兜底。
+// 硬性不变量：Caddy 生效的前提是 hosts 启用——hosts 关闭时强制 Caddy 关闭
+// （Caddy 依赖域名解析到回环，缺了 hosts 映射非本地域名还会漏到真实公网 IP）。
+// 反向联动（开 Caddy 时顺带开 hosts）是交互层便利，由前端在保存前表达，后端不做。
 func (b *CatalogBiz) SaveWebRoute(r model.WebRoute) (model.WebRoute, error) {
 	r.Domain = strings.TrimSpace(strings.ToLower(r.Domain))
 	r.TLSSNI = strings.TrimSpace(r.TLSSNI)
 	if r.UpstreamScheme == "" {
 		r.UpstreamScheme = "http"
+	}
+	if !r.HostsEnabled {
+		r.CaddyEnabled = false
 	}
 	var saved model.WebRoute
 	_, err := b.store.Update(func(d *model.VaultData) error {

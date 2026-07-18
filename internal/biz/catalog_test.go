@@ -310,3 +310,53 @@ func TestCreateFolderRespectsTwoLevelLimit(t *testing.T) {
 		t.Fatalf("rejected folder must not persist, got %d folders", len(data.Folders))
 	}
 }
+
+// Caddy 生效的前提是 hosts 启用（后端硬性不变量）：hosts 关闭时强制 Caddy 关闭；
+// hosts 开启 + Caddy 开启可并存；仅 hosts 模式不受影响。
+// 注：交互层的反向联动（开 Caddy 顺带开 hosts）由前端表达，不在此测试范围。
+func TestSaveWebRouteCaddyRequiresHosts(t *testing.T) {
+	c := newCatalog()
+	folder, _ := c.CreateFolder("工作", 0)
+	host, _ := c.SaveSSHHost(model.SSHHost{Name: "h", Host: "10.0.0.1", AuthType: "password", Password: "x"})
+	fw, _ := c.SaveForward(model.Forward{FolderID: folder.ID, Name: "l", Mode: "local", ChainHostIDs: []int{host.ID},
+		LocalHost: "127.0.0.1", LocalPort: 8080, RemoteHost: "x", RemotePort: 80})
+
+	// 不变量：hosts 关闭 → Caddy 强制关闭（无论输入如何组合）
+	created, err := c.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: false, CaddyEnabled: true})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if created.HostsEnabled || created.CaddyEnabled {
+		t.Fatalf("hosts off must force caddy off: %+v", created)
+	}
+
+	// hosts 开 + Caddy 开：并存合法
+	created.HostsEnabled = true
+	created.CaddyEnabled = true
+	updated, err := c.SaveWebRoute(created)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if !updated.HostsEnabled || !updated.CaddyEnabled {
+		t.Fatalf("hosts on + caddy on must persist: %+v", updated)
+	}
+
+	// 更新时 hosts 关闭：Caddy 联动关闭
+	updated.HostsEnabled = false
+	off, err := c.SaveWebRoute(updated)
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if off.CaddyEnabled {
+		t.Fatalf("hosts off must force caddy off on update: %+v", off)
+	}
+
+	// 仅 hosts 模式不受影响
+	only, err := c.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "only.test", HostsEnabled: true, CaddyEnabled: false})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if !only.HostsEnabled || only.CaddyEnabled {
+		t.Fatalf("hosts-only must stay untouched: %+v", only)
+	}
+}
