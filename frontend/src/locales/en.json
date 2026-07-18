@@ -112,7 +112,9 @@
             "remotePort": "Remote Port",
             "autoStart": "Auto start with app",
             "description": "Description",
-            "descriptionPlaceholder": "Optional"
+            "descriptionPlaceholder": "Optional",
+            "newHostToggle": "New Host",
+            "newHostSave": "Save & Add"
         },
         "errors": {
             "nameRequired": "Name is required.",

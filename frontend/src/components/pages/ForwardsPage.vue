@@ -341,6 +341,11 @@ async function saveForward() {
   }
 }
 
+// ---- 弹窗内就地新建主机成功：触发与 vault-changed 相同的 reload（Hosts 页读同一份 vault）----
+function onHostCreated() {
+  emit('vault-changed')
+}
+
 // ---- Forward 删除（单条 / 批量）----
 function deleteForward(forward) {
   openConfirm({
@@ -687,22 +692,22 @@ function chainLabel(forward) {
 </script>
 
 <template>
-  <section class="page-fade">
-    <div class="forwards-layout">
-      <div class="panel-card folder-tree-panel">
-        <div class="panel-head">
-          <h2 class="panel-title mb-0">{{ t('forwards.foldersTitle') }}</h2>
-          <button
-            type="button"
-            class="btn icon-ghost-btn"
-            :title="t('forwards.newFolder')"
-            :aria-label="t('forwards.newFolder')"
-            @click="openFolderDialog(0)"
-          >
-            <i class="bi bi-folder-plus" aria-hidden="true"></i>
-          </button>
-        </div>
+  <section class="page-fade forwards-page">
+    <aside class="folder-rail">
+      <div class="folder-rail-head">
+        <h2 class="folder-rail-title">{{ t('forwards.foldersTitle') }}</h2>
+        <button
+          type="button"
+          class="btn icon-ghost-btn"
+          :title="t('forwards.newFolder')"
+          :aria-label="t('forwards.newFolder')"
+          @click="openFolderDialog(0)"
+        >
+          <i class="bi bi-folder-plus" aria-hidden="true"></i>
+        </button>
+      </div>
 
+      <div class="folder-rail-body">
         <div v-if="!topFolders.length" class="empty-state folder-panel-empty">
           <i class="bi bi-folder2 empty-state-icon" aria-hidden="true"></i>
           <p class="empty-state-text">{{ t('forwards.noFoldersHint') }}</p>
@@ -764,8 +769,9 @@ function chainLabel(forward) {
           </li>
         </ul>
       </div>
+    </aside>
 
-      <div class="panel-card forwards-table-panel">
+    <div class="forwards-content">
         <div v-if="runtimeFetchError" class="alert alert-warning py-2 px-3 mb-2 small" role="alert">
           <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>
           {{ t('forwards.statusUnavailable') }}：{{ runtimeFetchError }}
@@ -914,7 +920,6 @@ function chainLabel(forward) {
             </div>
           </div>
         </div>
-      </div>
     </div>
   </section>
 
@@ -957,6 +962,7 @@ function chainLabel(forward) {
     :validation-error="forwardValidationError"
     @close="forwardModalOpen = false"
     @submit="saveForward"
+    @host-created="onHostCreated"
   />
 
   <ConfirmDialog

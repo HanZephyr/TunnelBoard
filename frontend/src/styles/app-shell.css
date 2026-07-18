@@ -910,6 +910,7 @@
 
 .ov-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -1060,7 +1061,9 @@
 /* ---------- Forwards 页（卡片列表） ---------- */
 .forward-card-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
+  min-width: 0;
 }
 
 .forward-card {
@@ -1068,6 +1071,7 @@
   border: 1px solid var(--tb-border);
   border-radius: var(--tb-radius-card);
   padding: 12px 16px;
+  min-width: 0;
 }
 
 .forward-card.selected {
@@ -1079,6 +1083,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
 }
 
 .forward-card-check {
@@ -1143,6 +1148,7 @@
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
 }
 
 .forward-route-label {
@@ -1221,23 +1227,82 @@
   color: var(--tb-ink-3);
 }
 
-/* ---------- Forwards 页（布局与文件夹导航） ---------- */
-.forwards-layout {
+/* 卡片布局防裁切：容器允许收缩，chip 与操作区不收缩 */
+.route-card-list,
+.route-card,
+.route-card-head,
+.route-card-foot,
+.host-card-grid,
+.host-card,
+.ov-list,
+.ov-forward-card,
+.ov-route-card,
+.ov-error-card {
+  min-width: 0;
+}
+
+.status-chip,
+.status-badge,
+.forward-card-actions,
+.card-corner-actions,
+.forward-card-side,
+.forward-latency {
+  flex-shrink: 0;
+}
+
+/* ---------- Forwards 页（全高双列骨架：文件夹竖轨 + 记录列表） ---------- */
+.forwards-page {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
+  height: calc(100% + 40px);
+  min-height: 0;
+  margin: -20px;
 }
 
-.folder-tree-panel {
-  width: 232px;
-  min-width: 232px;
-  flex: 0 0 232px;
-  padding: 14px 12px;
+/* 左轨：贯穿内容区整高的文件夹轨道（页面骨架，不是卡片） */
+.folder-rail {
+  width: 220px;
+  flex: 0 0 220px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--tb-surface);
+  border-right: 1px solid var(--tb-border);
 }
 
-.forwards-table-panel {
+.folder-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 12px 8px;
+  flex: 0 0 auto;
+}
+
+.folder-rail-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tb-ink-2);
+}
+
+.folder-rail-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 12px 12px;
+}
+
+.folder-rail-body .empty-state {
+  padding: 28px 12px;
+}
+
+/* 右列：记录列表，自己的纵向滚动区 */
+.forwards-content {
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 20px 20px;
 }
 
 .folder-tree {
@@ -1414,11 +1479,6 @@
 
 .empty-state .btn {
   margin-top: 6px;
-}
-
-/* 文件夹面板内的空状态更紧凑 */
-.folder-tree-panel .empty-state {
-  padding: 28px 12px;
 }
 
 /* ---------- 对话框 / 弹层 ---------- */
@@ -1628,6 +1688,57 @@
   cursor: default;
 }
 
+/* 链编辑区内：就地新建主机入口与内联表单 */
+.newhost-toggle {
+  border: 0;
+  background: transparent;
+  color: var(--tb-accent);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  justify-self: start;
+}
+
+.newhost-toggle:hover {
+  background: var(--tb-accent-soft);
+}
+
+.newhost-toggle .bi {
+  font-size: 11px;
+  line-height: 1;
+}
+
+.newhost-form {
+  border: 1px dashed var(--tb-border);
+  border-radius: var(--tb-radius-ctl);
+  background: var(--tb-surface);
+  padding: 10px 12px;
+}
+
+.newhost-footer {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.newhost-footer .form-error {
+  flex: 1;
+  min-width: 0;
+}
+
+.newhost-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
 /* 主机指纹确认框（HostKeyDialog 在用） */
 .hostkey-dialog .action-dialog-message {
   margin-bottom: 10px;
@@ -1805,6 +1916,7 @@
 /* ---------- Routes 页（卡片列表） ---------- */
 .route-card-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -2011,13 +2123,21 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .forwards-layout {
+  .forwards-page {
     flex-direction: column;
+    height: auto;
+    min-height: calc(100% + 40px);
   }
 
-  .folder-tree-panel {
+  .folder-rail {
     width: 100%;
-    min-width: 0;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
+    max-height: 40vh;
+    border-right: none;
+    border-bottom: 1px solid var(--tb-border);
+  }
+
+  .forwards-content {
+    overflow-y: visible;
   }
 }

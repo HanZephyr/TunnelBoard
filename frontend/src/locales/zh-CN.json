@@ -112,7 +112,9 @@
             "remotePort": "远端端口",
             "autoStart": "随应用自动启动",
             "description": "描述",
-            "descriptionPlaceholder": "可选"
+            "descriptionPlaceholder": "可选",
+            "newHostToggle": "新建主机",
+            "newHostSave": "保存并加入"
         },
         "errors": {
             "nameRequired": "名称不能为空。",

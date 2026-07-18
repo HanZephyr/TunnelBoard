@@ -112,7 +112,9 @@
             "remotePort": "遠端連接埠",
             "autoStart": "隨應用程式自動啟動",
             "description": "描述",
-            "descriptionPlaceholder": "選填"
+            "descriptionPlaceholder": "選填",
+            "newHostToggle": "新增主機",
+            "newHostSave": "儲存並加入"
         },
         "errors": {
             "nameRequired": "名稱不可為空。",

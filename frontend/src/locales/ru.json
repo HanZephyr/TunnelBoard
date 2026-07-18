@@ -112,7 +112,9 @@
             "remotePort": "Удалённый порт",
             "autoStart": "Запускать вместе с приложением",
             "description": "Описание",
-            "descriptionPlaceholder": "Необязательно"
+            "descriptionPlaceholder": "Необязательно",
+            "newHostToggle": "Новый хост",
+            "newHostSave": "Сохранить и добавить"
         },
         "errors": {
             "nameRequired": "Имя обязательно.",
