@@ -210,26 +210,26 @@ onBeforeUnmount(() => {
 .logs-toolbar-actions {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .logs-switch-label {
-  font-size: 0.82rem;
-  color: var(--lt-ink);
+  font-size: 13px;
+  color: var(--tb-ink);
 }
 
 .log-warning {
   display: flex;
   align-items: center;
-  gap: 0.45rem;
-  margin-bottom: 0.6rem;
-  padding: 0.42rem 0.6rem;
-  border: 1px solid var(--lt-warning-border);
-  border-radius: var(--lt-radius-md);
-  background: var(--lt-warning-bg);
-  color: var(--lt-warning-ink);
-  font-size: 0.8rem;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--tb-warn) 35%, transparent);
+  border-radius: var(--tb-radius-ctl);
+  background: color-mix(in srgb, var(--tb-warn) 12%, transparent);
+  color: var(--tb-warn);
+  font-size: 12.5px;
 }
 
 .log-warning-text {
@@ -240,38 +240,38 @@ onBeforeUnmount(() => {
 .log-warning .btn-close {
   margin-left: auto;
   flex: 0 0 auto;
-  font-size: 0.68rem;
+  font-size: 11px;
 }
 
 .log-view {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  border: 1px solid var(--lt-border);
-  border-radius: var(--lt-radius-md);
-  background: var(--lt-bg);
-  padding: 0.55rem 0.7rem;
-  font-family: "Cascadia Mono", "JetBrains Mono", Consolas, "SF Mono", Menlo, monospace;
-  font-size: 0.76rem;
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-ctl);
+  background: var(--tb-console-bg);
+  padding: 10px 12px;
+  font-family: var(--tb-mono);
+  font-size: 12px;
   line-height: 1.5;
 }
 
 .log-line {
   white-space: pre-wrap;
   word-break: break-all;
-  color: var(--lt-ink);
+  color: var(--tb-console-ink);
 }
 
 .log-line.log-line-error {
-  color: var(--lt-danger-ink);
+  color: var(--tb-console-danger);
 }
 
 .log-line.log-line-warn {
-  color: var(--lt-warning-ink);
+  color: var(--tb-console-warn);
 }
 
 .log-empty {
-  color: var(--lt-muted);
-  font-size: 0.82rem;
+  color: var(--tb-ink-3);
+  font-size: 13px;
 }
 </style>

@@ -214,7 +214,13 @@ function deleteHost(host) {
         <h2 class="panel-title mb-0">{{ t('hosts.tableTitle') }}</h2>
       </div>
 
-      <div v-if="!sortedHosts.length" class="folder-tree-empty py-4">{{ t('hosts.empty') }}</div>
+      <div v-if="!sortedHosts.length" class="empty-state">
+        <i class="bi bi-hdd-network empty-state-icon" aria-hidden="true"></i>
+        <p class="empty-state-text">{{ t('hosts.empty') }}</p>
+        <button type="button" class="btn btn-primary header-action-btn" @click="openNewHost">
+          <i class="bi bi-plus-lg" aria-hidden="true"></i>{{ t('app.header.newHost') }}
+        </button>
+      </div>
 
       <div v-else class="page-table-wrap hosts-table-wrap">
         <table class="table hosts-table align-middle mb-0">
@@ -234,16 +240,17 @@ function deleteHost(host) {
               <td><span class="status-badge">{{ authLabel(host.authType) }}</span></td>
               <td><TooltipText :text="host.notes || t('app.common.none')" /></td>
               <td>
-                <div class="d-flex gap-1">
+                <div class="row-actions">
                   <IconActionButton
                     icon-class="bi-pencil"
+                    button-class="icon-ghost-btn"
                     :title="t('app.common.edit')"
                     :aria-label="t('app.common.edit')"
                     @click="editHost(host)"
                   />
                   <IconActionButton
                     icon-class="bi-trash3"
-                    button-class="btn-outline-danger"
+                    button-class="icon-ghost-btn danger"
                     :title="t('app.common.delete')"
                     :aria-label="t('app.common.delete')"
                     @click="deleteHost(host)"

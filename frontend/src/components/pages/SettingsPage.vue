@@ -692,8 +692,8 @@ async function onRestoreBackup() {
             </div>
           </div>
 
-          <div class="border border-danger rounded p-3">
-            <div class="config-name text-danger">{{ t('settings.backup.restoreTitle') }} · {{ t('settings.backup.restoreDanger') }}</div>
+          <div class="danger-zone">
+            <div class="config-name">{{ t('settings.backup.restoreTitle') }} · {{ t('settings.backup.restoreDanger') }}</div>
             <div class="config-desc mb-2">{{ t('settings.backup.restoreDesc') }}</div>
             <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
               <button type="button" class="btn btn-sm btn-outline-danger flex-shrink-0" @click="onSelectRestoreFile">

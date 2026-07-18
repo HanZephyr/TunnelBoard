@@ -11,6 +11,7 @@ import {
 import { callBackend, errorMessage } from '../../utils/backend'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
+import StatusChip from '../common/StatusChip.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
 import RouteModal from '../modals/RouteModal.vue'
 
@@ -299,29 +300,41 @@ async function confirmDeleteRoute() {
     <div class="panel-card">
       <div class="panel-head">
         <h2 class="panel-title mb-0">{{ t('routes.tableTitle') }}</h2>
-        <button type="button" class="btn btn-sm btn-outline-primary" @click="openNewRoute">
-          <i class="bi bi-plus-lg me-1" aria-hidden="true"></i>{{ t('routes.newRoute') }}
+        <button
+          type="button"
+          class="btn icon-ghost-btn"
+          :title="t('routes.newRoute')"
+          :aria-label="t('routes.newRoute')"
+          @click="openNewRoute"
+        >
+          <i class="bi bi-plus-lg" aria-hidden="true"></i>
         </button>
       </div>
 
-      <div v-if="!sortedRoutes.length" class="folder-tree-empty py-4">{{ t('routes.empty') }}</div>
+      <div v-if="!sortedRoutes.length" class="empty-state">
+        <i class="bi bi-globe2 empty-state-icon" aria-hidden="true"></i>
+        <p class="empty-state-text">{{ t('routes.empty') }}</p>
+        <button type="button" class="btn btn-primary header-action-btn" @click="openNewRoute">
+          <i class="bi bi-plus-lg" aria-hidden="true"></i>{{ t('app.header.newRoute') }}
+        </button>
+      </div>
 
-      <div v-else class="page-table-wrap">
-        <table class="table align-middle mb-0">
+      <div v-else class="page-table-wrap routes-table-wrap">
+        <table class="table routes-table align-middle mb-0">
           <thead>
             <tr>
               <th>{{ t('routes.table.domain') }}</th>
               <th>{{ t('routes.table.forward') }}</th>
-              <th>{{ t('routes.table.hosts') }}</th>
-              <th>{{ t('routes.table.caddy') }}</th>
-              <th>{{ t('routes.table.upstream') }}</th>
+              <th class="route-switch-cell">{{ t('routes.table.hosts') }}</th>
+              <th class="route-switch-cell">{{ t('routes.table.caddy') }}</th>
+              <th class="route-upstream-cell">{{ t('routes.table.upstream') }}</th>
               <th>{{ t('routes.table.systemStatus') }}</th>
-              <th>{{ t('routes.table.actions') }}</th>
+              <th class="routes-action-cell">{{ t('routes.table.actions') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="route in sortedRoutes" :key="route.id">
-              <td><TooltipText :text="route.domain" /></td>
+              <td class="route-domain-cell"><TooltipText :text="route.domain" /></td>
               <td><TooltipText :text="forwardName(route.forwardId)" /></td>
               <td>
                 <div class="form-check form-switch mb-0">
@@ -347,37 +360,41 @@ async function confirmDeleteRoute() {
                   />
                 </div>
               </td>
-              <td><TooltipText :text="upstreamLabel(route)" /></td>
+              <td>
+                <span
+                  class="status-badge font-mono chip-ellipsis"
+                  :class="{ running: route.upstreamScheme === 'https' }"
+                  :title="upstreamLabel(route)"
+                >
+                  {{ upstreamLabel(route) }}
+                </span>
+              </td>
               <td>
                 <div class="d-flex align-items-center gap-1 flex-wrap">
-                  <span
+                  <StatusChip
                     v-if="route.hostsEnabled"
-                    class="status-badge"
-                    :class="statusOf(route.id)?.hostsApplied ? 'running' : 'stopped'"
-                  >
-                    {{
+                    :status="statusOf(route.id)?.hostsApplied ? 'running' : 'stopped'"
+                    :label="
                       statusOf(route.id)?.hostsApplied
                         ? t('routes.status.hostsApplied')
                         : t('routes.status.hostsNotApplied')
-                    }}
-                  </span>
-                  <span
+                    "
+                  />
+                  <StatusChip
                     v-if="route.caddyEnabled"
-                    class="status-badge"
-                    :class="statusOf(route.id)?.caddyRunning ? 'running' : 'stopped'"
-                  >
-                    {{
+                    :status="statusOf(route.id)?.caddyRunning ? 'running' : 'stopped'"
+                    :label="
                       statusOf(route.id)?.caddyRunning
                         ? t('routes.status.caddyRunning')
                         : t('routes.status.caddyStopped')
-                    }}
-                  </span>
+                    "
+                  />
                   <span v-if="statusOf(route.id)?.portConflict" class="status-badge busy">
                     <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>{{ t('routes.status.portConflict') }}
                   </span>
                   <i
                     v-if="statusOf(route.id)?.caTrusted"
-                    class="bi bi-shield-lock-fill text-success"
+                    class="bi bi-shield-lock-fill ca-trusted-icon"
                     :title="t('routes.status.caTrusted')"
                     aria-hidden="true"
                   ></i>
@@ -387,16 +404,17 @@ async function confirmDeleteRoute() {
                 </div>
               </td>
               <td>
-                <div class="d-flex gap-1">
+                <div class="row-actions">
                   <IconActionButton
                     icon-class="bi-pencil"
+                    button-class="icon-ghost-btn"
                     :title="t('app.common.edit')"
                     :aria-label="t('app.common.edit')"
                     @click="editRoute(route)"
                   />
                   <IconActionButton
                     icon-class="bi-trash3"
-                    button-class="btn-outline-danger"
+                    button-class="icon-ghost-btn danger"
                     :title="t('app.common.delete')"
                     :aria-label="t('app.common.delete')"
                     @click="deleteRoute(route)"
@@ -444,14 +462,15 @@ async function confirmDeleteRoute() {
           </thead>
           <tbody>
             <tr v-for="record in dnsConfirm.hostsRecords" :key="record.domain">
-              <td>{{ record.domain }}</td>
-              <td>{{ record.ip }}</td>
+              <td class="font-mono">{{ record.domain }}</td>
+              <td class="font-mono">{{ record.ip }}</td>
             </tr>
           </tbody>
         </table>
-        <p class="form-error mb-0">
-          <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>{{ t('routes.confirmations.dnsOverrideWarning') }}
-        </p>
+        <div class="inline-notice" role="alert">
+          <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
+          <span>{{ t('routes.confirmations.dnsOverrideWarning') }}</span>
+        </div>
       </div>
       <div class="dialog-footer">
         <button type="button" class="btn btn-outline-secondary" :disabled="dnsConfirm.busy" @click="closeDnsConfirm">

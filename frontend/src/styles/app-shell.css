@@ -31,55 +31,12 @@
   --tb-font: -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
   --tb-mono: ui-monospace, "Cascadia Code", Consolas, monospace;
   --tb-scroll-thumb: #c6cfd9;
-
-  /* 旧变量别名：供尚未重设计的页面/局部样式（如 LogsPage scoped）平滑过渡 */
-  --lt-bg: var(--tb-bg);
-  --lt-bg-radial-a: transparent;
-  --lt-bg-radial-b: transparent;
-  --lt-surface: var(--tb-surface);
-  --lt-surface-soft: var(--tb-surface-2);
-  --lt-surface-glass: var(--tb-surface);
-  --lt-ink: var(--tb-ink);
-  --lt-muted: var(--tb-ink-2);
-  --lt-border: var(--tb-border);
-  --lt-border-strong: var(--tb-border);
-  --lt-shadow-soft: none;
-  --lt-input-bg: var(--tb-surface);
-  --lt-input-border: var(--tb-border);
-  --lt-input-focus-border: var(--tb-accent);
-  --lt-input-focus-ring: var(--tb-accent-soft);
-  --lt-table-head: var(--tb-ink-3);
-  --lt-table-head-border: var(--tb-border);
-  --lt-table-row-border: var(--tb-border);
-  --lt-scroll-thumb: var(--tb-scroll-thumb);
-  --lt-scroll-track: transparent;
-  --lt-accent-hover: var(--tb-surface-2);
-  --lt-accent-active: var(--tb-accent-soft);
-  --lt-accent-border: var(--tb-accent-soft);
-  --lt-accent-ink: var(--tb-accent);
-  --lt-positive-bg: color-mix(in srgb, var(--tb-ok) 12%, transparent);
-  --lt-positive-border: color-mix(in srgb, var(--tb-ok) 35%, transparent);
-  --lt-positive-ink: var(--tb-ok);
-  --lt-warning-bg: color-mix(in srgb, var(--tb-warn) 12%, transparent);
-  --lt-warning-border: color-mix(in srgb, var(--tb-warn) 35%, transparent);
-  --lt-warning-ink: var(--tb-warn);
-  --lt-danger-bg: color-mix(in srgb, var(--tb-danger) 12%, transparent);
-  --lt-danger-border: color-mix(in srgb, var(--tb-danger) 35%, transparent);
-  --lt-danger-ink: var(--tb-danger);
-  --lt-neutral-bg: var(--tb-surface-2);
-  --lt-neutral-border: var(--tb-border);
-  --lt-neutral-ink: var(--tb-ink-2);
-  --lt-overlay-bg: rgba(15, 23, 42, 0.45);
-  --lt-dialog-shadow: var(--tb-shadow-pop);
-  --lt-inline-bg: var(--tb-surface-2);
-  --lt-inline-border: var(--tb-border);
-  --lt-hint-bg: var(--tb-surface-2);
-  --lt-hint-border: var(--tb-border);
-  --lt-hint-ink: var(--tb-ink-2);
-  --lt-radius-sm: 6px;
-  --lt-radius-md: var(--tb-radius-ctl);
-  --lt-radius-lg: var(--tb-radius-card);
-  --lt-radius-xl: var(--tb-radius-card);
+  --tb-overlay-bg: rgba(15, 23, 42, 0.35);
+  /* 日志控制台：两种主题下都用深色底，贴近终端观感 */
+  --tb-console-bg: #151b24;
+  --tb-console-ink: #dbe4ee;
+  --tb-console-warn: #f2b04e;
+  --tb-console-danger: #f26d7f;
 }
 
 [data-theme="dark"] {
@@ -101,8 +58,9 @@
 
   --tb-shadow-pop: 0 8px 30px rgba(0, 0, 0, 0.45);
   --tb-scroll-thumb: #2b3949;
-
-  --lt-overlay-bg: rgba(3, 7, 12, 0.62);
+  --tb-overlay-bg: rgba(15, 23, 42, 0.55);
+  --tb-console-bg: #0d1117;
+  --tb-console-ink: #dbe4ee;
 }
 
 /* ---------- 应用外壳骨架 ---------- */
@@ -485,6 +443,7 @@
 .app-shell .btn-sm {
   --bs-btn-border-radius: var(--tb-radius-ctl);
   --bs-btn-font-size: 12.5px;
+  min-height: 34px;
 }
 
 .app-shell .btn-primary {
@@ -663,7 +622,7 @@
 
 .app-shell .form-control-sm,
 .app-shell .form-select-sm {
-  min-height: 30px;
+  min-height: 34px;
   border-radius: var(--tb-radius-ctl);
 }
 
@@ -1178,7 +1137,7 @@
   position: fixed;
   inset: 0;
   z-index: 999;
-  background: var(--lt-overlay-bg);
+  background: var(--tb-overlay-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1211,7 +1170,7 @@
 }
 
 .dialog-body {
-  padding: 14px 20px 16px;
+  padding: 20px;
   overflow-y: auto;
   min-height: 0;
 }
@@ -1258,10 +1217,6 @@
 
 .compact-dialog .dialog-title {
   font-size: 16px;
-}
-
-.compact-dialog .dialog-body {
-  padding: 14px 20px 16px;
 }
 
 .compact-dialog .form-label {
@@ -1484,6 +1439,124 @@
 .config-message {
   color: var(--tb-ink-2);
   font-size: 13px;
+}
+
+/* 危险区（完全还原等破坏性操作）：danger 左边框卡片 */
+.danger-zone {
+  border: 1px solid color-mix(in srgb, var(--tb-danger) 35%, transparent);
+  border-left: 3px solid var(--tb-danger);
+  border-radius: var(--tb-radius-card);
+  background: color-mix(in srgb, var(--tb-danger) 4%, transparent);
+  padding: 16px;
+}
+
+.danger-zone .config-name {
+  color: var(--tb-danger);
+}
+
+/* Settings 预览计数等 badge：对齐中性 chip */
+.app-shell .badge.text-bg-secondary {
+  background: var(--tb-surface-2);
+  color: var(--tb-ink-2);
+  border-radius: var(--tb-radius-chip);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+}
+
+/* Bootstrap 结构模态框（Settings 更新检查结果）：对齐 overlay/dialog-card 语言 */
+.app-shell .modal-content {
+  background: var(--tb-surface);
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-card);
+  box-shadow: var(--tb-shadow-pop);
+  color: var(--tb-ink);
+}
+
+.app-shell .modal-header {
+  border-bottom: 1px solid var(--tb-border);
+}
+
+.app-shell .modal-footer {
+  border-top: 1px solid var(--tb-border);
+}
+
+.app-shell .modal-backdrop {
+  --bs-backdrop-bg: #0f172a;
+  --bs-backdrop-opacity: 0.35;
+}
+
+[data-theme="dark"] .app-shell .modal-backdrop {
+  --bs-backdrop-opacity: 0.55;
+}
+
+/* 警告/提示内联块（如 DNS 覆盖警示） */
+.inline-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--tb-radius-ctl);
+  background: color-mix(in srgb, var(--tb-warn) 12%, transparent);
+  color: var(--tb-warn);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.inline-notice .bi {
+  line-height: 1.5;
+}
+
+/* 等宽文本（域名、连接串等） */
+.font-mono {
+  font-family: var(--tb-mono);
+  font-size: 12.5px;
+}
+
+/* 可截断的 chip：内容超出列宽时省略号收尾 */
+.status-badge.chip-ellipsis {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
+/* ---------- Routes 页 ---------- */
+.routes-table-wrap {
+  overflow-x: auto;
+}
+
+.routes-table {
+  width: 100%;
+  min-width: 780px;
+  table-layout: fixed;
+}
+
+.routes-table .route-domain-cell {
+  font-family: var(--tb-mono);
+  font-size: 12.5px;
+}
+
+.routes-table .route-switch-cell {
+  width: 64px;
+  max-width: 64px;
+}
+
+.routes-table .route-upstream-cell {
+  width: 140px;
+  max-width: 140px;
+}
+
+.routes-table .routes-action-cell {
+  width: 72px;
+  max-width: 72px;
+}
+
+.ca-trusted-icon {
+  color: var(--tb-ok);
+  font-size: 14px;
+  line-height: 1;
 }
 
 /* ---------- 全局 toast ---------- */
