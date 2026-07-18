@@ -4,6 +4,7 @@ package helper
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -33,6 +34,7 @@ func CertutilTrustCA(certDER []byte, sha256 string) error {
 	if err != nil {
 		return fmt.Errorf("helper: certutil -addstore Root: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	slog.Info("local ca trusted", "sha256_prefix", sha256[:12])
 	return nil
 }
 
@@ -51,6 +53,7 @@ func CertutilUntrustCA(sha256 string) error {
 	if err != nil {
 		return fmt.Errorf("helper: certutil -delstore Root: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	slog.Info("local ca untrusted", "sha256_prefix", sha256[:12])
 	return nil
 }
 

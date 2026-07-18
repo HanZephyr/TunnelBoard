@@ -3,6 +3,7 @@ package helper
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -71,6 +72,7 @@ func WriteManagedHosts(path string, entries []route.HostEntry) error {
 		os.Remove(tmp)
 		return rollback(path, bak, fmt.Errorf("helper: replace hosts file: %w", err))
 	}
+	slog.Info("managed hosts written", "entries", len(entries), "path", path)
 	return nil
 }
 

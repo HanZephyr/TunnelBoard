@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"strings"
 
@@ -70,7 +71,13 @@ func handlePipeConn(conn net.Conn, env Environment) {
 		writePipeJSON(conn, Response{OK: false, Error: "helper: bad request framing: " + err.Error()})
 		return
 	}
-	writePipeJSON(conn, HandleRequest(req, env))
+	resp := HandleRequest(req, env)
+	if resp.OK {
+		slog.Info("privileged op handled", "op", req.Op)
+	} else {
+		slog.Error("privileged op rejected", "op", req.Op, "err", resp.Error)
+	}
+	writePipeJSON(conn, resp)
 }
 
 func writePipeJSON(conn net.Conn, resp Response) {

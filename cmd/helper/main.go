@@ -34,11 +34,13 @@ func main() {
 				break
 			}
 		}
+		helper.InstallEventSource()
 		err = helper.InstallService(ownerSID)
 	case *uninstall:
 		err = helper.UninstallService()
 	default:
 		_ = serve // 服务上下文由 RunServiceMain 自行检测；-serve 仅为语义标记
+		helper.SetupEventLogging()
 		hostsPath := filepath.Join(os.Getenv("SystemRoot"), `System32\drivers\etc\hosts`)
 		err = helper.RunServiceMain(helper.ProductionEnvironment(hostsPath, version))
 	}
