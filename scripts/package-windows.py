@@ -55,12 +55,11 @@ def main() -> int:
     run(["corepack", "pnpm", "build"], cwd=ROOT / "frontend")
     # 2. 钉版 Caddy（不存在或哈希不符时下载校验）
     run(["uv", "run", "scripts/fetch-caddy.py"])
-    # 3. 编译主程序（跳过前端构建）。不用 -clean：它只是目录洁癖，但当用户终端把
-    # build/bin 当作当前目录时会让整个打包失败；改为覆盖式输出，助手与 Caddy 同样覆盖复制。
-    run(["wails", "build", "-platform", "windows/amd64", "-s"])
-    # 4. 编译 helper
+    # 3. 先编译 helper 与主程序（跳过前端构建；helper 先行可避免主程序构建失败时 helper 滞留旧版）。
+    # 不用 -clean：它只是目录洁癖，但当用户终端把 build/bin 当作当前目录时会让整个打包失败。
     BIN.mkdir(parents=True, exist_ok=True)
     run([GO, "build", "-o", str(BIN / "tunnelboard-helper.exe"), "./cmd/helper"])
+    run(["wails", "build", "-platform", "windows/amd64", "-s"])
     # 5. 复制 Caddy 到 exe 同级并校验
     caddy_dst = BIN / "caddy"
     caddy_dst.mkdir(exist_ok=True)
