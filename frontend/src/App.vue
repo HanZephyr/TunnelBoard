@@ -24,8 +24,8 @@ const { t, locale } = useI18n()
 const pages = computed(() => [
   { key: 'forwards', title: t('app.sidebar.forwards'), subtitle: t('app.sidebar.forwardsSubtitle'), icon: 'bi-diagram-3' },
   { key: 'hosts', title: t('app.sidebar.hosts'), subtitle: t('app.sidebar.hostsSubtitle'), icon: 'bi-hdd-network' },
-  { key: 'settings', title: t('app.sidebar.settings'), subtitle: t('app.sidebar.settingsSubtitle'), icon: 'bi-sliders2' },
-  { key: 'routes', title: t('app.sidebar.routes'), subtitle: t('app.sidebar.routesSubtitle'), icon: 'bi-globe2' }
+  { key: 'routes', title: t('app.sidebar.routes'), subtitle: t('app.sidebar.routesSubtitle'), icon: 'bi-globe2' },
+  { key: 'settings', title: t('app.sidebar.settings'), subtitle: t('app.sidebar.settingsSubtitle'), icon: 'bi-sliders2' }
 ])
 
 const savedTheme = typeof window !== 'undefined' ? window.localStorage.getItem('tunnelboard.theme') : null
