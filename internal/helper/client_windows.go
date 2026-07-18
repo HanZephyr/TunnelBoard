@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	winio "github.com/Microsoft/go-winio"
@@ -45,6 +46,13 @@ func (c *Client) Call(req Request) (Response, error) {
 	var resp Response
 	if err := json.NewDecoder(bufio.NewReader(conn)).Decode(&resp); err != nil {
 		return Response{}, fmt.Errorf("helper: read response: %w", err)
+	}
+	if req.Op != OpPing {
+		if resp.OK {
+			slog.Info("privileged op succeeded", "op", req.Op)
+		} else {
+			slog.Error("privileged op failed", "op", req.Op, "err", resp.Error)
+		}
 	}
 	return resp, nil
 }

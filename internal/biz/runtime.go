@@ -3,6 +3,7 @@ package biz
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -116,9 +117,11 @@ func (b *RuntimeBiz) Start(id int) error {
 		return err
 	}
 
+	slog.Info("forward start requested", "forward_id", id, "name", fw.Name)
 	run := b.newRun(fw, hosts, b.hostKeyVerifier())
 	if err := run.Start(); err != nil {
 		b.setState(id, RuntimeStateError, err.Error())
+		slog.Error("forward start failed", "forward_id", id, "name", fw.Name, "err", err)
 		return err
 	}
 
@@ -138,6 +141,7 @@ func (b *RuntimeBiz) Start(id int) error {
 	b.mu.Unlock()
 
 	go b.watch(id, run)
+	slog.Info("forward started", "forward_id", id, "name", fw.Name)
 	return nil
 }
 
@@ -165,6 +169,7 @@ func (b *RuntimeBiz) StartAutoStart() (map[int]error, error) {
 			ids = append(ids, fw.ID)
 		}
 	}
+	slog.Info("auto start forwards", "count", len(ids))
 	return b.StartMany(ids), nil
 }
 
@@ -180,6 +185,7 @@ func (b *RuntimeBiz) Stop(id int) error {
 	if !ok {
 		return nil
 	}
+	slog.Info("forward stop requested", "forward_id", id)
 	return run.Stop()
 }
 
@@ -193,6 +199,7 @@ func (b *RuntimeBiz) Shutdown() {
 		b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateStopped}
 	}
 	b.mu.Unlock()
+	slog.Info("forward runtime shutdown", "count", len(runs))
 	for _, run := range runs {
 		_ = run.Stop()
 	}
@@ -259,8 +266,10 @@ func (b *RuntimeBiz) watch(id int, run runHandle) {
 				st.Status = RuntimeStateError
 				st.LastError = err.Error()
 				b.states[id] = st
+				slog.Warn("forward finalized with error", "forward_id", id, "err", err)
 			} else {
 				b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateStopped}
+				slog.Info("forward finalized stopped", "forward_id", id)
 			}
 			return
 		}
@@ -278,12 +287,14 @@ func (b *RuntimeBiz) handleEvent(id int, run runHandle, ev forward.RuntimeEvent)
 		if ev.Err != nil {
 			st.LastError = ev.Err.Error()
 		}
+		slog.Warn("forward disconnected, reconnecting", "forward_id", id, "err", ev.Err)
 	case forward.RuntimeEventReconnected:
 		st.Status = RuntimeStateRunning
 		st.LastError = ""
 		if latency, ok := run.LastLatency(); ok {
 			st.LatencyMs = latency.Milliseconds()
 		}
+		slog.Info("forward reconnected", "forward_id", id)
 	}
 	b.states[id] = st
 }

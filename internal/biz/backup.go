@@ -3,6 +3,7 @@ package biz
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -59,6 +60,7 @@ func (b *BackupBiz) CreateBackup(password string, includeKeyFiles bool) ([]byte,
 	if err != nil {
 		return nil, nil, err
 	}
+	slog.Info("backup created", "include_key_files", includeKeyFiles, "key_files", len(keyFiles), "warnings", len(warnings))
 	return raw, warnings, nil
 }
 
@@ -287,6 +289,12 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 	if err != nil {
 		return ImportSummary{}, err
 	}
+	slog.Info("backup import applied",
+		"folder", folderName,
+		"skipped_hosts", summary.SkippedHosts,
+		"flattened_folders", summary.FlattenedFolders,
+		"routes_deactivated", summary.RoutesDeactivated,
+		"imported", summary.Imported)
 	return summary, nil
 }
 
@@ -307,6 +315,9 @@ func (b *BackupBiz) RestoreBackup(raw []byte, password string, confirmed bool) e
 		*d = imported
 		return nil
 	})
+	if err == nil {
+		slog.Warn("vault fully restored from backup")
+	}
 	return err
 }
 

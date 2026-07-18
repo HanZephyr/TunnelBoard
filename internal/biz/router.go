@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -140,8 +141,10 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 
 	// 需要特权操作的场景：写 hosts、信任/撤销 CA；否则完全无需 helper。
 	needHelper := len(entries) > 0 || len(prevEntries) > 0 || len(caddyConfig) > 0 || data.Prefs.CATrustedSHA256 != ""
+	slog.Info("route apply planned", "hosts_entries", len(entries), "caddy_enabled", len(caddyConfig) > 0, "ca_trusted", data.Prefs.CATrustedSHA256 != "")
 	if needHelper {
 		if err := b.helper.EnsureInstalled(); err != nil {
+			slog.Error("privileged helper unavailable", "err", err)
 			return result, fmt.Errorf("privileged helper unavailable: %w", err)
 		}
 	}
@@ -149,8 +152,10 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 	hostsChanged := !entriesEqual(entries, prevEntries)
 	if hostsChanged {
 		if err := b.callHelper(helper.Request{Op: helper.OpApplyManagedHosts, Hosts: entries}); err != nil {
+			slog.Error("apply managed hosts failed", "err", err)
 			return result, fmt.Errorf("apply managed hosts: %w", err)
 		}
+		slog.Info("managed hosts applied", "entries", len(entries))
 		result.HostsApplied = true
 	} else {
 		result.HostsApplied = true
@@ -160,13 +165,17 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 	if len(caddyConfig) == 0 {
 		if prevRunning {
 			if err := b.caddy.Stop(); err != nil {
+				slog.Error("stop caddy failed", "err", err)
 				return result, fmt.Errorf("stop caddy: %w", err)
 			}
+			slog.Info("caddy stopped (no enabled routes)")
 		}
 		if data.Prefs.CATrustedSHA256 != "" {
 			if err := b.callHelper(helper.Request{Op: helper.OpUntrustLocalCA, CertSHA256: data.Prefs.CATrustedSHA256}); err != nil {
+				slog.Error("untrust local ca failed", "err", err)
 				return result, fmt.Errorf("untrust local ca: %w", err)
 			}
+			slog.Info("local ca untrusted")
 			if err := b.setCATrusted(""); err != nil {
 				return result, err
 			}
@@ -176,14 +185,17 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 
 	if err := b.caddy.DiagnosePort(); err != nil {
 		// 443 冲突：不启动 Caddy，保留 hosts-only 访问；非致命。
+		slog.Warn("caddy port conflict, route stays hosts-only", "err", err)
 		result.PortConflict = err.Error()
 		return result, nil
 	}
 	prevConfig, _ := os.ReadFile(b.caddyConfigPth)
 	if err := b.caddy.Reload(caddyConfig); err != nil {
 		b.rollbackHosts(prevEntries, hostsChanged)
+		slog.Error("reload caddy failed", "err", err)
 		return result, fmt.Errorf("reload caddy: %w", err)
 	}
+	slog.Info("caddy config reloaded")
 	result.CaddyApplied = true
 
 	if data.Prefs.CATrustedSHA256 == "" {
@@ -191,6 +203,7 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 		if err != nil {
 			b.rollbackCaddy(prevRunning, prevConfig)
 			b.rollbackHosts(prevEntries, hostsChanged)
+			slog.Error("read local ca failed", "err", err)
 			return result, fmt.Errorf("read local ca: %w", err)
 		}
 		sum := sha256.Sum256(der)
@@ -198,8 +211,10 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 		if err := b.callHelper(helper.Request{Op: helper.OpTrustLocalCA, CertDER: der, CertSHA256: fp}); err != nil {
 			b.rollbackCaddy(prevRunning, prevConfig)
 			b.rollbackHosts(prevEntries, hostsChanged)
+			slog.Error("trust local ca failed", "err", err)
 			return result, fmt.Errorf("trust local ca: %w", err)
 		}
+		slog.Info("local ca trusted", "sha256_prefix", fp[:12])
 		if err := b.setCATrusted(fp); err != nil {
 			return result, err
 		}
@@ -287,14 +302,17 @@ func (b *RouterBiz) setCATrusted(fp string) error {
 
 func (b *RouterBiz) rollbackHosts(prevEntries []route.HostEntry, hostsChanged bool) {
 	if hostsChanged {
+		slog.Warn("rollback managed hosts to previous entries", "entries", len(prevEntries))
 		_ = b.callHelper(helper.Request{Op: helper.OpApplyManagedHosts, Hosts: prevEntries})
 	}
 }
 
 func (b *RouterBiz) rollbackCaddy(prevRunning bool, prevConfig []byte) {
 	if prevRunning && len(prevConfig) > 0 {
+		slog.Warn("rollback caddy to previous config")
 		_ = b.caddy.Reload(prevConfig)
 	} else if !prevRunning {
+		slog.Warn("rollback caddy: stop process")
 		_ = b.caddy.Stop()
 	}
 }
