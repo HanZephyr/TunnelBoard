@@ -164,7 +164,7 @@ func TestApplyRouteCaddyTrustFlow(t *testing.T) {
 	fx := newRouterFixture(t)
 	fw := fx.seedForward(t, "local", 8080)
 	fx.caddy.rootCA = []byte("fake-der")
-	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", CaddyEnabled: true})
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,7 @@ func TestRemoveRouteStopsCaddyAndUntrusts(t *testing.T) {
 	fx := newRouterFixture(t)
 	fw := fx.seedForward(t, "local", 8080)
 	fx.caddy.running = true
-	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", CaddyEnabled: true})
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +353,7 @@ func TestPreviewRoute(t *testing.T) {
 func TestResumeCaddyStartsWhenEnabled(t *testing.T) {
 	fx := newRouterFixture(t)
 	fw := fx.seedForward(t, "local", 8080)
-	if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", CaddyEnabled: true}); err != nil {
+	if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := fx.store.Update(func(d *model.VaultData) error {
@@ -399,7 +399,7 @@ func TestResumeCaddyPortConflict(t *testing.T) {
 	fx := newRouterFixture(t)
 	fw := fx.seedForward(t, "local", 8080)
 	fx.caddy.diagnoseErr = errors.New("caddy: 127.0.0.1:443 unavailable: bind: address in use")
-	if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", CaddyEnabled: true}); err != nil {
+	if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := fx.router.ResumeCaddy(); err != nil {
@@ -416,7 +416,7 @@ func TestResumeCaddyTrustsCAOnlyWhenHelperReachable(t *testing.T) {
 		fx := newRouterFixture(t)
 		fw := fx.seedForward(t, "local", 8080)
 		fx.caddy.rootCA = []byte("fake-der")
-		if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", CaddyEnabled: true}); err != nil {
+		if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true}); err != nil {
 			t.Fatal(err)
 		}
 		return fx
