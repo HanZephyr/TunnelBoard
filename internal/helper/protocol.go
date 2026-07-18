@@ -93,7 +93,7 @@ func ValidateRequest(req Request) error {
 		if len(req.CertDER) > maxCertDERBytes {
 			return fmt.Errorf("helper: certificate DER too large: %d > %d bytes", len(req.CertDER), maxCertDERBytes)
 		}
-		return ValidateTunnelBoardCA(req.CertDER, req.CertSHA256)
+		return ValidateLocalCA(req.CertDER, req.CertSHA256)
 	case OpUntrustLocalCA:
 		return validateSHA256Hex(req.CertSHA256)
 	default:

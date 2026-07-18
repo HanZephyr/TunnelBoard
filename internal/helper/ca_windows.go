@@ -10,10 +10,11 @@ import (
 	"strings"
 )
 
-// CertutilTrustCA 把 TunnelBoard 本地 CA 写入本地计算机的 Root 存储（需管理员/SYSTEM，经 certutil）。
-// 安装前再次执行 ValidateTunnelBoardCA 作为防御纵深；certutil 非零退出时错误附带其输出。
+// CertutilTrustCA 把本地 CA 写入本地计算机的 Root 存储（需管理员/SYSTEM，经 certutil）。
+// 安装前再次执行 ValidateLocalCA 作为防御纵深；成功后记录指纹到 trusted-ca，
+// 使 UntrustCA 只能撤销本工具自己信任过的那张 CA。certutil 非零退出时错误附带其输出。
 func CertutilTrustCA(certDER []byte, sha256 string) error {
-	if err := ValidateTunnelBoardCA(certDER, sha256); err != nil {
+	if err := ValidateLocalCA(certDER, sha256); err != nil {
 		return err
 	}
 	tmp, err := os.CreateTemp("", "tunnelboard-ca-*.cer")
@@ -34,24 +35,30 @@ func CertutilTrustCA(certDER []byte, sha256 string) error {
 	if err != nil {
 		return fmt.Errorf("helper: certutil -addstore Root: %w: %s", err, strings.TrimSpace(string(out)))
 	}
+	if err := writeCAFingerprint(sha256); err != nil {
+		return fmt.Errorf("helper: record trusted ca fingerprint: %w", err)
+	}
 	slog.Info("local ca trusted", "sha256_prefix", sha256[:12])
 	return nil
 }
 
-// CertutilUntrustCA 按 SHA-256 指纹从 Root 存储删除对应 CA（需管理员/SYSTEM，经 certutil）。
-// 红线：只删 TunnelBoard 本地 CA——先查存储并确认 Subject 含 "TunnelBoard"，否则拒绝，
-// 防止经管道任意请求删除系统其他根证书。
+// CertutilUntrustCA 按 SHA-256 指纹从 Root 存储删除本地 CA（需管理员/SYSTEM，经 certutil）。
+// 红线：只撤销 helper 自己信任过的那张 CA——指纹必须与 trusted-ca 记录一致，
+// 防止借管道删除系统其他根证书。
 func CertutilUntrustCA(sha256 string) error {
-	lookup, err := exec.Command("certutil", "-store", "Root", sha256).CombinedOutput()
+	trusted, err := readCAFingerprint()
 	if err != nil {
-		return fmt.Errorf("helper: certutil -store Root lookup: %w: %s", err, strings.TrimSpace(string(lookup)))
+		return fmt.Errorf("helper: no trusted ca fingerprint recorded: %w", err)
 	}
-	if !strings.Contains(string(lookup), "TunnelBoard") {
-		return fmt.Errorf("helper: refusing to delete non-TunnelBoard CA %s", sha256)
+	if trusted != sha256 {
+		return fmt.Errorf("helper: refusing to delete ca %s (not installed by TunnelBoard)", sha256)
 	}
 	out, err := exec.Command("certutil", "-delstore", "Root", sha256).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("helper: certutil -delstore Root: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if err := clearCAFingerprint(); err != nil {
+		return fmt.Errorf("helper: clear trusted ca fingerprint: %w", err)
 	}
 	slog.Info("local ca untrusted", "sha256_prefix", sha256[:12])
 	return nil
