@@ -17,9 +17,9 @@
             "logsSubtitle": "Журналы приложения и Caddy в реальном времени"
         },
         "header": {
-            "newForward": "+ Новый форвард",
-            "newHost": "+ Новый хост",
-            "newRoute": "+ Новый маршрут"
+            "newForward": "Новый форвард",
+            "newHost": "Новый хост",
+            "newRoute": "Новый маршрут"
         },
         "common": {
             "cancel": "Отмена",
@@ -42,7 +42,10 @@
         "newFolder": "Новая папка",
         "newSubfolder": "Новая подпапка",
         "folderName": "Имя папки",
+        "folderNamePlaceholder": "например, Работа",
         "folderNameRequired": "Имя папки обязательно.",
+        "noFoldersHint": "Создайте папку, чтобы начать группировать форварды.",
+        "selectFolderHint": "Выберите папку слева, чтобы просмотреть её форварды.",
         "emptyFolder": "В этой папке пока нет форвардов.",
         "tableTitle": "Форварды",
         "statusUnavailable": "Не удалось получить статус выполнения",
@@ -75,24 +78,30 @@
         "startSelected": "Запустить",
         "stopSelected": "Остановить",
         "selectedCount": "Выбрано: {count}",
+        "clearSelection": "Снять выделение",
         "moveToPlaceholder": "Переместить в…",
         "deleteSelected": "Удалить",
         "modal": {
             "newTitle": "Новый форвард",
             "editTitle": "Изменить форвард",
             "name": "Имя",
+            "namePlaceholder": "например staging-mysql",
             "mode": "Режим",
             "folder": "Папка",
             "chain": "Цепочка SSH-хостов",
             "chainPlaceholder": "Выберите хост для добавления",
             "chainEmpty": "Хосты ещё не выбраны.",
+            "chainHint": "Форвард проходит через выбранные хосты по порядку (сначала №1).",
+            "noHostsHint": "SSH-хостов пока нет. Сначала создайте хост на странице SSH-хостов.",
+            "noFoldersHint": "Папок пока нет. Сначала создайте папку.",
             "localHost": "Локальный адрес",
             "localPort": "Локальный порт",
             "portConflict": "Порт {port} уже занят на этом компьютере.",
             "remoteHost": "Удалённый адрес",
             "remotePort": "Удалённый порт",
             "autoStart": "Запускать вместе с приложением",
-            "description": "Описание"
+            "description": "Описание",
+            "descriptionPlaceholder": "Необязательно"
         },
         "errors": {
             "nameRequired": "Имя обязательно.",
@@ -104,8 +113,10 @@
         },
         "confirmations": {
             "deleteForward": "Удалить форвард \"{name}\"?",
+            "deleteFolderNotEmpty": "Папка \"{name}\" не пуста (подпапок: {folders}, форвардов: {forwards}). Удалить её вместе со всем содержимым?",
             "deleteSelected": "Удалить выбранные форварды ({count})?",
             "deleteSelectedTitle": "Удалить форварды",
+            "moveSelected": "Переместить форварды ({count}) в \"{folder}\"?",
             "cascadeConfirm": "Удалить всё"
         },
         "hostkey": {
@@ -126,6 +137,7 @@
             "movedCount": "Перемещено форвардов: {count}.",
             "folderCreated": "Папка \"{name}\" создана.",
             "folderDeleted": "Папка \"{name}\" удалена.",
+            "needFolder": "Создайте папку перед добавлением форвардов.",
             "startFailed": "Не удалось запустить \"{name}\": {error}",
             "stopFailed": "Не удалось остановить \"{name}\": {error}"
         }
@@ -150,19 +162,27 @@
             "newTitle": "Новый SSH-хост",
             "editTitle": "Изменить SSH-хост",
             "name": "Имя",
+            "namePlaceholder": "например bastion-1",
             "host": "Хост",
+            "hostPlaceholder": "например, 192.168.1.10 или example.com",
             "port": "Порт",
             "user": "Пользователь",
             "authType": "Метод аутентификации",
             "keyPath": "Файл SSH-ключа",
+            "keyPathPlaceholder": "~/.ssh/id_rsa",
             "password": "Пароль",
+            "passwordPlaceholder": "Введите пароль",
             "keyPassphrase": "Парольная фраза ключа",
+            "keyPassphrasePlaceholder": "Необязательно (парольная фраза закрытого ключа)",
             "agentSocketPath": "Путь к сокету агента (необязательно)",
+            "agentSocketPlaceholder": "~/.ssh/ssh-agent.sock",
             "advanced": "Дополнительные параметры",
             "keepAlive": "Интервал KeepAlive (мс)",
             "timeout": "Тайм-аут подключения (мс)",
             "hostKeyAlgorithms": "Алгоритмы ключа хоста",
-            "notes": "Заметки"
+            "hostKeyAlgorithmsPlaceholder": "например ssh-ed25519,rsa-sha2-512",
+            "notes": "Заметки",
+            "notesPlaceholder": "Необязательно"
         },
         "errors": {
             "nameRequired": "Имя обязательно.",
@@ -175,7 +195,8 @@
         "confirmations": {
             "deleteHost": "Удалить SSH-хост \"{name}\"?",
             "deleteHostTitle": "Удалить SSH-хост",
-            "inUseTitle": "Нельзя удалить"
+            "inUseTitle": "Нельзя удалить",
+            "inUse": "SSH-хост \"{name}\" всё ещё используется одним или несколькими форвардами. Сначала перепривяжите или удалите эти форварды."
         },
         "notify": {
             "saved": "SSH-хост \"{name}\" сохранён.",
@@ -185,10 +206,14 @@
     "settings": {
         "general": "Общие",
         "language": "Язык",
+        "languageDesc": "Выберите предпочитаемый язык / Choose your preferred language",
         "theme": "Тёмная тема",
+        "themeDesc": "Переключение между тёмной и светлой темой",
         "autoRun": "Запускать при входе в систему",
+        "autoRunDesc": "Запускать TunnelBoard при входе в систему",
         "updates": "Обновления",
         "automaticUpdateChecks": "Автоматическая проверка обновлений",
+        "automaticUpdateChecksDesc": "Проверять GitHub Releases при запуске TunnelBoard",
         "currentVersion": "Текущая версия",
         "checkUpdates": "Проверить обновления",
         "checkingUpdates": "Проверка…",
@@ -199,6 +224,8 @@
         "openDownloadPage": "Открыть страницу загрузки",
         "data": "Данные",
         "dataDir": "Каталог данных",
+        "dataDirDesc": "Зашифрованное хранилище Vault и настройки приложения хранятся в этом каталоге.",
+        "dataDirUnavailable": "Не удалось прочитать путь (бэкенд недоступен в этой среде).",
         "openDir": "Открыть каталог",
         "diagnostics": "Диагностика",
         "diagnosticsDesc": "Экспортировать обезличенный пакет диагностики (журналы текущего сеанса и сводку состояния; без секретов).",

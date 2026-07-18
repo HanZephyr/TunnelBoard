@@ -17,9 +17,9 @@
             "logsSubtitle": "即時檢視應用程式與 Caddy 日誌"
         },
         "header": {
-            "newForward": "+ 新增 Forward",
-            "newHost": "+ 新增主機",
-            "newRoute": "+ 新增 Route"
+            "newForward": "新增 Forward",
+            "newHost": "新增主機",
+            "newRoute": "新增 Route"
         },
         "common": {
             "cancel": "取消",

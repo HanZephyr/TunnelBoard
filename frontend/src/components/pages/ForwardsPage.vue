@@ -16,6 +16,7 @@ import {
 import { callBackend, errorMessage, isValidPort } from '../../utils/backend'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
+import StatusChip from '../common/StatusChip.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
 import ForwardModal from '../modals/ForwardModal.vue'
 import HostKeyDialog from '../modals/HostKeyDialog.vue'
@@ -426,17 +427,6 @@ function isActiveStatus(status) {
   return status === 'running' || status === 'reconnecting'
 }
 
-const STATUS_BADGE_CLASS = {
-  running: 'running',
-  reconnecting: 'busy',
-  stopped: 'stopped',
-  error: 'error'
-}
-
-function statusBadgeClass(status) {
-  return STATUS_BADGE_CLASS[status] || 'stopped'
-}
-
 function statusLabel(status) {
   const key = `forwards.status.${status}`
   const label = t(key)
@@ -688,12 +678,21 @@ function chainLabel(forward) {
       <div class="panel-card folder-tree-panel">
         <div class="panel-head">
           <h2 class="panel-title mb-0">{{ t('forwards.foldersTitle') }}</h2>
-          <button type="button" class="btn btn-sm btn-outline-primary" @click="openFolderDialog(0)">
-            <i class="bi bi-folder-plus me-1" aria-hidden="true"></i>{{ t('forwards.newFolder') }}
+          <button
+            type="button"
+            class="btn icon-ghost-btn"
+            :title="t('forwards.newFolder')"
+            :aria-label="t('forwards.newFolder')"
+            @click="openFolderDialog(0)"
+          >
+            <i class="bi bi-folder-plus" aria-hidden="true"></i>
           </button>
         </div>
 
-        <div v-if="!topFolders.length" class="folder-tree-empty">{{ t('forwards.noFoldersHint') }}</div>
+        <div v-if="!topFolders.length" class="empty-state folder-panel-empty">
+          <i class="bi bi-folder2 empty-state-icon" aria-hidden="true"></i>
+          <p class="empty-state-text">{{ t('forwards.noFoldersHint') }}</p>
+        </div>
 
         <ul v-else class="folder-tree">
           <li v-for="folder in topFolders" :key="folder.id">
@@ -759,41 +758,51 @@ function chainLabel(forward) {
         </div>
         <div class="panel-head">
           <h2 class="panel-title mb-0">{{ selectedFolder ? selectedFolder.name : t('forwards.tableTitle') }}</h2>
-          <div v-if="selectedForwardIds.size" class="batch-bar">
-            <span class="batch-count">{{ t('forwards.selectedCount', { count: selectedForwardIds.size }) }}</span>
-            <button
-              type="button"
-              class="btn btn-sm btn-outline-success"
-              :disabled="batchPending"
-              @click="startSelectedForwards"
-            >
-              <i class="bi bi-play-fill me-1" aria-hidden="true"></i>{{ t('forwards.startSelected') }}
-            </button>
-            <button
-              type="button"
-              class="btn btn-sm btn-outline-warning"
-              :disabled="batchPending"
-              @click="stopSelectedForwards"
-            >
-              <i class="bi bi-stop-fill me-1" aria-hidden="true"></i>{{ t('forwards.stopSelected') }}
-            </button>
-            <select
-              v-model="moveTargetId"
-              class="form-select form-select-sm batch-move-select"
-              :aria-label="t('forwards.moveToPlaceholder')"
-              @change="onMoveTargetChange"
-            >
-              <option value="">{{ t('forwards.moveToPlaceholder') }}</option>
-              <option v-for="target in moveTargets" :key="target.id" :value="target.id">{{ target.label }}</option>
-            </select>
-            <button type="button" class="btn btn-sm btn-outline-danger" @click="deleteSelectedForwards">
-              <i class="bi bi-trash3 me-1" aria-hidden="true"></i>{{ t('forwards.deleteSelected') }}
-            </button>
-          </div>
         </div>
 
-        <div v-if="!selectedFolder" class="folder-tree-empty py-4">{{ t('forwards.selectFolderHint') }}</div>
-        <div v-else-if="!visibleForwards.length" class="folder-tree-empty py-4">{{ t('forwards.emptyFolder') }}</div>
+        <div v-if="selectedForwardIds.size" class="batch-bar">
+          <span class="batch-count">{{ t('forwards.selectedCount', { count: selectedForwardIds.size }) }}</span>
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-success"
+            :disabled="batchPending"
+            @click="startSelectedForwards"
+          >
+            <i class="bi bi-play-fill me-1" aria-hidden="true"></i>{{ t('forwards.startSelected') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-warning"
+            :disabled="batchPending"
+            @click="stopSelectedForwards"
+          >
+            <i class="bi bi-stop-fill me-1" aria-hidden="true"></i>{{ t('forwards.stopSelected') }}
+          </button>
+          <select
+            v-model="moveTargetId"
+            class="form-select form-select-sm batch-move-select"
+            :aria-label="t('forwards.moveToPlaceholder')"
+            @change="onMoveTargetChange"
+          >
+            <option value="">{{ t('forwards.moveToPlaceholder') }}</option>
+            <option v-for="target in moveTargets" :key="target.id" :value="target.id">{{ target.label }}</option>
+          </select>
+          <button type="button" class="btn btn-sm btn-outline-danger" @click="deleteSelectedForwards">
+            <i class="bi bi-trash3 me-1" aria-hidden="true"></i>{{ t('forwards.deleteSelected') }}
+          </button>
+        </div>
+
+        <div v-if="!selectedFolder" class="empty-state">
+          <i class="bi bi-folder2-open empty-state-icon" aria-hidden="true"></i>
+          <p class="empty-state-text">{{ t('forwards.selectFolderHint') }}</p>
+        </div>
+        <div v-else-if="!visibleForwards.length" class="empty-state">
+          <i class="bi bi-inbox empty-state-icon" aria-hidden="true"></i>
+          <p class="empty-state-text">{{ t('forwards.emptyFolder') }}</p>
+          <button type="button" class="btn btn-primary header-action-btn" @click="openNewForward">
+            <i class="bi bi-plus-lg" aria-hidden="true"></i>{{ t('app.header.newForward') }}
+          </button>
+        </div>
 
         <div v-else class="page-table-wrap forwards-table-wrap">
           <table class="table forwards-table align-middle mb-0">
@@ -843,9 +852,10 @@ function chainLabel(forward) {
                   <span v-else>{{ t('app.common.none') }}</span>
                 </td>
                 <td>
-                  <span class="status-badge" :class="statusBadgeClass(runtimeOf(forward.id).status)">
-                    {{ statusLabel(runtimeOf(forward.id).status) }}
-                  </span>
+                  <StatusChip
+                    :status="runtimeOf(forward.id).status"
+                    :label="statusLabel(runtimeOf(forward.id).status)"
+                  />
                   <div
                     v-if="runtimeOf(forward.id).status === 'error' && runtimeOf(forward.id).lastError"
                     class="runtime-meta error-text cell-ellipsis"
@@ -856,11 +866,11 @@ function chainLabel(forward) {
                   <div v-else class="runtime-meta">{{ formatLatency(runtimeOf(forward.id).latencyMs) }}</div>
                 </td>
                 <td>
-                  <div class="d-flex gap-1">
+                  <div class="row-actions">
                     <button
                       v-if="pendingIds.has(forward.id)"
                       type="button"
-                      class="btn btn-sm icon-btn btn-outline-secondary"
+                      class="btn icon-ghost-btn"
                       disabled
                     >
                       <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
@@ -868,7 +878,7 @@ function chainLabel(forward) {
                     <IconActionButton
                       v-else-if="isActiveStatus(runtimeOf(forward.id).status)"
                       icon-class="bi-stop-fill"
-                      button-class="btn-outline-warning"
+                      button-class="icon-ghost-btn"
                       :title="t('forwards.actions.stop')"
                       :aria-label="t('forwards.actions.stop')"
                       @click="toggleForward(forward)"
@@ -876,20 +886,21 @@ function chainLabel(forward) {
                     <IconActionButton
                       v-else
                       icon-class="bi-play-fill"
-                      button-class="btn-outline-success"
+                      button-class="icon-ghost-btn"
                       :title="t('forwards.actions.start')"
                       :aria-label="t('forwards.actions.start')"
                       @click="toggleForward(forward)"
                     />
                     <IconActionButton
                       icon-class="bi-pencil"
+                      button-class="icon-ghost-btn"
                       :title="t('app.common.edit')"
                       :aria-label="t('app.common.edit')"
                       @click="editForward(forward)"
                     />
                     <IconActionButton
                       icon-class="bi-trash3"
-                      button-class="btn-outline-danger"
+                      button-class="icon-ghost-btn danger"
                       :title="t('app.common.delete')"
                       :aria-label="t('app.common.delete')"
                       @click="deleteForward(forward)"

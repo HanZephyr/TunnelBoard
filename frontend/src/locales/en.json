@@ -17,9 +17,9 @@
             "logsSubtitle": "Live app and Caddy logs"
         },
         "header": {
-            "newForward": "+ New Forward",
-            "newHost": "+ New Host",
-            "newRoute": "+ New Route"
+            "newForward": "New Forward",
+            "newHost": "New Host",
+            "newRoute": "New Route"
         },
         "common": {
             "cancel": "Cancel",

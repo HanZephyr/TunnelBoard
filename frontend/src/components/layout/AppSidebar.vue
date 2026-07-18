@@ -29,6 +29,9 @@ defineEmits(['switch-page', 'open-release-page', 'toggle-collapse'])
   <aside class="sidebar-panel" :class="{ collapsed }">
     <div class="sidebar-main">
       <div class="brand-logo-wrap">
+        <div class="brand-mark" aria-hidden="true">
+          <i class="bi bi-arrow-left-right" aria-hidden="true" />
+        </div>
         <div class="brand-meta">
           <div class="brand-title">{{ $t('app.title') }}</div>
           <div class="brand-subtitle">{{ $t('app.sidebar.subtitle') }}</div>
@@ -44,7 +47,7 @@ defineEmits(['switch-page', 'open-release-page', 'toggle-collapse'])
         </button>
       </div>
 
-      <div class="nav-list mt-4">
+      <div class="nav-list">
         <button
           v-for="page in pages"
           :key="page.key"

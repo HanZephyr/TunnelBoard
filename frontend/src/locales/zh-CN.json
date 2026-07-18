@@ -17,9 +17,9 @@
             "logsSubtitle": "实时查看应用与 Caddy 日志"
         },
         "header": {
-            "newForward": "+ 新建 Forward",
-            "newHost": "+ 新建主机",
-            "newRoute": "+ 新建 Route"
+            "newForward": "新建 Forward",
+            "newHost": "新建主机",
+            "newRoute": "新建 Route"
         },
         "common": {
             "cancel": "取消",
