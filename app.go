@@ -40,6 +40,7 @@ type App struct {
 	backup  *biz.BackupBiz
 	diagBuf *diag.RingBuffer
 	logFile *diag.LogFile
+	caddy   *caddy.Adapter
 	updater *updater.Service
 	initErr error
 
@@ -85,6 +86,7 @@ func NewApp() *App {
 		backup:  biz.NewBackupBiz(store),
 		diagBuf: diagBuf,
 		logFile: logFile,
+		caddy:   caddyAdapter,
 		updater: updater.NewDefaultService(),
 	}
 }
@@ -106,12 +108,17 @@ func (a *App) startup(ctx context.Context) {
 	}
 }
 
-// shutdown 在显式退出时停止全部 Forward（CONTEXT.md：显式退出才停止 Forward 与 Caddy）。
+// shutdown 在显式退出时停止全部 Forward 与 Caddy（CONTEXT.md:55）。
 func (a *App) shutdown(ctx context.Context) {
 	_ = ctx
 	slog.Info("app shutdown")
 	if a.runtime != nil {
 		a.runtime.Shutdown()
+	}
+	if a.caddy != nil {
+		if err := a.caddy.Stop(); err != nil {
+			slog.Error("stop caddy on shutdown failed", "err", err)
+		}
 	}
 	if a.logFile != nil {
 		_ = a.logFile.Close()
