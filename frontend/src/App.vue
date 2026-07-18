@@ -13,6 +13,7 @@ import { BrowserOpenURL } from '../wailsjs/runtime/runtime'
 import { callBackend } from './utils/backend'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppTopHeader from './components/layout/AppTopHeader.vue'
+import OverviewPage from './components/pages/OverviewPage.vue'
 import ForwardsPage from './components/pages/ForwardsPage.vue'
 import HostsPage from './components/pages/HostsPage.vue'
 import LogsPage from './components/pages/LogsPage.vue'
@@ -23,6 +24,7 @@ import './styles/app-shell.css'
 const { t, locale } = useI18n()
 
 const pages = computed(() => [
+  { key: 'overview', title: t('app.sidebar.overview'), subtitle: t('app.sidebar.overviewSubtitle'), icon: 'bi-grid-1x2-fill' },
   { key: 'forwards', title: t('app.sidebar.forwards'), subtitle: t('app.sidebar.forwardsSubtitle'), icon: 'bi-diagram-3' },
   { key: 'hosts', title: t('app.sidebar.hosts'), subtitle: t('app.sidebar.hostsSubtitle'), icon: 'bi-hdd-network' },
   { key: 'routes', title: t('app.sidebar.routes'), subtitle: t('app.sidebar.routesSubtitle'), icon: 'bi-globe2' },
@@ -34,7 +36,7 @@ const savedTheme = typeof window !== 'undefined' ? window.localStorage.getItem('
 const savedSidebarCollapsed = typeof window !== 'undefined' ? window.localStorage.getItem('tunnelboard.sidebar.collapsed') : null
 const theme = ref(savedTheme === 'dark' ? 'dark' : 'light')
 const sidebarCollapsed = ref(savedSidebarCollapsed === '1')
-const activePage = ref('forwards')
+const activePage = ref('overview')
 
 const appMeta = reactive({
   version: '0.0.0'
@@ -234,6 +236,16 @@ onBeforeUnmount(() => {
       />
 
       <main class="page-body">
+        <OverviewPage
+          v-if="activePage === 'overview'"
+          :folders="folders"
+          :ssh-hosts="sshHosts"
+          :forwards="forwards"
+          :web-routes="webRoutes"
+          @notify="notify"
+          @go-forwards="switchPage('forwards')"
+        />
+
         <ForwardsPage
           v-if="activePage === 'forwards'"
           ref="forwardsPageRef"

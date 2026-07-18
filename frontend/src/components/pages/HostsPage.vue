@@ -34,6 +34,17 @@ function authLabel(authType) {
   return key ? t(key) : t('hosts.auth.unknown')
 }
 
+// 认证方式 chip 语义色：ssh_key=accent（推荐）、ssh_agent=ok、password=warn（仅展示，不影响逻辑）
+const AUTH_BADGE_CLASS = {
+  password: 'busy',
+  ssh_key: 'accent',
+  ssh_agent: 'running'
+}
+
+function authBadgeClass(authType) {
+  return AUTH_BADGE_CLASS[authType] || ''
+}
+
 // ---- 通用确认框 ----
 const confirmDialog = reactive({
   visible: false,
@@ -222,44 +233,35 @@ function deleteHost(host) {
         </button>
       </div>
 
-      <div v-else class="page-table-wrap hosts-table-wrap">
-        <table class="table hosts-table align-middle mb-0">
-          <thead>
-            <tr>
-              <th class="host-name-cell">{{ t('hosts.table.name') }}</th>
-              <th class="host-conn-cell">{{ t('hosts.table.connection') }}</th>
-              <th class="host-auth-cell">{{ t('hosts.table.auth') }}</th>
-              <th>{{ t('hosts.table.notes') }}</th>
-              <th class="hosts-action-cell">{{ t('hosts.table.actions') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="host in sortedHosts" :key="host.id">
-              <td><TooltipText :text="host.name" /></td>
-              <td><TooltipText :text="`${host.user}@${host.host}:${host.port}`" /></td>
-              <td><span class="status-badge">{{ authLabel(host.authType) }}</span></td>
-              <td><TooltipText :text="host.notes || t('app.common.none')" /></td>
-              <td>
-                <div class="row-actions">
-                  <IconActionButton
-                    icon-class="bi-pencil"
-                    button-class="icon-ghost-btn"
-                    :title="t('app.common.edit')"
-                    :aria-label="t('app.common.edit')"
-                    @click="editHost(host)"
-                  />
-                  <IconActionButton
-                    icon-class="bi-trash3"
-                    button-class="icon-ghost-btn danger"
-                    :title="t('app.common.delete')"
-                    :aria-label="t('app.common.delete')"
-                    @click="deleteHost(host)"
-                  />
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+      <div v-else class="host-card-grid">
+        <div v-for="host in sortedHosts" :key="host.id" class="host-card">
+          <div class="host-card-head">
+            <TooltipText :text="host.name" class-name="host-card-name" />
+            <div class="card-corner-actions">
+              <IconActionButton
+                icon-class="bi-pencil"
+                button-class="icon-ghost-btn"
+                :title="t('app.common.edit')"
+                :aria-label="t('app.common.edit')"
+                @click="editHost(host)"
+              />
+              <IconActionButton
+                icon-class="bi-trash3"
+                button-class="icon-ghost-btn danger"
+                :title="t('app.common.delete')"
+                :aria-label="t('app.common.delete')"
+                @click="deleteHost(host)"
+              />
+            </div>
+          </div>
+          <div class="font-mono host-card-conn cell-ellipsis" :title="`${host.user}@${host.host}:${host.port}`">
+            {{ host.user }}@{{ host.host }}:{{ host.port }}
+          </div>
+          <div class="host-card-meta">
+            <span class="status-badge" :class="authBadgeClass(host.authType)">{{ authLabel(host.authType) }}</span>
+            <span v-if="host.notes" class="host-card-notes cell-ellipsis" :title="host.notes">{{ host.notes }}</span>
+          </div>
+        </div>
       </div>
     </div>
   </section>

@@ -3,6 +3,8 @@
         "title": "TunnelBoard",
         "sidebar": {
             "subtitle": "SSH Tunnel Manager",
+            "overview": "Overview",
+            "overviewSubtitle": "Live status of forwards and routes",
             "forwards": "Forwards",
             "forwardsSubtitle": "SSH port forwards organized in folders",
             "hosts": "SSH Hosts",
@@ -36,6 +38,15 @@
             "remove": "Remove",
             "none": "--"
         }
+    },
+    "overview": {
+        "activeTitle": "Active Forwards",
+        "activeEmpty": "No forwards running right now.",
+        "goForwards": "Go to Forwards",
+        "routesTitle": "Web Routes",
+        "routesEmpty": "No web routes yet.",
+        "errorsTitle": "Recent Errors",
+        "goEdit": "Go to edit"
     },
     "forwards": {
         "foldersTitle": "Folders",

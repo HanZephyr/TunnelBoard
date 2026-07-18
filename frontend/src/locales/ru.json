@@ -3,6 +3,8 @@
         "title": "TunnelBoard",
         "sidebar": {
             "subtitle": "Менеджер SSH-туннелей",
+            "overview": "Обзор",
+            "overviewSubtitle": "Состояние форвардов и маршрутов",
             "forwards": "Форварды",
             "forwardsSubtitle": "SSH-форварды, сгруппированные по папкам",
             "hosts": "SSH-хосты",
@@ -36,6 +38,15 @@
             "remove": "Убрать",
             "none": "--"
         }
+    },
+    "overview": {
+        "activeTitle": "Активные форварды",
+        "activeEmpty": "Сейчас нет работающих форвардов.",
+        "goForwards": "Перейти к форвардам",
+        "routesTitle": "Веб-маршруты",
+        "routesEmpty": "Веб-маршрутов пока нет.",
+        "errorsTitle": "Последние ошибки",
+        "goEdit": "Перейти к редактированию"
     },
     "forwards": {
         "foldersTitle": "Папки",

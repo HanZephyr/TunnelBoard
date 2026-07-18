@@ -3,6 +3,8 @@
         "title": "TunnelBoard",
         "sidebar": {
             "subtitle": "SSH 隧道管理",
+            "overview": "概览",
+            "overviewSubtitle": "Forward 与路由状态一览",
             "forwards": "Forward",
             "forwardsSubtitle": "按文件夹整理的 SSH 端口转发",
             "hosts": "SSH 主机",
@@ -36,6 +38,15 @@
             "remove": "移除",
             "none": "--"
         }
+    },
+    "overview": {
+        "activeTitle": "运行中的 Forward",
+        "activeEmpty": "当前没有运行中的 Forward。",
+        "goForwards": "前往 Forwards",
+        "routesTitle": "Web 路由",
+        "routesEmpty": "暂无 Web 路由。",
+        "errorsTitle": "最近错误",
+        "goEdit": "去编辑"
     },
     "forwards": {
         "foldersTitle": "文件夹",

@@ -594,6 +594,15 @@
   --bs-btn-active-bg: color-mix(in srgb, var(--tb-danger) 12%, transparent);
 }
 
+/* accent 幽灵按钮：启动（play）等正向操作 */
+.btn.icon-ghost-btn.accent {
+  color: var(--tb-accent);
+  --bs-btn-hover-color: var(--tb-accent);
+  --bs-btn-hover-bg: color-mix(in srgb, var(--tb-accent) 12%, transparent);
+  --bs-btn-active-color: var(--tb-accent);
+  --bs-btn-active-bg: color-mix(in srgb, var(--tb-accent) 12%, transparent);
+}
+
 .btn.icon-ghost-btn:disabled {
   opacity: 0.6;
 }
@@ -695,7 +704,7 @@
   border-radius: var(--tb-radius-ctl);
 }
 
-/* ---------- 表格 ---------- */
+/* ---------- 表格（设置页冲突表、DNS 确认对话框等小型表格） ---------- */
 .app-shell .table {
   --bs-table-bg: transparent;
   --bs-table-color: var(--tb-ink);
@@ -728,82 +737,6 @@
 
 .app-shell .table tbody tr:last-child > td {
   border-bottom: 0;
-}
-
-.page-table-wrap {
-  width: 100%;
-  max-width: 100%;
-}
-
-.forwards-table-wrap {
-  overflow-x: auto;
-}
-
-.hosts-table-wrap {
-  overflow-x: auto;
-}
-
-.forwards-table,
-.hosts-table {
-  width: 100%;
-  min-width: 860px;
-  table-layout: fixed;
-}
-
-.forwards-table .forward-check-cell {
-  width: 36px;
-  max-width: 36px;
-}
-
-.forwards-table .forward-mode-cell {
-  width: 100px;
-  max-width: 100px;
-}
-
-.forwards-table .forward-route-cell {
-  width: 150px;
-  max-width: 150px;
-}
-
-.forwards-table .forward-autostart-cell {
-  width: 92px;
-  max-width: 92px;
-}
-
-.forwards-table .forward-status-cell {
-  width: 140px;
-  max-width: 140px;
-}
-
-.forwards-table .forwards-action-cell {
-  width: 116px;
-  max-width: 116px;
-}
-
-.hosts-table .host-name-cell {
-  width: 170px;
-  max-width: 170px;
-}
-
-.hosts-table .host-conn-cell {
-  width: 250px;
-  max-width: 250px;
-}
-
-.hosts-table .host-auth-cell {
-  width: 130px;
-  max-width: 130px;
-}
-
-.hosts-table .hosts-action-cell {
-  width: 84px;
-  max-width: 84px;
-}
-
-.row-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
 }
 
 /* ---------- 状态 chip / 徽标 ---------- */
@@ -915,18 +848,380 @@
   background: color-mix(in srgb, var(--tb-ink-3) 12%, transparent);
 }
 
-.runtime-meta {
-  margin-top: 3px;
-  font-size: 11px;
-  line-height: 1.3;
-  color: var(--tb-ink-3);
+.status-badge.accent {
+  color: var(--tb-accent);
+  background: color-mix(in srgb, var(--tb-accent) 12%, transparent);
 }
 
-.runtime-meta.error-text {
+/* ---------- Overview 仪表盘 ---------- */
+.overview-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.stat-card {
+  background: var(--tb-surface);
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-card);
+  padding: 14px 18px;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--tb-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-value.ok {
+  color: var(--tb-ok);
+}
+
+.stat-value.warn {
+  color: var(--tb-warn);
+}
+
+.stat-value.danger {
   color: var(--tb-danger);
 }
 
-/* ---------- Forwards 页 ---------- */
+.stat-value.muted {
+  color: var(--tb-ink-3);
+}
+
+.stat-label {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--tb-ink-2);
+}
+
+.overview-section {
+  margin-top: 20px;
+}
+
+.overview-section-title {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--tb-ink);
+}
+
+.ov-list {
+  display: grid;
+  gap: 12px;
+}
+
+.ov-forward-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--tb-surface);
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-card);
+  padding: 12px 16px;
+}
+
+.ov-forward-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tb-ink);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+
+.ov-forward-route {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--tb-ink-2);
+}
+
+.ov-forward-latency {
+  font-family: var(--tb-mono);
+  font-size: 12px;
+  color: var(--tb-ink-2);
+  flex: 0 0 auto;
+}
+
+.ov-forward-error {
+  flex-basis: 100%;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--tb-danger);
+}
+
+.ov-route-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--tb-surface);
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-card);
+  padding: 10px 16px;
+}
+
+.ov-route-domain {
+  font-family: var(--tb-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tb-ink);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+
+.ov-route-flags {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 圆点 + 短文本的状态点（ok / ink-3 / warn） */
+.ov-status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--tb-ink-2);
+  white-space: nowrap;
+}
+
+.ov-status-dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tb-ink-3);
+  flex: 0 0 auto;
+}
+
+.ov-status-dot.ok::before {
+  background: var(--tb-ok);
+}
+
+.ov-status-dot.warn {
+  color: var(--tb-warn);
+}
+
+.ov-status-dot.warn::before {
+  background: var(--tb-warn);
+}
+
+.ov-error-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--tb-surface);
+  border: 1px solid color-mix(in srgb, var(--tb-danger) 30%, transparent);
+  border-radius: var(--tb-radius-card);
+  padding: 10px 16px;
+}
+
+.ov-error-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--tb-danger);
+}
+
+.ov-link-btn {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tb-accent);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ov-link-btn:hover {
+  text-decoration: underline;
+}
+
+.ov-empty-text {
+  font-size: 13px;
+  color: var(--tb-ink-2);
+}
+
+/* ---------- Forwards 页（卡片列表） ---------- */
+.forward-card-list {
+  display: grid;
+  gap: 12px;
+}
+
+.forward-card {
+  background: var(--tb-surface);
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-card);
+  padding: 12px 16px;
+}
+
+.forward-card.selected {
+  border-color: color-mix(in srgb, var(--tb-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--tb-accent) 3%, var(--tb-surface));
+}
+
+.forward-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.forward-card-check {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.forward-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tb-ink);
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 0 1 auto;
+}
+
+.forward-autostart {
+  color: var(--tb-ink-3);
+  font-size: 13px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.forward-card-side {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.forward-latency {
+  font-family: var(--tb-mono);
+  font-size: 12px;
+  color: var(--tb-ink-2);
+}
+
+/* 行内操作：hover 显示，focus-within 也可达 */
+.forward-card-actions,
+.card-corner-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.forward-card:hover .forward-card-actions,
+.forward-card:focus-within .forward-card-actions,
+.host-card:hover .card-corner-actions,
+.host-card:focus-within .card-corner-actions,
+.route-card:hover .card-corner-actions,
+.route-card:focus-within .card-corner-actions {
+  opacity: 1;
+}
+
+.forward-card-sub {
+  margin-top: 6px;
+  margin-left: 26px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.forward-route-label {
+  color: var(--tb-ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.forward-chain {
+  font-size: 12px;
+  color: var(--tb-ink-3);
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.forward-card-error {
+  margin-top: 4px;
+  margin-left: 26px;
+  font-size: 12px;
+  color: var(--tb-danger);
+}
+
+/* ---------- Hosts 页（卡片网格） ---------- */
+.host-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.host-card {
+  background: var(--tb-surface);
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-card);
+  padding: 14px 16px;
+}
+
+.host-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.host-card-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tb-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.host-card-conn {
+  margin-top: 6px;
+  color: var(--tb-ink-2);
+}
+
+.host-card-meta {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.host-card-notes {
+  font-size: 12px;
+  color: var(--tb-ink-3);
+}
+
+/* ---------- Forwards 页（布局与文件夹导航） ---------- */
 .forwards-layout {
   display: flex;
   gap: 12px;
@@ -1119,12 +1414,6 @@
 
 .empty-state .btn {
   margin-top: 6px;
-}
-
-/* 兼容：其余页面仍在用的简单空提示 */
-.folder-tree-empty {
-  font-size: 13px;
-  color: var(--tb-ink-2);
 }
 
 /* 文件夹面板内的空状态更紧凑 */
@@ -1513,44 +1802,96 @@
   font-size: 12.5px;
 }
 
-/* 可截断的 chip：内容超出列宽时省略号收尾 */
-.status-badge.chip-ellipsis {
-  display: inline-block;
-  max-width: 100%;
+/* ---------- Routes 页（卡片列表） ---------- */
+.route-card-list {
+  display: grid;
+  gap: 12px;
+}
+
+.route-card {
+  background: var(--tb-surface);
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-card);
+  padding: 14px 18px;
+}
+
+.route-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.route-card-domain {
+  font-family: var(--tb-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tb-ink);
   overflow: hidden;
   text-overflow: ellipsis;
-  vertical-align: middle;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
-/* ---------- Routes 页 ---------- */
-.routes-table-wrap {
-  overflow-x: auto;
+.route-card-forward {
+  font-size: 12px;
+  color: var(--tb-ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
-.routes-table {
-  width: 100%;
-  min-width: 780px;
-  table-layout: fixed;
+.route-card-head .card-corner-actions {
+  margin-left: auto;
+  flex: 0 0 auto;
 }
 
-.routes-table .route-domain-cell {
-  font-family: var(--tb-mono);
-  font-size: 12.5px;
+.route-card-upstream {
+  margin-top: 6px;
+  color: var(--tb-ink-2);
 }
 
-.routes-table .route-switch-cell {
-  width: 64px;
-  max-width: 64px;
+.route-card-foot {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.routes-table .route-upstream-cell {
-  width: 140px;
-  max-width: 140px;
+/* hosts / Caddy 分段开关组 */
+.route-flag-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--tb-surface-2);
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-ctl);
 }
 
-.routes-table .routes-action-cell {
-  width: 72px;
-  max-width: 72px;
+.route-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.route-flag-label {
+  font-size: 12px;
+  color: var(--tb-ink-2);
+  white-space: nowrap;
+}
+
+.route-card-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .ca-trusted-icon {

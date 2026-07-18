@@ -42,11 +42,13 @@ function forwardName(forwardId) {
   return forward ? forward.name : `#${forwardId}`
 }
 
-function upstreamLabel(route) {
-  if (route.upstreamScheme === 'https') {
-    return `https → ${route.tlsSni || ''}`
-  }
-  return 'http'
+// 上游目标完整描述：scheme → forward 名 (host:port)，https 附 SNI（仅展示，不影响逻辑）
+function upstreamDetail(route) {
+  const forward = props.forwards.find((item) => item.id === route.forwardId)
+  const scheme = route.upstreamScheme === 'https' ? 'https' : 'http'
+  const target = forward ? `${forward.name} (${forward.localHost}:${forward.localPort})` : forwardName(route.forwardId)
+  const sni = route.upstreamScheme === 'https' && route.tlsSni ? ` · SNI ${route.tlsSni}` : ''
+  return `${scheme} → ${target}${sni}`
 }
 
 // ---- 系统状态（GetRouteStatus 轮询合并）----
@@ -319,25 +321,38 @@ async function confirmDeleteRoute() {
         </button>
       </div>
 
-      <div v-else class="page-table-wrap routes-table-wrap">
-        <table class="table routes-table align-middle mb-0">
-          <thead>
-            <tr>
-              <th>{{ t('routes.table.domain') }}</th>
-              <th>{{ t('routes.table.forward') }}</th>
-              <th class="route-switch-cell">{{ t('routes.table.hosts') }}</th>
-              <th class="route-switch-cell">{{ t('routes.table.caddy') }}</th>
-              <th class="route-upstream-cell">{{ t('routes.table.upstream') }}</th>
-              <th>{{ t('routes.table.systemStatus') }}</th>
-              <th class="routes-action-cell">{{ t('routes.table.actions') }}</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="route in sortedRoutes" :key="route.id">
-              <td class="route-domain-cell"><TooltipText :text="route.domain" /></td>
-              <td><TooltipText :text="forwardName(route.forwardId)" /></td>
-              <td>
-                <div class="form-check form-switch mb-0">
+      <div v-else class="route-card-list">
+        <div v-for="route in sortedRoutes" :key="route.id" class="route-card">
+          <div class="route-card-head">
+            <TooltipText :text="route.domain" class-name="route-card-domain" />
+            <span class="route-card-forward" :title="forwardName(route.forwardId)">
+              {{ forwardName(route.forwardId) }}
+            </span>
+            <div class="card-corner-actions">
+              <IconActionButton
+                icon-class="bi-pencil"
+                button-class="icon-ghost-btn"
+                :title="t('app.common.edit')"
+                :aria-label="t('app.common.edit')"
+                @click="editRoute(route)"
+              />
+              <IconActionButton
+                icon-class="bi-trash3"
+                button-class="icon-ghost-btn danger"
+                :title="t('app.common.delete')"
+                :aria-label="t('app.common.delete')"
+                @click="deleteRoute(route)"
+              />
+            </div>
+          </div>
+          <div class="font-mono route-card-upstream cell-ellipsis" :title="upstreamDetail(route)">
+            {{ upstreamDetail(route) }}
+          </div>
+          <div class="route-card-foot">
+            <div class="route-flag-group">
+              <span class="route-flag">
+                <span class="route-flag-label">{{ t('routes.modal.hostsEnabled') }}</span>
+                <span class="form-check form-switch mb-0">
                   <input
                     type="checkbox"
                     class="form-check-input"
@@ -346,10 +361,11 @@ async function confirmDeleteRoute() {
                     :aria-label="t('routes.table.hosts')"
                     @change="toggleRouteFlag(route, 'hostsEnabled')"
                   />
-                </div>
-              </td>
-              <td>
-                <div class="form-check form-switch mb-0">
+                </span>
+              </span>
+              <span class="route-flag">
+                <span class="route-flag-label">{{ t('routes.modal.caddyEnabled') }}</span>
+                <span class="form-check form-switch mb-0">
                   <input
                     type="checkbox"
                     class="form-check-input"
@@ -358,72 +374,43 @@ async function confirmDeleteRoute() {
                     :aria-label="t('routes.table.caddy')"
                     @change="toggleRouteFlag(route, 'caddyEnabled')"
                   />
-                </div>
-              </td>
-              <td>
-                <span
-                  class="status-badge font-mono chip-ellipsis"
-                  :class="{ running: route.upstreamScheme === 'https' }"
-                  :title="upstreamLabel(route)"
-                >
-                  {{ upstreamLabel(route) }}
                 </span>
-              </td>
-              <td>
-                <div class="d-flex align-items-center gap-1 flex-wrap">
-                  <StatusChip
-                    v-if="route.hostsEnabled"
-                    :status="statusOf(route.id)?.hostsApplied ? 'running' : 'stopped'"
-                    :label="
-                      statusOf(route.id)?.hostsApplied
-                        ? t('routes.status.hostsApplied')
-                        : t('routes.status.hostsNotApplied')
-                    "
-                  />
-                  <StatusChip
-                    v-if="route.caddyEnabled"
-                    :status="statusOf(route.id)?.caddyRunning ? 'running' : 'stopped'"
-                    :label="
-                      statusOf(route.id)?.caddyRunning
-                        ? t('routes.status.caddyRunning')
-                        : t('routes.status.caddyStopped')
-                    "
-                  />
-                  <span v-if="statusOf(route.id)?.portConflict" class="status-badge busy">
-                    <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>{{ t('routes.status.portConflict') }}
-                  </span>
-                  <i
-                    v-if="statusOf(route.id)?.caTrusted"
-                    class="bi bi-shield-lock-fill ca-trusted-icon"
-                    :title="t('routes.status.caTrusted')"
-                    aria-hidden="true"
-                  ></i>
-                  <span v-if="!route.hostsEnabled && !route.caddyEnabled && !statusOf(route.id)?.portConflict">
-                    {{ t('app.common.none') }}
-                  </span>
-                </div>
-              </td>
-              <td>
-                <div class="row-actions">
-                  <IconActionButton
-                    icon-class="bi-pencil"
-                    button-class="icon-ghost-btn"
-                    :title="t('app.common.edit')"
-                    :aria-label="t('app.common.edit')"
-                    @click="editRoute(route)"
-                  />
-                  <IconActionButton
-                    icon-class="bi-trash3"
-                    button-class="icon-ghost-btn danger"
-                    :title="t('app.common.delete')"
-                    :aria-label="t('app.common.delete')"
-                    @click="deleteRoute(route)"
-                  />
-                </div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+              </span>
+            </div>
+            <div class="route-card-status">
+              <StatusChip
+                v-if="route.hostsEnabled"
+                :status="statusOf(route.id)?.hostsApplied ? 'running' : 'stopped'"
+                :label="
+                  statusOf(route.id)?.hostsApplied
+                    ? t('routes.status.hostsApplied')
+                    : t('routes.status.hostsNotApplied')
+                "
+              />
+              <StatusChip
+                v-if="route.caddyEnabled"
+                :status="statusOf(route.id)?.caddyRunning ? 'running' : 'stopped'"
+                :label="
+                  statusOf(route.id)?.caddyRunning
+                    ? t('routes.status.caddyRunning')
+                    : t('routes.status.caddyStopped')
+                "
+              />
+              <span v-if="statusOf(route.id)?.portConflict" class="status-badge busy">
+                <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>{{ t('routes.status.portConflict') }}
+              </span>
+              <i
+                v-if="statusOf(route.id)?.caTrusted"
+                class="bi bi-shield-lock-fill ca-trusted-icon"
+                :title="t('routes.status.caTrusted')"
+                aria-hidden="true"
+              ></i>
+              <span v-if="!route.hostsEnabled && !route.caddyEnabled && !statusOf(route.id)?.portConflict">
+                {{ t('app.common.none') }}
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </section>

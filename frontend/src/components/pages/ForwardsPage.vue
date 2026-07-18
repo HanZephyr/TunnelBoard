@@ -14,6 +14,7 @@ import {
   StopForward
 } from '../../../wailsjs/go/main/App'
 import { callBackend, errorMessage, isValidPort } from '../../utils/backend'
+import { formatLatency as formatLatencyUtil } from '../../utils/format'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import StatusChip from '../common/StatusChip.vue'
@@ -434,11 +435,7 @@ function statusLabel(status) {
 }
 
 function formatLatency(latencyMs) {
-  const value = Number(latencyMs)
-  if (!Number.isFinite(value) || value <= 0) return t('app.common.none')
-  if (value < 1000) return `${Math.round(value)}ms`
-  if (value < 60000) return `${(value / 1000).toFixed(1)}s`
-  return `${(value / 60000).toFixed(1)}m`
+  return formatLatencyUtil(latencyMs, t('app.common.none'))
 }
 
 // runtimeFetchError 非空表示状态快照获取失败：页面向用户显式提示，而不是静默回退为"全部已停止"。
@@ -660,6 +657,23 @@ const modeLabel = (mode) => {
   return label === key ? mode : label
 }
 
+// 模式 chip 语义色：local=accent、remote=ok、dynamic=warn（仅展示，不影响逻辑）
+const MODE_BADGE_CLASS = {
+  local: 'accent',
+  remote: 'running',
+  dynamic: 'busy'
+}
+
+function modeBadgeClass(mode) {
+  return MODE_BADGE_CLASS[mode] || ''
+}
+
+function routeFlowLabel(forward) {
+  const local = `${forward.localHost}:${forward.localPort}`
+  if (forward.mode === 'dynamic') return local
+  return `${local} → ${forward.remoteHost}:${forward.remotePort}`
+}
+
 function hostName(id) {
   const host = props.sshHosts.find((item) => item.id === id)
   return host ? host.name : `#${id}`
@@ -757,7 +771,17 @@ function chainLabel(forward) {
           {{ t('forwards.statusUnavailable') }}：{{ runtimeFetchError }}
         </div>
         <div class="panel-head">
-          <h2 class="panel-title mb-0">{{ selectedFolder ? selectedFolder.name : t('forwards.tableTitle') }}</h2>
+          <div class="d-flex align-items-center gap-2 min-w-0">
+            <input
+              v-if="visibleForwards.length"
+              type="checkbox"
+              class="form-check-input m-0"
+              :checked="allVisibleSelected"
+              :aria-label="t('forwards.table.name')"
+              @change="toggleSelectAll"
+            />
+            <h2 class="panel-title mb-0">{{ selectedFolder ? selectedFolder.name : t('forwards.tableTitle') }}</h2>
+          </div>
         </div>
 
         <div v-if="selectedForwardIds.size" class="batch-bar">
@@ -804,112 +828,91 @@ function chainLabel(forward) {
           </button>
         </div>
 
-        <div v-else class="page-table-wrap forwards-table-wrap">
-          <table class="table forwards-table align-middle mb-0">
-            <thead>
-              <tr>
-                <th class="forward-check-cell">
-                  <input
-                    type="checkbox"
-                    class="form-check-input"
-                    :checked="allVisibleSelected"
-                    :aria-label="t('forwards.table.name')"
-                    @change="toggleSelectAll"
-                  />
-                </th>
-                <th>{{ t('forwards.table.name') }}</th>
-                <th class="forward-mode-cell">{{ t('forwards.table.mode') }}</th>
-                <th class="forward-route-cell">{{ t('forwards.table.local') }}</th>
-                <th class="forward-route-cell">{{ t('forwards.table.remote') }}</th>
-                <th>{{ t('forwards.table.chain') }}</th>
-                <th class="forward-autostart-cell">{{ t('forwards.table.autoStart') }}</th>
-                <th class="forward-status-cell">{{ t('forwards.table.status') }}</th>
-                <th class="forwards-action-cell">{{ t('forwards.table.actions') }}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="forward in visibleForwards" :key="forward.id">
-                <td>
-                  <input
-                    type="checkbox"
-                    class="form-check-input"
-                    :checked="selectedForwardIds.has(forward.id)"
-                    :aria-label="forward.name"
-                    @change="toggleSelectForward(forward.id)"
-                  />
-                </td>
-                <td><TooltipText :text="forward.name" /></td>
-                <td><span class="status-badge">{{ modeLabel(forward.mode) }}</span></td>
-                <td><TooltipText :text="`${forward.localHost}:${forward.localPort}`" /></td>
-                <td>
-                  <TooltipText
-                    :text="forward.mode === 'dynamic' ? t('app.common.none') : `${forward.remoteHost}:${forward.remotePort}`"
-                  />
-                </td>
-                <td><TooltipText :text="chainLabel(forward)" /></td>
-                <td>
-                  <span v-if="forward.autoStart" class="status-badge running">{{ t('forwards.autoStartYes') }}</span>
-                  <span v-else>{{ t('app.common.none') }}</span>
-                </td>
-                <td>
-                  <StatusChip
-                    :status="runtimeOf(forward.id).status"
-                    :label="statusLabel(runtimeOf(forward.id).status)"
-                  />
-                  <div
-                    v-if="runtimeOf(forward.id).status === 'error' && runtimeOf(forward.id).lastError"
-                    class="runtime-meta error-text cell-ellipsis"
-                    :title="runtimeOf(forward.id).lastError"
+        <div v-else class="forward-card-list">
+          <div
+            v-for="forward in visibleForwards"
+            :key="forward.id"
+            class="forward-card"
+            :class="{ selected: selectedForwardIds.has(forward.id) }"
+          >
+            <div class="forward-card-head">
+              <input
+                type="checkbox"
+                class="form-check-input forward-card-check"
+                :checked="selectedForwardIds.has(forward.id)"
+                :aria-label="forward.name"
+                @change="toggleSelectForward(forward.id)"
+              />
+              <TooltipText :text="forward.name" class-name="forward-card-name" />
+              <span class="status-badge" :class="modeBadgeClass(forward.mode)">{{ modeLabel(forward.mode) }}</span>
+              <i
+                v-if="forward.autoStart"
+                class="bi bi-lightning-charge-fill forward-autostart"
+                :title="t('forwards.table.autoStart')"
+                aria-hidden="true"
+              ></i>
+              <div class="forward-card-side">
+                <StatusChip
+                  :status="runtimeOf(forward.id).status"
+                  :label="statusLabel(runtimeOf(forward.id).status)"
+                />
+                <span class="forward-latency">{{ formatLatency(runtimeOf(forward.id).latencyMs) }}</span>
+                <div class="forward-card-actions">
+                  <button
+                    v-if="pendingIds.has(forward.id)"
+                    type="button"
+                    class="btn icon-ghost-btn"
+                    disabled
                   >
-                    {{ runtimeOf(forward.id).lastError }}
-                  </div>
-                  <div v-else class="runtime-meta">{{ formatLatency(runtimeOf(forward.id).latencyMs) }}</div>
-                </td>
-                <td>
-                  <div class="row-actions">
-                    <button
-                      v-if="pendingIds.has(forward.id)"
-                      type="button"
-                      class="btn icon-ghost-btn"
-                      disabled
-                    >
-                      <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
-                    </button>
-                    <IconActionButton
-                      v-else-if="isActiveStatus(runtimeOf(forward.id).status)"
-                      icon-class="bi-stop-fill"
-                      button-class="icon-ghost-btn"
-                      :title="t('forwards.actions.stop')"
-                      :aria-label="t('forwards.actions.stop')"
-                      @click="toggleForward(forward)"
-                    />
-                    <IconActionButton
-                      v-else
-                      icon-class="bi-play-fill"
-                      button-class="icon-ghost-btn"
-                      :title="t('forwards.actions.start')"
-                      :aria-label="t('forwards.actions.start')"
-                      @click="toggleForward(forward)"
-                    />
-                    <IconActionButton
-                      icon-class="bi-pencil"
-                      button-class="icon-ghost-btn"
-                      :title="t('app.common.edit')"
-                      :aria-label="t('app.common.edit')"
-                      @click="editForward(forward)"
-                    />
-                    <IconActionButton
-                      icon-class="bi-trash3"
-                      button-class="icon-ghost-btn danger"
-                      :title="t('app.common.delete')"
-                      :aria-label="t('app.common.delete')"
-                      @click="deleteForward(forward)"
-                    />
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                    <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+                  </button>
+                  <IconActionButton
+                    v-else-if="isActiveStatus(runtimeOf(forward.id).status)"
+                    icon-class="bi-stop-fill"
+                    button-class="icon-ghost-btn danger"
+                    :title="t('forwards.actions.stop')"
+                    :aria-label="t('forwards.actions.stop')"
+                    @click="toggleForward(forward)"
+                  />
+                  <IconActionButton
+                    v-else
+                    icon-class="bi-play-fill"
+                    button-class="icon-ghost-btn accent"
+                    :title="t('forwards.actions.start')"
+                    :aria-label="t('forwards.actions.start')"
+                    @click="toggleForward(forward)"
+                  />
+                  <IconActionButton
+                    icon-class="bi-pencil"
+                    button-class="icon-ghost-btn"
+                    :title="t('app.common.edit')"
+                    :aria-label="t('app.common.edit')"
+                    @click="editForward(forward)"
+                  />
+                  <IconActionButton
+                    icon-class="bi-trash3"
+                    button-class="icon-ghost-btn danger"
+                    :title="t('app.common.delete')"
+                    :aria-label="t('app.common.delete')"
+                    @click="deleteForward(forward)"
+                  />
+                </div>
+              </div>
+            </div>
+            <div class="forward-card-sub">
+              <span class="font-mono forward-route-label" :title="routeFlowLabel(forward)">
+                {{ routeFlowLabel(forward) }}
+              </span>
+              <span class="forward-chain" :title="chainLabel(forward)">{{ chainLabel(forward) }}</span>
+            </div>
+            <div
+              v-if="runtimeOf(forward.id).status === 'error' && runtimeOf(forward.id).lastError"
+              class="forward-card-error cell-ellipsis"
+              :title="runtimeOf(forward.id).lastError"
+            >
+              {{ runtimeOf(forward.id).lastError }}
+            </div>
+          </div>
         </div>
       </div>
     </div>

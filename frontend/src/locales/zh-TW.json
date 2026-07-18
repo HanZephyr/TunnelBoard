@@ -3,6 +3,8 @@
         "title": "TunnelBoard",
         "sidebar": {
             "subtitle": "SSH 隧道管理",
+            "overview": "總覽",
+            "overviewSubtitle": "Forward 與路由狀態一覽",
             "forwards": "Forward",
             "forwardsSubtitle": "按資料夾整理的 SSH 連接埠轉發",
             "hosts": "SSH 主機",
@@ -36,6 +38,15 @@
             "remove": "移除",
             "none": "--"
         }
+    },
+    "overview": {
+        "activeTitle": "執行中的 Forward",
+        "activeEmpty": "目前沒有執行中的 Forward。",
+        "goForwards": "前往 Forwards",
+        "routesTitle": "Web 路由",
+        "routesEmpty": "暫無 Web 路由。",
+        "errorsTitle": "最近錯誤",
+        "goEdit": "去編輯"
     },
     "forwards": {
         "foldersTitle": "資料夾",
