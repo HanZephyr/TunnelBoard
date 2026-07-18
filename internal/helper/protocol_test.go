@@ -194,11 +194,10 @@ func TestHandleRequestHostsEntryLimit(t *testing.T) {
 	}
 }
 
-// trust_local_ca：SHA-256 格式非法、DER 为空/超限、指纹不匹配、非 TunnelBoard CN 均拒绝且零副作用。
+// trust_local_ca：SHA-256 格式非法、DER 为空/超限、指纹不匹配、非自签 CA 均拒绝且零副作用。
 func TestHandleRequestTrustLocalCAValidation(t *testing.T) {
-	der := makeSelfSignedCA(t, "TunnelBoard Local CA")
+	der := makeSelfSignedCA(t, "Caddy Local Authority - 2026 ECC Root")
 	goodSHA := sha256Hex(der)
-	foreignDER := makeSelfSignedCA(t, "Some Other Root CA")
 
 	cases := map[string]helper.Request{
 		"empty sha256":         {Op: "trust_local_ca", CertDER: der, CertSHA256: ""},
@@ -209,7 +208,7 @@ func TestHandleRequestTrustLocalCAValidation(t *testing.T) {
 		"empty DER":            {Op: "trust_local_ca", CertSHA256: goodSHA},
 		"oversized DER":        {Op: "trust_local_ca", CertDER: make([]byte, (16<<10)+1), CertSHA256: goodSHA},
 		"fingerprint mismatch": {Op: "trust_local_ca", CertDER: der, CertSHA256: strings.Repeat("0", 64)},
-		"foreign CA CN":        {Op: "trust_local_ca", CertDER: foreignDER, CertSHA256: sha256Hex(foreignDER)},
+		"corrupt DER":          {Op: "trust_local_ca", CertDER: []byte("junk"), CertSHA256: goodSHA},
 	}
 	for name, req := range cases {
 		t.Run(name, func(t *testing.T) {

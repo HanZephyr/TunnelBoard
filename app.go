@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -38,6 +39,7 @@ type App struct {
 	router  *biz.RouterBiz
 	backup  *biz.BackupBiz
 	diagBuf *diag.RingBuffer
+	logFile *diag.LogFile
 	updater *updater.Service
 	initErr error
 
@@ -51,11 +53,21 @@ type App struct {
 // NewApp 打开默认数据目录下的 Vault 并组装应用 Module。
 // 打开失败（含密钥遗失 ErrKeyUnavailable）时仅记录 initErr，由绑定调用方通过 ensureReady 感知。
 func NewApp() *App {
-	// 默认不持久化运行日志：内存环形缓冲 + stderr，排障时手动导出脱敏诊断包。
-	diagBuf := diag.NewRingBuffer(slog.NewTextHandler(os.Stderr, nil), 2000)
+	store, err := vault.OpenDefault()
+
+	// 运行日志持久化到数据目录 logs/（滚动 2MiB 一档），同时保留 stderr 与内存环（诊断包）。
+	// Vault 打不开时仅 stderr。
+	var logWriter io.Writer = os.Stderr
+	var logFile *diag.LogFile
+	if err == nil {
+		if lf, lerr := diag.OpenLogFile(filepath.Join(store.Dir(), "logs", "tunnelboard.log"), 2<<20); lerr == nil {
+			logFile = lf
+			logWriter = io.MultiWriter(os.Stderr, lf)
+		}
+	}
+	diagBuf := diag.NewRingBuffer(slog.NewTextHandler(logWriter, nil), 2000)
 	slog.SetDefault(slog.New(diagBuf))
 
-	store, err := vault.OpenDefault()
 	if err != nil {
 		return &App{initErr: err, diagBuf: diagBuf}
 	}
@@ -72,6 +84,7 @@ func NewApp() *App {
 		),
 		backup:  biz.NewBackupBiz(store),
 		diagBuf: diagBuf,
+		logFile: logFile,
 		updater: updater.NewDefaultService(),
 	}
 }
@@ -99,6 +112,9 @@ func (a *App) shutdown(ctx context.Context) {
 	slog.Info("app shutdown")
 	if a.runtime != nil {
 		a.runtime.Shutdown()
+	}
+	if a.logFile != nil {
+		_ = a.logFile.Close()
 	}
 }
 

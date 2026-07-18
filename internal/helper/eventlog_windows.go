@@ -6,8 +6,11 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 
 	"golang.org/x/sys/windows/svc/eventlog"
+
+	"github.com/HanZephyr/TunnelBoard/internal/diag"
 )
 
 // eventSourceName 是 helper 在 Windows 事件日志中的来源名。
@@ -25,14 +28,19 @@ func InstallEventSource() {
 	_ = eventlog.Install(eventSourceName, exe, true, 0)
 }
 
-// SetupEventLogging 把 helper 的默认日志切到 Windows 事件日志（服务路径调用）。
-// 打开失败时保持 stderr 兜底（交互调试场景）。
+// SetupEventLogging 把 helper 的默认日志切到 Windows 事件日志 + 本地日志文件
+// （ProgramData\TunnelBoard\helper.log，滚动 2MiB）。两者都失败时保持 stderr 兜底。
 func SetupEventLogging() {
-	el, err := eventlog.Open(eventSourceName)
-	if err != nil {
-		return
+	var handlers []slog.Handler
+	if el, err := eventlog.Open(eventSourceName); err == nil {
+		handlers = append(handlers, &eventLogHandler{el: el})
 	}
-	slog.SetDefault(slog.New(&eventLogHandler{el: el}))
+	if lf, err := diag.OpenLogFile(filepath.Join(programDataDir(), "helper.log"), 2<<20); err == nil {
+		handlers = append(handlers, slog.NewTextHandler(lf, nil))
+	}
+	if len(handlers) > 0 {
+		slog.SetDefault(slog.New(diag.NewFanout(handlers...)))
+	}
 }
 
 // eventLogHandler 把 slog 记录映射为事件日志条目（级别 → Info/Warning/Error）。

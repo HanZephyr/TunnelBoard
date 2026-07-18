@@ -82,7 +82,8 @@ func TestCommercialAndAIDebugModulesStayRemoved(t *testing.T) {
 	}
 }
 
-func TestNewAppDoesNotCreatePersistentLog(t *testing.T) {
+// 运行日志按用户决策持久化到数据目录 logs/（滚动截断），且只写在该目录内。
+func TestNewAppCreatesLogOnlyInsideDataDir(t *testing.T) {
 	configRoot := t.TempDir()
 	t.Setenv("AppData", configRoot)
 	t.Setenv("XDG_CONFIG_HOME", configRoot)
@@ -93,8 +94,11 @@ func TestNewAppDoesNotCreatePersistentLog(t *testing.T) {
 	if app.initErr != nil {
 		t.Fatal(app.initErr)
 	}
-	logPath := filepath.Join(configRoot, "TunnelBoard", "tunnelboard.log")
-	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
-		t.Fatalf("persistent runtime log must not be created, stat error = %v", err)
+	if app.logFile != nil {
+		t.Cleanup(func() { _ = app.logFile.Close() })
+	}
+	logPath := filepath.Join(configRoot, "TunnelBoard", "logs", "tunnelboard.log")
+	if _, err := os.Stat(logPath); err != nil {
+		t.Fatalf("runtime log should be created inside data dir logs/: %v", err)
 	}
 }
