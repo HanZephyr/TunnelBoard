@@ -47,3 +47,22 @@ func TestOwnerSIDRoundTrip(t *testing.T) {
 		t.Fatal("empty sid must be rejected")
 	}
 }
+
+// elevatedInstallArgs 必须把整个 ArgumentList 作为带引号的字符串数组传递，
+// 防止 PowerShell 把 -owner 解析为 Start-Process 的命名参数（线上复现的 NamedParameterNotFound）。
+func TestElevatedInstallArgsQuotesArgumentList(t *testing.T) {
+	args := elevatedInstallArgs(`C:\path with space\tunnelboard-helper.exe`, "S-1-5-21-1000")
+	if len(args) != 5 || args[3] != "-Command" {
+		t.Fatalf("args = %v", args)
+	}
+	ps := args[4]
+	want := `Start-Process -Verb RunAs -Wait -FilePath 'C:\path with space\tunnelboard-helper.exe' -ArgumentList '-install','-owner','S-1-5-21-1000'`
+	if ps != want {
+		t.Fatalf("ps command =\n%s\nwant\n%s", ps, want)
+	}
+	// 单引号转义：路径含撇号时不得截断字符串
+	esc := elevatedInstallArgs(`C:\o'brien\helper.exe`, "S-1-5")
+	if !strings.Contains(esc[4], `o''brien`) {
+		t.Fatalf("apostrophe must be doubled: %s", esc[4])
+	}
+}

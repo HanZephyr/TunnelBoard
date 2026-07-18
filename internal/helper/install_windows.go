@@ -51,14 +51,25 @@ func elevateInstall() error {
 	if err != nil {
 		return fmt.Errorf("helper: resolve current user: %w", err)
 	}
-	cmd := exec.Command(
-		"powershell", "-NoProfile", "-WindowStyle", "Hidden", "-Command",
-		"Start-Process", "-Verb", "RunAs", "-Wait", "-FilePath", exe, "-ArgumentList", "-install", "-owner", u.Uid,
-	)
+	cmd := exec.Command("powershell", elevatedInstallArgs(exe, u.Uid)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("helper: elevated install failed: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// elevatedInstallArgs 构造 PowerShell 命令行。ArgumentList 必须整体为带引号的字符串数组：
+// 不加引号时 PowerShell 会把 -owner 解析为 Start-Process 自身的命名参数
+// （NamedParameterNotFound，issue #1 修复后的实际复现错误）。
+func elevatedInstallArgs(exe, ownerSID string) []string {
+	ps := fmt.Sprintf("Start-Process -Verb RunAs -Wait -FilePath '%s' -ArgumentList '-install','-owner','%s'",
+		escapePSSingleQuoted(exe), escapePSSingleQuoted(ownerSID))
+	return []string{"-NoProfile", "-WindowStyle", "Hidden", "-Command", ps}
+}
+
+// escapePSSingleQuoted 转义 PowerShell 单引号字符串内的单引号。
+func escapePSSingleQuoted(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }
 
 // helperBinaryPath 定位 helper 二进制：环境变量覆盖优先，否则与主程序同目录。
