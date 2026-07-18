@@ -33,3 +33,6 @@ build/caddy/
 
 # packaging output
 build/bin/
+
+# user-exported artifacts
+logs/
