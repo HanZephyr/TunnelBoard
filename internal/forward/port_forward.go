@@ -50,10 +50,26 @@ type RuntimeEvent struct {
 	Err  error
 }
 
+// ChainDialer 是 LocalForward 的拨号接缝：返回末跳客户端、整链关闭函数与
+// "首跳是否池共享"标记；shared=true 时 forward 自身的 keepalive 探测跳过
+// （池已做），仅保留 client.Wait() 断线发现。
+type ChainDialer func(hosts []model.SSHHost, verifier HostKeyVerifier) (client *ssh.Client, closeChain func(), shared bool, err error)
+
+// defaultChainDialer 保持历史行为：每条 Forward 独占拨号（shared=false）。
+// 经 dialChain 变量转发，保留测试注入 fake 驱动重连路径的接缝。
+func defaultChainDialer(hosts []model.SSHHost, verifier HostKeyVerifier) (*ssh.Client, func(), bool, error) {
+	client, closeChain, err := dialChain(hosts, verifier)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return client, closeChain, false, nil
+}
+
 type LocalForward struct {
 	forward  model.Forward
 	hosts    []model.SSHHost
 	verifier HostKeyVerifier
+	dialer   ChainDialer
 
 	mu          sync.Mutex
 	started     bool
@@ -70,11 +86,15 @@ type LocalForward struct {
 	wg          sync.WaitGroup
 }
 
-func NewLocalForward(fw model.Forward, hosts []model.SSHHost, verifier HostKeyVerifier) *LocalForward {
+func NewLocalForward(fw model.Forward, hosts []model.SSHHost, verifier HostKeyVerifier, dialer ChainDialer) *LocalForward {
+	if dialer == nil {
+		dialer = defaultChainDialer
+	}
 	return &LocalForward{
 		forward:  fw,
 		hosts:    append([]model.SSHHost{}, hosts...),
 		verifier: verifier,
+		dialer:   dialer,
 	}
 }
 
@@ -105,7 +125,7 @@ func (f *LocalForward) Start() error {
 		"timeout_ms", f.lastHost().TimeoutMs,
 	)
 
-	client, closeChain, err := dialSSHChain(f.hosts, f.verifier)
+	client, closeChain, shared, err := f.dialer(f.hosts, f.verifier)
 	if err != nil {
 		f.setRunErr(err)
 		slog.Error("forward initial dial failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", err)
@@ -172,7 +192,7 @@ func (f *LocalForward) Start() error {
 	} else {
 		go f.serveLocal(done)
 	}
-	go f.monitorClientLifecycle(client)
+	go f.monitorClientLifecycle(client, shared)
 	return nil
 }
 
@@ -375,11 +395,11 @@ func (f *LocalForward) handleRemoteConn(remoteConn net.Conn) {
 	bridge(remoteConn, localConn)
 }
 
-func (f *LocalForward) monitorClientLifecycle(client *ssh.Client) {
+func (f *LocalForward) monitorClientLifecycle(client *ssh.Client, shared bool) {
 	defer f.closeEvents()
 
 	for {
-		disconnectErr := f.waitClientLoss(client)
+		disconnectErr := f.waitClientLoss(client, shared)
 		if disconnectErr == nil || f.isStopping() {
 			return
 		}
@@ -391,7 +411,7 @@ func (f *LocalForward) monitorClientLifecycle(client *ssh.Client) {
 		})
 		f.setClient(nil, nil)
 
-		reconnectedClient, reconnectClose, reconnectErr := f.reconnectWithBackoff()
+		reconnectedClient, reconnectClose, reconnectShared, reconnectErr := f.reconnectWithBackoff()
 		if reconnectErr != nil {
 			f.setRunErr(fmt.Errorf("%v: %w", disconnectErr, reconnectErr))
 			slog.Error("forward reconnect failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", reconnectErr)
@@ -407,10 +427,14 @@ func (f *LocalForward) monitorClientLifecycle(client *ssh.Client) {
 		slog.Info("forward reconnected", "forward_id", f.forward.ID, "name", f.forward.Name)
 		f.setClient(reconnectedClient, reconnectClose)
 		client = reconnectedClient
+		shared = reconnectShared
 	}
 }
 
-func (f *LocalForward) waitClientLoss(client *ssh.Client) error {
+// waitClientLoss 等待当前连接断开。shared=true（首跳来自连接池）时跳过
+// forward 自身的 keepalive 探测（池已按首跳间隔探测），仅保留 client.Wait()
+// 断线发现路径。
+func (f *LocalForward) waitClientLoss(client *ssh.Client, shared bool) error {
 	if client == nil {
 		return nil
 	}
@@ -445,7 +469,7 @@ func (f *LocalForward) waitClientLoss(client *ssh.Client) error {
 	}()
 
 	interval := keepAliveInterval(f.lastHost())
-	if interval > 0 {
+	if !shared && interval > 0 {
 		go func() {
 			ticker := time.NewTicker(interval)
 			defer ticker.Stop()
@@ -477,10 +501,10 @@ func (f *LocalForward) waitClientLoss(client *ssh.Client) error {
 	}
 }
 
-func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), error) {
+func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), bool, error) {
 	stop := f.stopSignal()
 	if stop == nil {
-		return nil, nil, nil
+		return nil, nil, false, nil
 	}
 
 	deadline := time.Now().Add(reconnectTimeout)
@@ -495,12 +519,12 @@ func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), error) {
 		}
 
 		if !waitOrStop(minDuration(wait, remaining), stop) {
-			return nil, nil, nil
+			return nil, nil, false, nil
 		}
 		attempt++
 		slog.Info("forward reconnect attempt", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "wait", wait.String())
 
-		client, closeChain, err := dialChain(f.hosts, f.verifier)
+		client, closeChain, shared, err := f.dialer(f.hosts, f.verifier)
 		if err == nil {
 			if normalizeForwardMode(f.forward.Mode) == "remote" {
 				ln, listenErr := f.bindRemoteListener(client)
@@ -514,7 +538,7 @@ func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), error) {
 				f.replaceListener(ln)
 			}
 			slog.Info("forward reconnect succeeded", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt)
-			return client, closeChain, nil
+			return client, closeChain, shared, nil
 		}
 
 		lastErr = err
@@ -522,7 +546,7 @@ func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), error) {
 		// 失败（端口冲突）不算终态，走上面的 continue 继续退避。
 		if IsTerminalError(err) {
 			slog.Error("forward reconnect hit terminal error", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "err", err)
-			return nil, nil, err
+			return nil, nil, false, err
 		}
 		slog.Warn("forward reconnect failed", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "err", err)
 		wait = nextReconnectWait(wait)
@@ -531,7 +555,7 @@ func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), error) {
 	if lastErr == nil {
 		lastErr = errors.New("reconnect timeout")
 	}
-	return nil, nil, fmt.Errorf("reconnect timeout after %s: %w", reconnectTimeout, lastErr)
+	return nil, nil, false, fmt.Errorf("reconnect timeout after %s: %w", reconnectTimeout, lastErr)
 }
 
 func nextReconnectWait(current time.Duration) time.Duration {
@@ -798,23 +822,42 @@ func dialSSHChain(hosts []model.SSHHost, verifier HostKeyVerifier) (*ssh.Client,
 		return nil, nil, fmt.Errorf("at least one ssh host is required")
 	}
 
-	clients := make([]*ssh.Client, 0, len(hosts))
 	first, err := dialSSH(hosts[0], verifier)
 	if err != nil {
 		return nil, nil, err
 	}
-	clients = append(clients, first)
-	current := first
+	var closeOnce sync.Once
+	closeFirst := func() {
+		closeOnce.Do(func() { _ = first.Close() })
+	}
+	return dialChainFrom(first, closeFirst, hosts, verifier)
+}
 
+// dialChainFrom 从首跳 first 出发逐跳穿透 hosts[1:]，返回末跳客户端与整链
+// 释放函数（幂等，含 closeFirst）。closeFirst 定义首跳的释放动作：独占链路
+// 为 Close，池共享链路为归还引用。是 dialSSHChain 与 SSHConnPool 的公共穿链逻辑。
+func dialChainFrom(first sshClient, closeFirst func(), hosts []model.SSHHost, verifier HostKeyVerifier) (*ssh.Client, func(), error) {
+	if len(hosts) == 1 {
+		client, ok := first.(*ssh.Client)
+		if !ok {
+			closeFirst()
+			return nil, nil, fmt.Errorf("forward: first hop ssh client has unexpected type %T", first)
+		}
+		return client, closeFirst, nil
+	}
+
+	closers := make([]func(), 0, len(hosts))
+	closers = append(closers, closeFirst)
 	closeOnce := sync.Once{}
 	closeAll := func() {
 		closeOnce.Do(func() {
-			for i := len(clients) - 1; i >= 0; i-- {
-				_ = clients[i].Close()
+			for i := len(closers) - 1; i >= 0; i-- {
+				closers[i]()
 			}
 		})
 	}
 
+	current := first
 	for i := 1; i < len(hosts); i++ {
 		next := hosts[i]
 		conf, err := makeSSHClientConfig(next, verifier)
@@ -844,11 +887,12 @@ func dialSSHChain(hosts []model.SSHHost, verifier HostKeyVerifier) (*ssh.Client,
 		}
 
 		client := ssh.NewClient(cconn, chans, reqs)
-		clients = append(clients, client)
+		closers = append(closers, func() { _ = client.Close() })
 		current = client
 	}
 
-	return current, closeAll, nil
+	// len(hosts) > 1 时 current 必为循环内 ssh.NewClient 的产物。
+	return current.(*ssh.Client), closeAll, nil
 }
 
 // normalizeHostAddress 统一地址归一化：去空白、默认端口 22。拨号地址与主机密钥

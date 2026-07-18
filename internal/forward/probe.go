@@ -12,18 +12,24 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// TestSSHHostLatency measures pure SSH channel round-trip latency via keepalive.
-func TestSSHHostLatency(client *ssh.Client) (time.Duration, error) {
-	if client == nil {
-		return 0, fmt.Errorf("ssh client is nil")
-	}
-
+// sendKeepAliveRequest 发送一次 keepalive@openssh.com 请求并测量往返时延；
+// LocalForward 探测循环（经 TestSSHHostLatency）与 SSHConnPool 池级 keepalive
+// 共用它，避免两份探测实现。
+func sendKeepAliveRequest(client sshClient) (time.Duration, error) {
 	start := time.Now()
 	_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
 	if err != nil {
 		return 0, err
 	}
 	return time.Since(start), nil
+}
+
+// TestSSHHostLatency measures pure SSH channel round-trip latency via keepalive.
+func TestSSHHostLatency(client *ssh.Client) (time.Duration, error) {
+	if client == nil {
+		return 0, fmt.Errorf("ssh client is nil")
+	}
+	return sendKeepAliveRequest(client)
 }
 
 // TestSSHHostConnection verifies SSH handshake/auth against the SSH host.

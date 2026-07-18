@@ -66,6 +66,7 @@ func newReconnectTestForward() *LocalForward {
 		model.Forward{ID: 1, Name: "t", Mode: "local"},
 		[]model.SSHHost{{Host: "example.com", User: "tester"}},
 		func(host string, port int, key ssh.PublicKey) error { return nil },
+		nil, // 默认拨号器：经 dialChain 变量独占拨号，shared 必为 false
 	)
 	// reconnectWithBackoff 以 keepStop 为停止信号；未 Start 的实例需要手动补一个。
 	lf.keepStop = make(chan struct{})
@@ -83,7 +84,7 @@ func TestReconnectWithBackoff_TerminalErrorAbortsImmediately(t *testing.T) {
 
 	lf := newReconnectTestForward()
 	start := time.Now()
-	client, closeFn, err := lf.reconnectWithBackoff()
+	client, closeFn, shared, err := lf.reconnectWithBackoff()
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, ErrHostKeyRejected) {
@@ -94,6 +95,9 @@ func TestReconnectWithBackoff_TerminalErrorAbortsImmediately(t *testing.T) {
 	}
 	if client != nil || closeFn != nil {
 		t.Fatalf("client/closeFn should be nil on terminal error")
+	}
+	if shared {
+		t.Fatalf("shared = true, want false (default dialer never shares)")
 	}
 	if calls != 1 {
 		t.Fatalf("dial calls = %d, want 1 (no retry after terminal error)", calls)
@@ -117,12 +121,15 @@ func TestReconnectWithBackoff_NonTerminalErrorRetries(t *testing.T) {
 	})
 
 	lf := newReconnectTestForward()
-	client, closeFn, err := lf.reconnectWithBackoff()
+	client, closeFn, shared, err := lf.reconnectWithBackoff()
 	if err != nil {
 		t.Fatalf("err = %v, want nil (retry should eventually succeed)", err)
 	}
 	if client == nil || closeFn == nil {
 		t.Fatalf("client/closeFn should be non-nil after successful retry")
+	}
+	if shared {
+		t.Fatalf("shared = true, want false (default dialer never shares)")
 	}
 	if calls != 2 {
 		t.Fatalf("dial calls = %d, want 2 (first fails, retry succeeds)", calls)

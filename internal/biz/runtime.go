@@ -48,9 +48,11 @@ type runHandle interface {
 
 // RuntimeBiz 是计划文档中的 Forward 运行时 Module：按 Vault 配置启停 Forward、
 // 跟踪断线重连状态机，不承载目录 CRUD（复用 CatalogBiz）。
+// pool 按首跳复用 SSH 连接：引用同一 SSH 主机的多条 Forward 共享一条首跳连接。
 type RuntimeBiz struct {
 	store   VaultStore
 	catalog *CatalogBiz
+	pool    *forward.SSHConnPool
 	newRun  func(fw model.Forward, hosts []model.SSHHost, verifier forward.HostKeyVerifier) runHandle
 
 	mu     sync.Mutex
@@ -58,16 +60,17 @@ type RuntimeBiz struct {
 	states map[int]RuntimeStatus
 }
 
-// NewRuntimeBiz 以默认工厂（forward.NewLocalForward）组装运行时 Module。
+// NewRuntimeBiz 以默认工厂（forward.NewLocalForward + 首跳连接池）组装运行时 Module。
 func NewRuntimeBiz(store VaultStore) *RuntimeBiz {
 	b := &RuntimeBiz{
 		store:   store,
 		catalog: NewCatalogBiz(store),
+		pool:    forward.NewSSHConnPool(),
 		runs:    map[int]runHandle{},
 		states:  map[int]RuntimeStatus{},
 	}
 	b.newRun = func(fw model.Forward, hosts []model.SSHHost, verifier forward.HostKeyVerifier) runHandle {
-		return forward.NewLocalForward(fw, hosts, verifier)
+		return forward.NewLocalForward(fw, hosts, verifier, b.pool.DialChain)
 	}
 	return b
 }
@@ -189,7 +192,8 @@ func (b *RuntimeBiz) Stop(id int) error {
 	return run.Stop()
 }
 
-// Shutdown 停止全部运行中的实例（应用显式退出路径由上层调用）。
+// Shutdown 停止全部运行中的实例（应用显式退出路径由上层调用），
+// 随后关闭连接池中的全部池化首跳连接。
 func (b *RuntimeBiz) Shutdown() {
 	b.mu.Lock()
 	runs := make([]runHandle, 0, len(b.runs))
@@ -203,6 +207,7 @@ func (b *RuntimeBiz) Shutdown() {
 	for _, run := range runs {
 		_ = run.Stop()
 	}
+	b.pool.CloseAll()
 }
 
 // Status 返回单条 Forward 的运行时状态；从未启动过返回 false。

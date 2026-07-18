@@ -4,8 +4,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
+	"io"
+	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -541,6 +544,131 @@ func TestRuntimeShutdownStopsAll(t *testing.T) {
 	for _, id := range []int{1, 2} {
 		if st, _ := b.Status(id); st.Status != RuntimeStateStopped {
 			t.Fatalf("Status(%d) = %s, want stopped", id, st.Status)
+		}
+	}
+}
+
+// countingSSHServer 是进程内假 SSH 服务器：接受任意密码认证、响应 keepalive
+// 请求、接受并立即关闭 direct-tcpip 通道；统计接入的 TCP 连接数以验证连接复用。
+type countingSSHServer struct {
+	addr      string
+	port      int
+	hostFP    string
+	connCount int32
+	listener  net.Listener
+}
+
+func startCountingSSHServer(t *testing.T) *countingSSHServer {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate host key: %v", err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatalf("build host signer: %v", err)
+	}
+
+	config := &ssh.ServerConfig{
+		PasswordCallback: func(c ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
+			return nil, nil
+		},
+	}
+	config.AddHostKey(signer)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := &countingSSHServer{
+		addr:     "127.0.0.1",
+		port:     ln.Addr().(*net.TCPAddr).Port,
+		hostFP:   ssh.FingerprintSHA256(signer.PublicKey()),
+		listener: ln,
+	}
+	go srv.serve(config)
+	t.Cleanup(func() { _ = ln.Close() })
+	return srv
+}
+
+func (s *countingSSHServer) serve(config *ssh.ServerConfig) {
+	for {
+		nc, err := s.listener.Accept()
+		if err != nil {
+			return
+		}
+		atomic.AddInt32(&s.connCount, 1)
+		go s.handleConn(nc, config)
+	}
+}
+
+func (s *countingSSHServer) handleConn(nc net.Conn, config *ssh.ServerConfig) {
+	_, chans, reqs, err := ssh.NewServerConn(nc, config)
+	if err != nil {
+		_ = nc.Close()
+		return
+	}
+	go func() {
+		for req := range reqs {
+			if req.WantReply {
+				_ = req.Reply(true, nil)
+			}
+		}
+	}()
+	for ch := range chans {
+		conn, chReqs, err := ch.Accept()
+		if err != nil {
+			continue
+		}
+		// 通道保持到客户端主动关闭（读到 EOF 后再关服务端一侧），
+		// 模拟真实 sshd 语义，避免与客户端 Close 竞态。
+		go func(c ssh.Channel, reqs <-chan *ssh.Request) {
+			ssh.DiscardRequests(reqs)
+			_, _ = io.Copy(io.Discard, c)
+			_ = c.Close()
+		}(conn, chReqs)
+	}
+}
+
+func (s *countingSSHServer) connections() int {
+	return int(atomic.LoadInt32(&s.connCount))
+}
+
+// 两条引用同一 SSH 主机的 Forward 启动后，池只建立一条首跳连接（服务器侧计数）。
+func TestRuntimeSharesFirstHopConnection(t *testing.T) {
+	srv := startCountingSSHServer(t)
+	store := &memStore{data: model.VaultData{
+		Version: 1,
+		Folders: []model.Folder{{ID: 1, Name: "工作"}},
+		SSHHosts: []model.SSHHost{
+			{ID: 1, Name: "h1", Host: srv.addr, Port: srv.port, User: "u", AuthType: "password", Password: "x"},
+		},
+		Forwards: []model.Forward{
+			{ID: 1, FolderID: 1, Name: "fw1", Mode: "local", ChainHostIDs: []int{1},
+				LocalHost: "127.0.0.1", LocalPort: 0, RemoteHost: "127.0.0.1", RemotePort: 1},
+			{ID: 2, FolderID: 1, Name: "fw2", Mode: "local", ChainHostIDs: []int{1},
+				LocalHost: "127.0.0.1", LocalPort: 0, RemoteHost: "127.0.0.1", RemotePort: 1},
+		},
+		HostKeys: []model.HostKey{
+			{ID: 1, Host: srv.addr, Port: srv.port, KeyType: "ssh-ed25519", FingerprintSHA256: srv.hostFP},
+		},
+	}}
+	b := NewRuntimeBiz(store)
+
+	if err := b.Start(1); err != nil {
+		t.Fatalf("Start(1): %v", err)
+	}
+	if err := b.Start(2); err != nil {
+		t.Fatalf("Start(2): %v", err)
+	}
+	defer b.Shutdown()
+
+	if got := srv.connections(); got != 1 {
+		t.Fatalf("ssh server connections = %d, want 1 (forwards share the first-hop connection)", got)
+	}
+	for _, id := range []int{1, 2} {
+		if st, _ := b.Status(id); st.Status != RuntimeStateRunning {
+			t.Fatalf("Status(%d) = %s, want running", id, st.Status)
 		}
 	}
 }
