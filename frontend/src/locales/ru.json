@@ -92,6 +92,7 @@
         "clearSelection": "Снять выделение",
         "moveToPlaceholder": "Переместить в…",
         "deleteSelected": "Удалить",
+        "clearSelection": "Снять выбор",
         "modal": {
             "newTitle": "Новый форвард",
             "editTitle": "Изменить форвард",

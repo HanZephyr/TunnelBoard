@@ -1431,15 +1431,23 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
-  width: fit-content;
-  max-width: 100%;
+  flex-wrap: nowrap;
+  width: 100%;
   margin-bottom: 12px;
-  padding: 6px 12px;
+  padding: 8px 12px;
   background: var(--tb-surface-2);
   border: 1px solid var(--tb-border);
-  border-radius: var(--tb-radius-chip);
-  box-shadow: var(--tb-shadow-pop);
+  border-radius: 8px;
+}
+
+.batch-move-select {
+  width: 200px;
+  min-width: 140px;
+  flex-shrink: 1;
+}
+
+.batch-clear {
+  margin-left: auto;
 }
 
 .batch-count {

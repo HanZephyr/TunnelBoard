@@ -116,6 +116,11 @@ function toggleSelectAll() {
   selectedForwardIds.value = new Set(visibleForwards.value.map((forward) => forward.id))
 }
 
+// clearSelection 清空批量选择（批量工具条右侧 × 按钮）。
+function clearSelection() {
+  selectedForwardIds.value = new Set()
+}
+
 function toggleSelectForward(forwardId) {
   const next = new Set(selectedForwardIds.value)
   if (next.has(forwardId)) {
@@ -819,6 +824,14 @@ function chainLabel(forward) {
           </select>
           <button type="button" class="btn btn-sm btn-outline-danger" @click="deleteSelectedForwards">
             <i class="bi bi-trash3 me-1" aria-hidden="true"></i>{{ t('forwards.deleteSelected') }}
+          </button>
+          <button
+            type="button"
+            class="icon-ghost-btn batch-clear"
+            :aria-label="t('forwards.clearSelection')"
+            @click="clearSelection"
+          >
+            <i class="bi bi-x-lg" aria-hidden="true"></i>
           </button>
         </div>
 

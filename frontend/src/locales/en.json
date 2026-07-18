@@ -92,6 +92,7 @@
         "moveToPlaceholder": "Move to…",
         "deleteSelected": "Delete",
         "clearSelection": "Clear selection",
+        "clearSelection": "Clear selection",
         "modal": {
             "newTitle": "New Forward",
             "editTitle": "Edit Forward",

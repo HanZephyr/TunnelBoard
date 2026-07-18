@@ -91,6 +91,7 @@
         "selectedCount": "已選 {count} 項",
         "moveToPlaceholder": "移動到…",
         "deleteSelected": "刪除",
+        "clearSelection": "取消選取",
         "clearSelection": "清除選取",
         "modal": {
             "newTitle": "新增 Forward",
