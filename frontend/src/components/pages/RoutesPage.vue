@@ -251,6 +251,9 @@ async function toggleRouteFlag(route, field) {
     upstreamScheme: route.upstreamScheme || 'http',
     tlsSni: route.tlsSni || ''
   }
+  // Caddy 生效的前提是 hosts 启用：开 Caddy 联动开 hosts；关 hosts 联动关 Caddy
+  if (field === 'caddyEnabled' && payload.caddyEnabled) payload.hostsEnabled = true
+  if (field === 'hostsEnabled' && !payload.hostsEnabled) payload.caddyEnabled = false
   try {
     await callBackend(SaveWebRoute, payload)
     emit('vault-changed')

@@ -1,5 +1,5 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 const props = defineProps({
@@ -36,6 +36,20 @@ const forwardOptions = computed(() =>
     id: forward.id,
     label: `${forward.name} (${forward.localHost}:${forward.localPort})`
   }))
+)
+
+// Caddy 生效的前提是 hosts 启用：开 Caddy 联动开 hosts；关 hosts 联动关 Caddy
+watch(
+  () => props.form.caddyEnabled,
+  (enabled) => {
+    if (enabled) props.form.hostsEnabled = true
+  }
+)
+watch(
+  () => props.form.hostsEnabled,
+  (enabled) => {
+    if (!enabled) props.form.caddyEnabled = false
+  }
 )
 </script>
 

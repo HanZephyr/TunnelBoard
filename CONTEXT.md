@@ -56,7 +56,7 @@ _Avoid_: 可忽略的连接告警
 - Caddy 仅为 HTTP(S) 上游的本地转发提供可选的本地域名与 HTTPS 入口；其他协议直接使用其本地监听地址和端口。
 - 本地监听端口在启动与连接测试时必须由实际绑定结果兜底；编辑时应尽早显示冲突预警。
 - SSH 主机指纹校验默认开启：首次显式信任，变化即阻断；不提供默认绕过。
-- Web Route 的 hosts 映射和 Caddy 代理为独立可选功能：仅映射 hosts 时使用“域名 + 端口”访问。
+- Web Route 的 hosts 映射和 Caddy 代理为可选功能；Caddy 生效的前提是 hosts 启用（开 Caddy 联动开 hosts，关 hosts 联动关 Caddy）；仅映射 hosts 时使用“域名 + 端口”访问。
 - 首次使用特权功能时安装受限辅助服务；主程序不以管理员权限常驻运行。
 - Web Route 允许用户配置完整域名；Caddy 对所有本地入口强制使用本地 CA，不申请公网证书。
 - Web Route 支持 HTTP 和 HTTPS 上游；HTTPS 上游由用户显式指定 TLS SNI 名称并严格校验证书。
