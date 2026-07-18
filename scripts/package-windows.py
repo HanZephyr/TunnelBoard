@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -29,6 +30,16 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def stop_running_instances() -> None:
+    """打包前自动退出运行中的实例：主程序与 detached Caddy 强制终止（无未保存状态，
+    服务由 go build 的 rename 输出语义覆盖，一般无需停）；失败均忽略（可能未在运行）。"""
+    for image in ["tunnelboard.exe", "caddy.exe"]:
+        subprocess.run(["taskkill", "/F", "/IM", image], capture_output=True)
+    subprocess.run(["sc.exe", "stop", "TunnelBoardHelper"], capture_output=True)
+    subprocess.run(["taskkill", "/F", "/IM", "tunnelboard-helper.exe"], capture_output=True)
+    time.sleep(1)
+
+
 def assert_unlocked(path: Path) -> None:
     """目标文件被运行中的进程占用时（服务/应用未退出）给出可操作的提示而不是晦涩的 unlinkat 报错。"""
     if not path.exists():
@@ -47,7 +58,8 @@ def assert_unlocked(path: Path) -> None:
 
 
 def main() -> int:
-    # 0. 预检目标文件未被运行中的进程锁定
+    # 0. 自动退出运行中的实例，再预检目标文件未被锁定
+    stop_running_instances()
     assert_unlocked(BIN / "tunnelboard.exe")
     assert_unlocked(BIN / "tunnelboard-helper.exe")
     assert_unlocked(BIN / "caddy" / "caddy.exe")
