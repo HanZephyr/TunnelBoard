@@ -29,7 +29,28 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def assert_unlocked(path: Path) -> None:
+    """目标文件被运行中的进程占用时（服务/应用未退出）给出可操作的提示而不是晦涩的 unlinkat 报错。"""
+    if not path.exists():
+        return
+    try:
+        with open(path, "ab"):
+            pass
+    except OSError:
+        hint = (
+            f"文件被占用：{path}\n"
+            "请先释放后再打包：\n"
+            "  - 若 tunnelboard.exe：托盘图标右键 → 退出（关窗只是隐藏到托盘）\n"
+            "  - 若 tunnelboard-helper.exe：管理员终端执行 sc.exe stop TunnelBoardHelper"
+        )
+        sys.exit(hint)
+
+
 def main() -> int:
+    # 0. 预检目标文件未被运行中的进程锁定
+    assert_unlocked(BIN / "tunnelboard.exe")
+    assert_unlocked(BIN / "tunnelboard-helper.exe")
+    assert_unlocked(BIN / "caddy" / "caddy.exe")
     # 1. 前端构建（pnpm shim 在本环境不可靠，走 corepack；wails build -s 跳过前端）
     run(["corepack", "pnpm", "build"], cwd=ROOT / "frontend")
     # 2. 钉版 Caddy（不存在或哈希不符时下载校验）
