@@ -1430,24 +1430,64 @@
   z-index: 20;
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: nowrap;
+  gap: 6px;
   width: 100%;
   margin-bottom: 12px;
-  padding: 8px 12px;
+  padding: 6px 10px;
   background: var(--tb-surface-2);
   border: 1px solid var(--tb-border);
   border-radius: 8px;
 }
 
+.batch-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tb-ink-2);
+  white-space: nowrap;
+  margin-right: 4px;
+}
+
+/* 批量动作按钮：图标+文本的低调幽灵样式，语义色点缀 */
+.batch-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  color: var(--tb-ink-2);
+  flex-shrink: 0;
+}
+.batch-action:hover {
+  background: var(--tb-surface);
+}
+.batch-action.ok { color: var(--tb-ok); }
+.batch-action.ok:hover { background: color-mix(in srgb, var(--tb-ok) 12%, transparent); }
+.batch-action.warn { color: var(--tb-warn); }
+.batch-action.warn:hover { background: color-mix(in srgb, var(--tb-warn) 12%, transparent); }
+.batch-action.danger { color: var(--tb-danger); }
+.batch-action.danger:hover { background: color-mix(in srgb, var(--tb-danger) 12%, transparent); }
+.batch-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .batch-move-select {
-  width: 200px;
-  min-width: 140px;
+  width: 180px;
+  min-width: 120px;
   flex-shrink: 1;
+  margin-left: 4px;
 }
 
 .batch-clear {
   margin-left: auto;
+  flex-shrink: 0;
 }
 
 .batch-count {

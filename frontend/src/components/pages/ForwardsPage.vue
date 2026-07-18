@@ -799,19 +799,19 @@ function chainLabel(forward) {
           <span class="batch-count">{{ t('forwards.selectedCount', { count: selectedForwardIds.size }) }}</span>
           <button
             type="button"
-            class="btn btn-sm btn-outline-success"
+            class="batch-action ok"
             :disabled="batchPending"
             @click="startSelectedForwards"
           >
-            <i class="bi bi-play-fill me-1" aria-hidden="true"></i>{{ t('forwards.startSelected') }}
+            <i class="bi bi-play-fill" aria-hidden="true"></i>{{ t('forwards.startSelected') }}
           </button>
           <button
             type="button"
-            class="btn btn-sm btn-outline-warning"
+            class="batch-action warn"
             :disabled="batchPending"
             @click="stopSelectedForwards"
           >
-            <i class="bi bi-stop-fill me-1" aria-hidden="true"></i>{{ t('forwards.stopSelected') }}
+            <i class="bi bi-stop-fill" aria-hidden="true"></i>{{ t('forwards.stopSelected') }}
           </button>
           <select
             v-model="moveTargetId"
@@ -822,12 +822,12 @@ function chainLabel(forward) {
             <option value="">{{ t('forwards.moveToPlaceholder') }}</option>
             <option v-for="target in moveTargets" :key="target.id" :value="target.id">{{ target.label }}</option>
           </select>
-          <button type="button" class="btn btn-sm btn-outline-danger" @click="deleteSelectedForwards">
-            <i class="bi bi-trash3 me-1" aria-hidden="true"></i>{{ t('forwards.deleteSelected') }}
+          <button type="button" class="batch-action danger" @click="deleteSelectedForwards">
+            <i class="bi bi-trash3" aria-hidden="true"></i>{{ t('forwards.deleteSelected') }}
           </button>
           <button
             type="button"
-            class="icon-ghost-btn batch-clear"
+            class="btn icon-ghost-btn batch-clear"
             :aria-label="t('forwards.clearSelection')"
             @click="clearSelection"
           >
