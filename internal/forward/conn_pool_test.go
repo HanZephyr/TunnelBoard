@@ -425,3 +425,31 @@ func TestPoolKeepAliveInterval(t *testing.T) {
 		t.Fatalf("pool keepalive interval = %v, want 7s", got)
 	}
 }
+
+// Stats 快照：两次 acquire 后 refs=2 且 alive；release 归零后 alive=false。
+func TestPoolStats(t *testing.T) {
+	dialer := &fakePoolDialer{}
+	pool := newSSHConnPoolWithDial(dialer.dial)
+	host := model.SSHHost{ID: 7, Host: "10.0.0.1", Port: 22}
+
+	_, release1, shared1, err := pool.dialChain([]model.SSHHost{host}, nil)
+	if err != nil || !shared1 {
+		t.Fatalf("dial1: %v shared=%v", err, shared1)
+	}
+	_, release2, _, err := pool.dialChain([]model.SSHHost{host}, nil)
+	if err != nil {
+		t.Fatalf("dial2: %v", err)
+	}
+
+	stats := pool.Stats()
+	if len(stats) != 1 || stats[0].HostID != 7 || stats[0].Refs != 2 || !stats[0].Alive {
+		t.Fatalf("stats = %+v, want [{7 refs:2 alive:true}]", stats)
+	}
+
+	release1()
+	release2()
+	stats = pool.Stats()
+	if len(stats) != 1 || stats[0].Alive {
+		t.Fatalf("after release all, stats = %+v, want alive=false", stats)
+	}
+}

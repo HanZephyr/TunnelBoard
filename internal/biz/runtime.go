@@ -210,6 +210,11 @@ func (b *RuntimeBiz) Shutdown() {
 	b.pool.CloseAll()
 }
 
+// PoolStats 返回 SSH 连接池快照（Overview 展示各首跳主机的连接复用情况）。
+func (b *RuntimeBiz) PoolStats() []forward.PoolStat {
+	return b.pool.Stats()
+}
+
 // Status 返回单条 Forward 的运行时状态；从未启动过返回 false。
 func (b *RuntimeBiz) Status(id int) (RuntimeStatus, bool) {
 	b.mu.Lock()

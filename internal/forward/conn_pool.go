@@ -1,6 +1,7 @@
 package forward
 
 import (
+	"sort"
 	"fmt"
 	"net"
 	"sync"
@@ -253,4 +254,33 @@ func (p *SSHConnPool) CloseAll() {
 			closeAll()
 		}
 	}
+}
+
+// PoolStat 是单个共享连接条目的状态快照（界面展示连接复用情况用）。
+type PoolStat struct {
+	HostID int  `json:"hostId"`
+	Refs   int  `json:"refs"`
+	Alive  bool `json:"alive"`
+}
+
+// Stats 返回全部共享连接条目的快照（按 HostID 升序）；无并发副作用。
+func (p *SSHConnPool) Stats() []PoolStat {
+	p.mu.Lock()
+	byID := make(map[int]*poolEntry, len(p.entries))
+	ids := make([]int, 0, len(p.entries))
+	for id, e := range p.entries {
+		byID[id] = e
+		ids = append(ids, id)
+	}
+	p.mu.Unlock()
+
+	sort.Ints(ids)
+	out := make([]PoolStat, 0, len(ids))
+	for _, id := range ids {
+		e := byID[id]
+		e.mu.Lock()
+		out = append(out, PoolStat{HostID: id, Refs: e.refs, Alive: e.client != nil && !e.dead})
+		e.mu.Unlock()
+	}
+	return out
 }

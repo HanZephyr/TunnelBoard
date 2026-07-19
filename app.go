@@ -541,6 +541,14 @@ func (a *App) GetRuntimeSnapshot() ([]biz.RuntimeStatus, error) {
 	return a.runtime.Snapshot()
 }
 
+// GetConnPoolStats 返回 SSH 连接池快照（首跳主机的活跃连接与复用引用数）。
+func (a *App) GetConnPoolStats() ([]forward.PoolStat, error) {
+	if err := a.ensureReady(); err != nil {
+		return nil, err
+	}
+	return a.runtime.PoolStats(), nil
+}
+
 // CheckLocalPortAvailable 预检本地监听端口是否可绑定，供编辑 Forward 时尽早提示端口冲突。
 func (a *App) CheckLocalPortAvailable(host string, port int) error {
 	if err := a.ensureReady(); err != nil {
