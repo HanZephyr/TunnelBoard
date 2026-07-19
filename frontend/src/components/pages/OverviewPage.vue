@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
+  GetConnPoolStats,
   GetRouteStatus,
   GetRuntimeSnapshot,
   StopForward
@@ -63,6 +64,18 @@ async function refreshRuntime() {
   }
 }
 
+// ---- SSH 连接池统计（与 runtime 同一 5s 轮询周期顺带刷新）----
+const connPool = ref([])
+
+async function refreshConnPool() {
+  try {
+    const items = await callBackend(GetConnPoolStats)
+    connPool.value = Array.isArray(items) ? items : []
+  } catch (_) {
+    /* 保留现有状态，下一轮轮询再试 */
+  }
+}
+
 // ---- Web 路由系统状态轮询（5s，卸载清理）----
 const routeStatusMap = ref({})
 let routeStatusTimer = null
@@ -86,7 +99,11 @@ async function refreshRouteStatus() {
 
 onMounted(() => {
   void refreshRuntime()
-  runtimeTimer = window.setInterval(refreshRuntime, 5000)
+  void refreshConnPool()
+  runtimeTimer = window.setInterval(() => {
+    void refreshRuntime()
+    void refreshConnPool()
+  }, 5000)
   void refreshRouteStatus()
   routeStatusTimer = window.setInterval(refreshRouteStatus, 5000)
 })
@@ -122,6 +139,25 @@ const activeForwards = computed(() =>
 
 const errorForwards = computed(() =>
   props.forwards.filter((forward) => runtimeOf(forward.id).status === 'error')
+)
+
+// ---- SSH 连接树：pool 条目 × vault 首跳匹配 ----
+function hostOf(hostId) {
+  return props.sshHosts.find((host) => host.id === hostId) || null
+}
+
+function firstHopForwards(hostId) {
+  return props.forwards.filter(
+    (forward) => Array.isArray(forward.chainHostIds) && forward.chainHostIds[0] === hostId
+  )
+}
+
+const connTrees = computed(() =>
+  connPool.value.map((entry) => ({
+    entry,
+    host: hostOf(entry.hostId),
+    forwards: firstHopForwards(entry.hostId)
+  }))
 )
 
 // ---- Forward 启停（与 ForwardsPage 同一绑定、同一参数：StopForward(forward.id)）----
@@ -185,6 +221,48 @@ function routeFlowLabel(forward) {
       <div class="stat-card">
         <div class="stat-value muted">{{ statusCounts.stopped }}</div>
         <div class="stat-label">{{ t('forwards.status.stopped') }}</div>
+      </div>
+    </div>
+
+    <!-- SSH 连接树（无连接池条目不显示整块） -->
+    <div v-if="connPool.length" class="overview-section">
+      <h2 class="overview-section-title">{{ t('overview.connections') }}</h2>
+      <div v-if="!connTrees.length" class="ov-empty-text">{{ t('overview.noActiveConnections') }}</div>
+      <div v-else class="conn-tree-list">
+        <div v-for="tree in connTrees" :key="tree.entry.hostId" class="conn-tree">
+          <div class="conn-host-row">
+            <i class="bi bi-hdd-network conn-host-icon" aria-hidden="true"></i>
+            <template v-if="tree.host">
+              <span class="conn-host-name" :title="tree.host.name">{{ tree.host.name }}</span>
+              <span class="conn-host-addr" :title="`${tree.host.user}@${tree.host.host}:${tree.host.port}`">
+                {{ tree.host.user }}@{{ tree.host.host }}:{{ tree.host.port }}
+              </span>
+            </template>
+            <span v-else class="conn-host-missing">#{{ tree.entry.hostId }}</span>
+            <span
+              class="conn-alive-dot"
+              :class="{ pulse: tree.entry.alive, off: !tree.entry.alive }"
+              :title="tree.entry.alive ? t('forwards.status.running') : t('forwards.status.stopped')"
+              aria-hidden="true"
+            ></span>
+            <span class="conn-refs-pill" :class="{ shared: tree.entry.refs > 1 }">
+              {{ t('overview.sharedCount', { count: tree.entry.refs }) }}
+            </span>
+          </div>
+          <div v-if="tree.forwards.length" class="conn-children">
+            <div v-for="forward in tree.forwards" :key="forward.id" class="conn-forward-row">
+              <StatusChip
+                :status="runtimeOf(forward.id).status"
+                :label="statusLabel(runtimeOf(forward.id).status)"
+              />
+              <span class="conn-forward-name" :title="forward.name">{{ forward.name }}</span>
+              <span class="conn-forward-route" :title="routeFlowLabel(forward)">{{ routeFlowLabel(forward) }}</span>
+              <span v-if="forward.chainHostIds.length > 1" class="conn-forward-hops">
+                → {{ t('overview.viaHops', { count: forward.chainHostIds.length }) }}
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 

@@ -46,7 +46,11 @@
         "routesTitle": "Web 路由",
         "routesEmpty": "暫無 Web 路由。",
         "errorsTitle": "最近錯誤",
-        "goEdit": "去編輯"
+        "goEdit": "去編輯",
+        "connections": "SSH 連線",
+        "sharedCount": "複用 × {count}",
+        "viaHops": "經 {count} 跳",
+        "noActiveConnections": "暫無活躍 SSH 連線。"
     },
     "forwards": {
         "foldersTitle": "資料夾",

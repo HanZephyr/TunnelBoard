@@ -1058,6 +1058,143 @@
   color: var(--tb-ink-2);
 }
 
+/* SSH 连接树：父行无卡片，子行树线缩进 */
+.conn-tree-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.conn-tree {
+  min-width: 0;
+}
+
+.conn-host-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.conn-host-icon {
+  color: var(--tb-ink-3);
+  font-size: 15px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.conn-host-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--tb-ink);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.conn-host-addr {
+  font-family: var(--tb-mono);
+  font-size: 12px;
+  color: var(--tb-ink-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.conn-host-missing {
+  font-size: 13px;
+  color: var(--tb-ink-3);
+}
+
+.conn-alive-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tb-ok);
+  flex: 0 0 auto;
+}
+
+.conn-alive-dot.pulse {
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.conn-alive-dot.off {
+  background: var(--tb-ink-3);
+}
+
+.conn-refs-pill {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: var(--tb-radius-chip);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  background: var(--tb-surface-2);
+  color: var(--tb-ink-2);
+  flex: 0 0 auto;
+}
+
+.conn-refs-pill.shared {
+  background: var(--tb-accent-soft);
+  color: var(--tb-accent);
+}
+
+.conn-children {
+  margin-top: 6px;
+  margin-left: 20px;
+  padding-left: 12px;
+  border-left: 1px solid var(--tb-border);
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.conn-forward-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.conn-forward-name {
+  font-size: 13px;
+  color: var(--tb-ink);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.conn-forward-route {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--tb-mono);
+  font-size: 12px;
+  color: var(--tb-ink-2);
+}
+
+.conn-forward-hops {
+  font-size: 12px;
+  color: var(--tb-ink-3);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
 /* ---------- Forwards 页（卡片列表） ---------- */
 .forward-card-list {
   display: grid;

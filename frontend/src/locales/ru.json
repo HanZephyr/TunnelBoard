@@ -46,7 +46,11 @@
         "routesTitle": "Веб-маршруты",
         "routesEmpty": "Веб-маршрутов пока нет.",
         "errorsTitle": "Последние ошибки",
-        "goEdit": "Перейти к редактированию"
+        "goEdit": "Перейти к редактированию",
+        "connections": "SSH-соединения",
+        "sharedCount": "Общее × {count}",
+        "viaHops": "через узлы: {count}",
+        "noActiveConnections": "Нет активных SSH-соединений."
     },
     "forwards": {
         "foldersTitle": "Папки",

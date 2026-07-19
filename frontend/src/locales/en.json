@@ -46,7 +46,11 @@
         "routesTitle": "Web Routes",
         "routesEmpty": "No web routes yet.",
         "errorsTitle": "Recent Errors",
-        "goEdit": "Go to edit"
+        "goEdit": "Go to edit",
+        "connections": "SSH Connections",
+        "sharedCount": "Shared × {count}",
+        "viaHops": "via {count} hops",
+        "noActiveConnections": "No active SSH connections."
     },
     "forwards": {
         "foldersTitle": "Folders",
