@@ -80,12 +80,13 @@ func (f *fakeCaddyAdapter) RootCACert(time.Duration) ([]byte, error) {
 
 // routerFixture 组装共享同一 fakeStore 的 catalog 与 router。
 type routerFixture struct {
-	store   *fakeStore
-	catalog *biz.CatalogBiz
-	router  *biz.RouterBiz
-	helper  *fakeHelperClient
-	caddy   *fakeCaddyAdapter
-	hosts   string
+	store      *fakeStore
+	catalog    *biz.CatalogBiz
+	router     *biz.RouterBiz
+	helper     *fakeHelperClient
+	caddy      *fakeCaddyAdapter
+	hosts      string
+	caddyJSON  string
 }
 
 func newRouterFixture(t *testing.T) *routerFixture {
@@ -94,10 +95,11 @@ func newRouterFixture(t *testing.T) *routerFixture {
 	catalog := biz.NewCatalogBiz(fs)
 	fh := &fakeHelperClient{}
 	fc := &fakeCaddyAdapter{}
-	hostsPath := filepath.Join(t.TempDir(), "hosts")
-	caddyConfigPath := filepath.Join(t.TempDir(), "caddy.json")
+	dir := t.TempDir()
+	hostsPath := filepath.Join(dir, "hosts")
+	caddyConfigPath := filepath.Join(dir, "caddy.json")
 	r := biz.NewRouterBiz(fs, catalog, fh, fc, hostsPath, caddyConfigPath)
-	return &routerFixture{store: fs, catalog: catalog, router: r, helper: fh, caddy: fc, hosts: hostsPath}
+	return &routerFixture{store: fs, catalog: catalog, router: r, helper: fh, caddy: fc, hosts: hostsPath, caddyJSON: caddyConfigPath}
 }
 
 func (f *routerFixture) seedForward(t *testing.T, mode string, port int) model.Forward {
@@ -398,6 +400,51 @@ func TestApplyRouteCaddyAlreadyRunningReloads(t *testing.T) {
 		if c.Op == helper.OpTrustLocalCA {
 			t.Fatalf("must not re-trust CA when already trusted: %+v", fx.helper.calls)
 		}
+	}
+}
+
+// 配置未变时短路：Caddy 已运行、磁盘 caddy.json 与新编译配置字节相同，
+// 应跳过 admin API 热重载（fakeCaddyAdapter.reloads 不增加），但 CaddyApplied 仍为 true。
+// 回归重复应用同一条路由、用户反复点"应用"等无效 reload 场景。
+func TestApplyRouteSkipsReloadWhenConfigUnchanged(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟"上一次应用已让 Caddy 跑起来、CA 已信任、caddy.json 已落盘"的稳态。
+	data, _ := fx.store.Load()
+	prevCfg, err := route.CompileCaddy(data)
+	if err != nil {
+		t.Fatalf("compile prev cfg: %v", err)
+	}
+	if err := os.WriteFile(fx.caddyJSON, prevCfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fx.caddy.running = true
+	if _, err := fx.store.Update(func(d *model.VaultData) error {
+		d.Prefs.CATrustedSHA256 = "deadbeef"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// 让 hosts 也已经是目标内容，避免 hosts 写入干扰判定。
+	block := helper.BlockBegin + "\r\n127.0.0.1 db.test\r\n" + helper.BlockEnd + "\r\n"
+	if err := os.WriteFile(fx.hosts, []byte(block), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	before := len(fx.caddy.reloads)
+	result, err := fx.router.ApplyRoute(rt.ID, nil)
+	if err != nil {
+		t.Fatalf("ApplyRoute: %v", err)
+	}
+	if !result.CaddyApplied || result.PortConflict != "" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if len(fx.caddy.reloads) != before {
+		t.Fatalf("reload must be skipped, reloads = %d (before %d)", len(fx.caddy.reloads), before)
 	}
 }
 

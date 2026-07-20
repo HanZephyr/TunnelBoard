@@ -1,6 +1,7 @@
 package biz
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -194,13 +195,20 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 		}
 	}
 	prevConfig, _ := os.ReadFile(b.caddyConfigPth)
-	if err := b.caddy.Reload(caddyConfig); err != nil {
+	// 短路：Caddy 已运行且新编译配置与磁盘 caddy.json 字节相同时，跳过 admin API 热重载。
+	// CompileCaddy 对同一输入字节稳定（路由/subjects 排序、json map 键排序），bytes.Equal 安全。
+	// 既避免无谓的 /load 请求，也避免 Caddy 落盘 caddy.json 时重写相同文件。
+	if prevRunning && bytes.Equal(prevConfig, caddyConfig) {
+		slog.Info("caddy config unchanged, skip reload")
+		result.CaddyApplied = true
+	} else if err := b.caddy.Reload(caddyConfig); err != nil {
 		b.rollbackHosts(prevEntries, hostsChanged)
 		slog.Error("reload caddy failed", "err", err)
 		return result, fmt.Errorf("reload caddy: %w", err)
+	} else {
+		slog.Info("caddy config reloaded")
+		result.CaddyApplied = true
 	}
-	slog.Info("caddy config reloaded")
-	result.CaddyApplied = true
 
 	if data.Prefs.CATrustedSHA256 == "" {
 		der, err := b.caddy.RootCACert(b.caWaitTimeout)
