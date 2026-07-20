@@ -183,11 +183,15 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 		return result, nil
 	}
 
-	if err := b.caddy.DiagnosePort(); err != nil {
-		// 443 冲突：不启动 Caddy，保留 hosts-only 访问；非致命。
-		slog.Warn("caddy port conflict, route stays hosts-only", "err", err)
-		result.PortConflict = err.Error()
-		return result, nil
+	// 仅在 Caddy 未运行时预检 443：已运行时走 admin API 热重载，不会重新 bind 443，
+	// 否则会因 Caddy 自身占着 443 而误判为冲突，导致后续路由的热重载永远不执行。
+	if !prevRunning {
+		if err := b.caddy.DiagnosePort(); err != nil {
+			// 443 冲突：不启动 Caddy，保留 hosts-only 访问；非致命。
+			slog.Warn("caddy port conflict, route stays hosts-only", "err", err)
+			result.PortConflict = err.Error()
+			return result, nil
+		}
 	}
 	prevConfig, _ := os.ReadFile(b.caddyConfigPth)
 	if err := b.caddy.Reload(caddyConfig); err != nil {

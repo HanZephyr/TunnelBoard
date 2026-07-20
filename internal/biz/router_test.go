@@ -53,8 +53,18 @@ type fakeCaddyAdapter struct {
 	stopCalls   int
 }
 
-func (f *fakeCaddyAdapter) DiagnosePort() error { return f.diagnoseErr }
-func (f *fakeCaddyAdapter) Running() bool       { return f.running }
+func (f *fakeCaddyAdapter) DiagnosePort() error {
+	if f.diagnoseErr != nil {
+		return f.diagnoseErr
+	}
+	// 模拟生产 Caddy 自身占着 443：已运行时端口预检必然失败，
+	// 用以验证业务层不会在已运行分支里被这次预检误伤。
+	if f.running {
+		return errors.New("caddy: 127.0.0.1:443 unavailable: bind: address in use")
+	}
+	return nil
+}
+func (f *fakeCaddyAdapter) Running() bool { return f.running }
 func (f *fakeCaddyAdapter) Reload(config []byte) error {
 	f.reloads = append(f.reloads, config)
 	if f.reloadErr != nil {
@@ -346,6 +356,48 @@ func TestPreviewRoute(t *testing.T) {
 	}
 	if len(preview.HostsRecords) != 1 || preview.HostsRecords[0] != (route.HostEntry{Domain: "grafana.example.com", IP: "127.0.0.1"}) {
 		t.Fatalf("HostsRecords = %+v", preview.HostsRecords)
+	}
+}
+
+// Caddy 已运行时再应用一条 Caddy 路由：跳过 443 端口预检，直接走 admin API 热重载，
+// 不报端口冲突、不重启 Caddy、不重复信任 CA。回归 issue：多路由只能有一条经 Caddy 接管。
+func TestApplyRouteCaddyAlreadyRunningReloads(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	// 模拟"第一条路由已让 Caddy 跑起来、CA 已信任"的稳态。
+	fx.caddy.running = true
+	fx.caddy.rootCA = []byte("fake-der")
+	if _, err := fx.store.Update(func(d *model.VaultData) error {
+		d.Prefs.CATrustedSHA256 = "deadbeef"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := fx.router.ApplyRoute(rt.ID, nil)
+	if err != nil {
+		t.Fatalf("ApplyRoute: %v", err)
+	}
+	if result.PortConflict != "" {
+		t.Fatalf("should not report port conflict when caddy already running: %+v", result)
+	}
+	if !result.CaddyApplied {
+		t.Fatalf("caddy should be reloaded: %+v", result)
+	}
+	if len(fx.caddy.reloads) != 1 {
+		t.Fatalf("reloads = %d, want 1", len(fx.caddy.reloads))
+	}
+	if fx.caddy.stopCalls != 0 {
+		t.Fatalf("must not stop caddy, stopCalls = %d", fx.caddy.stopCalls)
+	}
+	for _, c := range fx.helper.calls {
+		if c.Op == helper.OpTrustLocalCA {
+			t.Fatalf("must not re-trust CA when already trusted: %+v", fx.helper.calls)
+		}
 	}
 }
 
