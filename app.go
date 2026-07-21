@@ -101,9 +101,11 @@ func NewApp() *App {
 	restoreEffects := application.NewRestoreEffects(store, runtimeBiz, routerBiz, recovery)
 	packages := biz.NewBackupPackage(newApplicationGeneration())
 	restoreCoordinator := biz.NewRestoreCoordinator(packages, restoreEffects)
+	updateService := updater.NewDefaultService()
 	applicationService := application.NewService(application.Dependencies{
 		Store: store, Catalog: catalog, Runtime: runtimeBiz, Routes: routerBiz,
 		Restore: restoreCoordinator, Recovery: recovery, Backup: backupBiz, Packages: packages,
+		Updates: updateService, AppVersion: appVersion,
 	})
 	app := &App{
 		store:          store,
@@ -117,7 +119,7 @@ func NewApp() *App {
 		diagBuf:        diagBuf,
 		logStore:       logStore,
 		caddy:          caddyAdapter,
-		updater:        updater.NewDefaultService(),
+		updater:        updateService,
 	}
 	if closer, ok := helperOperator.(interface{ Close(context.Context) error }); ok {
 		app.helperClose = closer.Close
@@ -790,13 +792,15 @@ func (a *App) GetAppVersion() string {
 
 // CheckForUpdates 查询 GitHub Releases 是否有新版本（只读检查，不做自更新）。
 func (a *App) CheckForUpdates(currentVersion string) (updater.Result, error) {
+	result, err := a.CheckForUpdatesCommand(application.CheckForUpdatesCommand{Trigger: application.UpdateCheckManual})
+	return result.Result, err
+}
+
+func (a *App) CheckForUpdatesCommand(command application.CheckForUpdatesCommand) (application.CheckForUpdatesResult, error) {
 	if err := a.ensureReady(); err != nil {
-		return updater.Result{}, err
+		return application.CheckForUpdatesResult{}, err
 	}
-	if a.updater == nil {
-		return updater.Result{}, fmt.Errorf("updater service is not initialized")
-	}
-	return a.updater.Check(context.Background(), currentVersion)
+	return a.application.CheckForUpdates(context.Background(), command)
 }
 
 // GetUpdateCheckEnabled returns whether TunnelBoard should check GitHub Releases on startup.

@@ -14,6 +14,7 @@ import (
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 	"github.com/HanZephyr/TunnelBoard/internal/route"
+	"github.com/HanZephyr/TunnelBoard/internal/updater"
 )
 
 type memStore struct {
@@ -147,6 +148,42 @@ type fakeRecovery struct{}
 
 func (fakeRecovery) State() (bool, bool, error) { return false, false, nil }
 func (fakeRecovery) ClearQuarantine() error     { return nil }
+
+type updateRecovery struct {
+	quarantined bool
+	pending     bool
+	err         error
+}
+
+func (f updateRecovery) State() (bool, bool, error) { return f.quarantined, f.pending, f.err }
+func (updateRecovery) ClearQuarantine() error       { return nil }
+
+type fakeUpdates struct {
+	mu      sync.Mutex
+	calls   int
+	started chan struct{}
+	release chan struct{}
+}
+
+func (f *fakeUpdates) Check(ctx context.Context, version string) (updater.Result, error) {
+	f.mu.Lock()
+	f.calls++
+	f.mu.Unlock()
+	if f.started != nil {
+		select {
+		case f.started <- struct{}{}:
+		default:
+		}
+	}
+	if f.release != nil {
+		select {
+		case <-ctx.Done():
+			return updater.Result{}, ctx.Err()
+		case <-f.release:
+		}
+	}
+	return updater.Result{LatestVersion: version + ".next"}, nil
+}
 
 func newService(store *memStore, runtime *fakeRuntime) *application.Service {
 	return application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
@@ -343,6 +380,54 @@ func TestMoveForwardsAllUnchangedDoesNotWriteOrEmitMutation(t *testing.T) {
 	}
 	if store.updates != 0 || result.EventSequence != before.EventSequence || result.AcceptedRevision != before.Revisions.Vault {
 		t.Fatalf("no-op produced mutation: updates=%d result=%+v before=%+v", store.updates, result, before)
+	}
+}
+
+func TestStartupUpdateCheckFailsClosedWithoutNetwork(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		prefs    model.Prefs
+		recovery updateRecovery
+	}{
+		{name: "disabled"},
+		{name: "quarantined", prefs: model.Prefs{UpdateCheckEnabled: true}, recovery: updateRecovery{quarantined: true}},
+		{name: "journal pending", prefs: model.Prefs{UpdateCheckEnabled: true}, recovery: updateRecovery{pending: true}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &memStore{data: model.VaultData{Version: 1, Prefs: test.prefs}}
+			updates := &fakeUpdates{}
+			service := application.NewService(application.Dependencies{
+				Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: test.recovery,
+				Updates: updates, AppVersion: "1.2.3",
+			})
+			result, err := service.CheckForUpdates(context.Background(), application.CheckForUpdatesCommand{Trigger: application.UpdateCheckStartup})
+			if err != nil || !result.Skipped || updates.calls != 0 {
+				t.Fatalf("result=%+v err=%v calls=%d", result, err, updates.calls)
+			}
+		})
+	}
+}
+
+func TestUpdateCheckSingleflightUsesBackendVersion(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1, Prefs: model.Prefs{UpdateCheckEnabled: true}}}
+	updates := &fakeUpdates{started: make(chan struct{}, 1), release: make(chan struct{})}
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: updateRecovery{},
+		Updates: updates, AppVersion: "1.2.3",
+	})
+	results := make(chan application.CheckForUpdatesResult, 2)
+	for range 2 {
+		go func() {
+			result, _ := service.CheckForUpdates(context.Background(), application.CheckForUpdatesCommand{Trigger: application.UpdateCheckStartup})
+			results <- result
+		}()
+	}
+	<-updates.started
+	time.Sleep(10 * time.Millisecond)
+	close(updates.release)
+	first, second := <-results, <-results
+	if updates.calls != 1 || first.LatestVersion != "1.2.3.next" || second.LatestVersion != first.LatestVersion {
+		t.Fatalf("calls=%d first=%+v second=%+v", updates.calls, first, second)
 	}
 }
 

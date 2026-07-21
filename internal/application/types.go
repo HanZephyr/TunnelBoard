@@ -6,7 +6,25 @@ import (
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 	"github.com/HanZephyr/TunnelBoard/internal/route"
+	"github.com/HanZephyr/TunnelBoard/internal/updater"
 )
+
+type UpdateCheckTrigger string
+
+const (
+	UpdateCheckStartup UpdateCheckTrigger = "startup"
+	UpdateCheckManual  UpdateCheckTrigger = "manual"
+)
+
+type CheckForUpdatesCommand struct {
+	Trigger UpdateCheckTrigger `json:"trigger"`
+}
+
+type CheckForUpdatesResult struct {
+	updater.Result
+	Skipped    bool   `json:"skipped"`
+	SkipReason string `json:"skipReason,omitempty"`
+}
 
 type CommandMeta struct {
 	CommandID        string `json:"commandId"`

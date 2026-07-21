@@ -19,6 +19,7 @@ import (
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
 	"github.com/HanZephyr/TunnelBoard/internal/forward"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
+	"github.com/HanZephyr/TunnelBoard/internal/updater"
 )
 
 var (
@@ -75,6 +76,10 @@ type RecoveryPort interface {
 	ClearQuarantine() error
 }
 
+type UpdatePort interface {
+	Check(context.Context, string) (updater.Result, error)
+}
+
 type Dependencies struct {
 	Store        biz.VaultStore
 	Catalog      *biz.CatalogBiz
@@ -85,6 +90,8 @@ type Dependencies struct {
 	Backup       *biz.BackupBiz
 	Packages     biz.BackupPackage
 	CommandCache CommandCacheOptions
+	Updates      UpdatePort
+	AppVersion   string
 }
 
 type Service struct {
@@ -106,6 +113,16 @@ type Service struct {
 	maintenance  atomic.Bool
 	sequence     atomic.Uint64
 	commands     *recentCommandCache
+	updates      UpdatePort
+	appVersion   string
+	updateMu     sync.Mutex
+	updateFlight *updateCheckFlight
+}
+
+type updateCheckFlight struct {
+	done   chan struct{}
+	result CheckForUpdatesResult
+	err    error
 }
 
 func NewService(deps Dependencies) *Service {
@@ -114,7 +131,61 @@ func NewService(deps Dependencies) *Service {
 		restore: deps.Restore, recovery: deps.Recovery, backup: deps.Backup, packages: deps.Packages,
 		hostChanges: make(map[string]stagedSSHHostChange), routeStages: make(map[string]stagedRouteChange),
 		commands: newRecentCommandCache(deps.CommandCache),
+		updates:  deps.Updates, appVersion: deps.AppVersion,
 	}
+}
+
+func (s *Service) CheckForUpdates(ctx context.Context, command CheckForUpdatesCommand) (CheckForUpdatesResult, error) {
+	if err := ctx.Err(); err != nil {
+		return CheckForUpdatesResult{}, err
+	}
+	if command.Trigger != UpdateCheckStartup && command.Trigger != UpdateCheckManual {
+		return CheckForUpdatesResult{}, fmt.Errorf("application: unsupported update trigger %q", command.Trigger)
+	}
+	if s.updates == nil {
+		return CheckForUpdatesResult{}, errors.New("application: updater is unavailable")
+	}
+	quarantined, pending, err := s.recovery.State()
+	if err != nil {
+		return CheckForUpdatesResult{}, err
+	}
+	if quarantined || pending || s.maintenance.Load() {
+		return CheckForUpdatesResult{Skipped: true, SkipReason: "recovery_isolation"}, nil
+	}
+	if command.Trigger == UpdateCheckStartup {
+		data, err := s.store.Load()
+		if err != nil {
+			return CheckForUpdatesResult{}, err
+		}
+		if !data.Prefs.UpdateCheckEnabled {
+			return CheckForUpdatesResult{Skipped: true, SkipReason: "preference_disabled"}, nil
+		}
+	}
+
+	s.updateMu.Lock()
+	if flight := s.updateFlight; flight != nil {
+		s.updateMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return CheckForUpdatesResult{}, ctx.Err()
+		case <-flight.done:
+			return flight.result, flight.err
+		}
+	}
+	flight := &updateCheckFlight{done: make(chan struct{})}
+	s.updateFlight = flight
+	s.updateMu.Unlock()
+
+	result, checkErr := s.updates.Check(ctx, s.appVersion)
+	flight.result = CheckForUpdatesResult{Result: result}
+	flight.err = checkErr
+	close(flight.done)
+	s.updateMu.Lock()
+	if s.updateFlight == flight {
+		s.updateFlight = nil
+	}
+	s.updateMu.Unlock()
+	return flight.result, flight.err
 }
 
 // LegacyMutation 仅供 app.go 迁移期兼容绑定使用，使旧调用也服从 maintenance gate。
