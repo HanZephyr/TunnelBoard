@@ -85,7 +85,6 @@ type Prefs struct {
 	AutoRun            bool   `json:"autoRun"`
 	UpdateCheckEnabled bool   `json:"updateCheckEnabled"`
 	UILocale           string `json:"uiLocale,omitempty"`
-	// CATrustedSHA256 记录当前已被系统信任的本地 CA 指纹（空表示未信任），
-	// 供“最后一个 Caddy Route 关闭后撤销信任”与 RouteStatus 判定。
-	CATrustedSHA256 string `json:"caTrustedSha256,omitempty"`
+	// Deprecated: 仅保留源码迁移兼容；机器本地 CA 事实不得序列化进 Vault/备份。
+	CATrustedSHA256 string `json:"-"`
 }

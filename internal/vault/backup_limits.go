@@ -155,9 +155,6 @@ func validateBackupPayload(data model.VaultData, keyFiles map[string][]byte) err
 	if err := check("locale bytes", data.Prefs.UILocale, maxBackupShortString); err != nil {
 		return err
 	}
-	if err := check("ca fingerprint bytes", data.Prefs.CATrustedSHA256, maxBackupShortString); err != nil {
-		return err
-	}
 
 	keyBytes := 0
 	for path, content := range keyFiles {

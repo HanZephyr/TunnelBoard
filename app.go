@@ -490,13 +490,17 @@ func (a *App) ExportDiagnosticsWithDialog() error {
 			"hostKeys": len(data.HostKeys),
 		}
 		summary["updateCheckEnabled"] = data.Prefs.UpdateCheckEnabled
-		summary["caTrusted"] = data.Prefs.CATrustedSHA256 != ""
 	}
 	if snapshot, err := a.GetRuntimeSnapshot(); err == nil {
 		summary["runtime"] = snapshot
 	}
 	if routes, err := a.router.RouteStatus(); err == nil {
 		summary["routes"] = routes
+		caTrusted := false
+		for _, item := range routes {
+			caTrusted = caTrusted || item.CATrusted
+		}
+		summary["caTrusted"] = caTrusted
 	}
 
 	bundle := a.diagBuf.BuildBundle(appVersion, runtime.GOOS+"/"+runtime.GOARCH, summary)
