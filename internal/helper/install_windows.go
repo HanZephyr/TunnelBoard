@@ -88,5 +88,8 @@ func helperBinaryPath() (string, error) {
 	if _, err := os.Stat(p); err != nil {
 		return "", fmt.Errorf("helper: %s not found beside app: %w", p, err)
 	}
+	if err := VerifyBundledBinary(p); err != nil {
+		return "", err
+	}
 	return p, nil
 }

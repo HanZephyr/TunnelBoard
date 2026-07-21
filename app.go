@@ -76,6 +76,7 @@ func NewApp() *App {
 	catalog := biz.NewCatalogBiz(store)
 	caddyAdapter := caddy.New(store.Dir())
 	caddyAdapter.ExpectedSHA256 = caddyBundleSHA256
+	helper.SetExpectedBinarySHA256(helperBundleSHA256)
 	return &App{
 		store:   store,
 		catalog: catalog,

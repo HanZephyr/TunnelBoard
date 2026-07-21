@@ -14,10 +14,14 @@ import (
 	"github.com/HanZephyr/TunnelBoard/internal/helper"
 )
 
-// version 是 helper 协议/行为版本，主程序 EnsureInstalled 经 ping 校验。
-const version = "0.1.0"
-
 func main() {
+	if handled, err := runSelfCheck(os.Args[1:], os.Stdout); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	install := flag.Bool("install", false, "install and start the Windows service (requires elevation)")
 	uninstall := flag.Bool("uninstall", false, "stop and remove the Windows service (requires elevation)")
 	serve := flag.Bool("serve", false, "run the helper service (used by SCM)")
@@ -42,7 +46,7 @@ func main() {
 		_ = serve // 服务上下文由 RunServiceMain 自行检测；-serve 仅为语义标记
 		helper.SetupEventLogging()
 		hostsPath := filepath.Join(os.Getenv("SystemRoot"), `System32\drivers\etc\hosts`)
-		err = helper.RunServiceMain(helper.ProductionEnvironment(hostsPath, version))
+		err = helper.RunServiceMain(helper.ProductionEnvironment(hostsPath, protocolVersion))
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
