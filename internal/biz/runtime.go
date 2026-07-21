@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +41,26 @@ type RuntimeStatus struct {
 	Status    string `json:"status"` // running | reconnecting | stopped | error
 	LastError string `json:"lastError,omitempty"`
 	LatencyMs int64  `json:"latencyMs"`
+}
+
+// SuspendedForward 是 Runtime 捕获的不可伪造暂停事实；generation 仅由后端生成。
+type SuspendedForward struct {
+	ForwardID  int    `json:"forwardId"`
+	Generation uint64 `json:"-"`
+}
+
+type RuntimeSuspendPlan struct {
+	Entries []SuspendedForward `json:"entries"`
+}
+
+type RuntimeResumeResult struct {
+	Started []int          `json:"started"`
+	Errors  map[int]string `json:"errors,omitempty"`
+}
+
+type AffectedForward struct {
+	ForwardID         int    `json:"forwardId"`
+	RunningGeneration uint64 `json:"runningGeneration,omitempty"`
 }
 
 // runHandle 是运行时实例的接缝；*forward.LocalForward 天然满足该接口。
@@ -301,6 +322,126 @@ func (b *RuntimeBiz) Stop(id int) error {
 	return nil
 }
 
+// SuspendAll 可恢复地暂停当前运行集合。调用方提供一个总 deadline，所有 Stop
+// 并行共享该 context；它不会设置永久 closing，也不会从 Vault 推导恢复列表。
+func (b *RuntimeBiz) SuspendAll(ctx context.Context) (RuntimeSuspendPlan, error) {
+	return b.Suspend(ctx, nil)
+}
+
+// Suspend 只暂停 ids 中当前存在的运行代；ids 为空表示全部。
+func (b *RuntimeBiz) Suspend(ctx context.Context, ids []int) (RuntimeSuspendPlan, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	wanted := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		wanted[id] = struct{}{}
+	}
+	b.mu.Lock()
+	entries := make(map[int]*runEntry)
+	plan := RuntimeSuspendPlan{}
+	for id, entry := range b.runs {
+		if len(wanted) != 0 {
+			if _, ok := wanted[id]; !ok {
+				continue
+			}
+		}
+		if entry.phase == runStopping {
+			continue
+		}
+		entry.phase = runStopping
+		entries[id] = entry
+		plan.Entries = append(plan.Entries, SuspendedForward{ForwardID: id, Generation: entry.generation})
+	}
+	b.mu.Unlock()
+	sort.Slice(plan.Entries, func(i, j int) bool { return plan.Entries[i].ForwardID < plan.Entries[j].ForwardID })
+
+	type stopResult struct {
+		id    int
+		entry *runEntry
+		err   error
+	}
+	results := make(chan stopResult, len(entries))
+	for id, entry := range entries {
+		go func(id int, entry *runEntry) {
+			if entry.run == nil {
+				results <- stopResult{id: id, entry: entry}
+				return
+			}
+			results <- stopResult{id: id, entry: entry, err: entry.run.Stop(ctx)}
+		}(id, entry)
+	}
+	var failures []string
+	for range entries {
+		result := <-results
+		b.mu.Lock()
+		current := b.runs[result.id]
+		if current == result.entry && current.generation == result.entry.generation {
+			if result.err == nil {
+				delete(b.runs, result.id)
+				b.states[result.id] = RuntimeStatus{ForwardID: result.id, Status: RuntimeStateStopped}
+			} else {
+				b.states[result.id] = RuntimeStatus{ForwardID: result.id, Status: RuntimeStateError, LastError: result.err.Error()}
+				if result.entry.run != nil {
+					go b.finishStopInBackground(result.id, result.entry.generation, result.entry.run)
+				}
+			}
+		}
+		b.mu.Unlock()
+		if result.err != nil {
+			failures = append(failures, fmt.Sprintf("forward %d: %v", result.id, result.err))
+		}
+	}
+	if len(failures) != 0 {
+		sort.Strings(failures)
+		return plan, fmt.Errorf("suspend runtime: %s", strings.Join(failures, "; "))
+	}
+	return plan, nil
+}
+
+// Resume 只恢复 Suspend 返回的后端计划，并通过 Start 分配全新 generation。
+func (b *RuntimeBiz) Resume(ctx context.Context, plan RuntimeSuspendPlan) RuntimeResumeResult {
+	result := RuntimeResumeResult{Errors: map[int]string{}}
+	for _, entry := range plan.Entries {
+		if err := ctx.Err(); err != nil {
+			result.Errors[entry.ForwardID] = err.Error()
+			continue
+		}
+		if err := b.Start(entry.ForwardID); err != nil {
+			result.Errors[entry.ForwardID] = err.Error()
+			continue
+		}
+		result.Started = append(result.Started, entry.ForwardID)
+	}
+	return result
+}
+
+// AffectedForHost 扫描整条 ChainHostIDs，并附带当前运行代供应用层做 stale 检查。
+func (b *RuntimeBiz) AffectedForHost(hostID int) []AffectedForward {
+	data, err := b.store.Load()
+	if err != nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	result := make([]AffectedForward, 0)
+	for _, fw := range data.Forwards {
+		for _, id := range fw.ChainHostIDs {
+			if id != hostID {
+				continue
+			}
+			item := AffectedForward{ForwardID: fw.ID}
+			if entry := b.runs[fw.ID]; entry != nil && entry.phase != runStopping {
+				item.RunningGeneration = entry.generation
+			}
+			result = append(result, item)
+			break
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ForwardID < result[j].ForwardID })
+	return result
+}
+
 // Shutdown 停止全部运行中的实例（应用显式退出路径由上层调用），
 // 随后关闭连接池中的全部池化首跳连接。
 func (b *RuntimeBiz) Shutdown() {
@@ -344,6 +485,10 @@ func (b *RuntimeBiz) Shutdown() {
 // PoolStats 返回 SSH 连接池快照（Overview 展示各首跳主机的连接复用情况）。
 func (b *RuntimeBiz) PoolStats() []forward.PoolStat {
 	return b.pool.Stats()
+}
+
+func (b *RuntimeBiz) RetireHost(hostID int) {
+	b.pool.RetireHost(hostID)
 }
 
 // Status 返回单条 Forward 的运行时状态；从未启动过返回 false。

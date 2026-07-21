@@ -24,9 +24,14 @@ const (
 	keySize        = 32
 	payloadVersion = 1
 
-	keyFileName  = "vault.key"
-	dataFileName = "vault.dat"
+	keyFileName             = "vault.key"
+	dataFileName            = "vault.dat"
+	restoreCandidateDirName = "restore-candidates"
 )
+
+type RestoreCandidate struct {
+	ID string
+}
 
 // ErrKeyUnavailable 表示 vault.dat 存在但本机密钥遗失或损坏；
 // 应用层此时只能引导用户导入备份包或显式初始化空 Vault，不得覆盖数据。
@@ -101,6 +106,93 @@ func (s *Store) Update(mutate func(*model.VaultData) error) (model.VaultData, er
 		return model.VaultData{}, err
 	}
 	return data, nil
+}
+
+// PrepareRestoreCandidate 先校验并使用设备 Vault 密钥加密候选数据，但不触碰正式 vault.dat。
+func (s *Store) PrepareRestoreCandidate(data model.VaultData) (RestoreCandidate, error) {
+	if err := data.Validate(); err != nil {
+		return RestoreCandidate{}, fmt.Errorf("vault: invalid restore candidate: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return RestoreCandidate{}, fmt.Errorf("vault: encode restore candidate: %w", err)
+	}
+	sealed, err := s.seal(payload)
+	if err != nil {
+		return RestoreCandidate{}, err
+	}
+	dir := filepath.Join(s.dir, restoreCandidateDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return RestoreCandidate{}, fmt.Errorf("vault: create restore candidate dir: %w", err)
+	}
+	f, err := os.CreateTemp(dir, "candidate-*.vault")
+	if err != nil {
+		return RestoreCandidate{}, fmt.Errorf("vault: create restore candidate: %w", err)
+	}
+	name := f.Name()
+	defer func() {
+		if name != "" {
+			_ = os.Remove(name)
+		}
+	}()
+	if err := f.Chmod(0o600); err == nil {
+		_, err = f.Write(sealed)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return RestoreCandidate{}, fmt.Errorf("vault: persist restore candidate: %w", err)
+	}
+	candidate := RestoreCandidate{ID: filepath.Base(name)}
+	name = ""
+	return candidate, nil
+}
+
+// CommitRestoreCandidate 重新解密、校验候选后原子替换正式 Vault。
+func (s *Store) CommitRestoreCandidate(candidate RestoreCandidate) error {
+	if candidate.ID == "" || filepath.Base(candidate.ID) != candidate.ID {
+		return errors.New("vault: invalid restore candidate id")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	path := filepath.Join(s.dir, restoreCandidateDirName, candidate.ID)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("vault: read restore candidate: %w", err)
+	}
+	payload, err := s.open(raw)
+	if err != nil {
+		return fmt.Errorf("vault: verify restore candidate: %w", err)
+	}
+	var data model.VaultData
+	if err := json.Unmarshal(payload, &data); err != nil {
+		return fmt.Errorf("vault: decode restore candidate: %w", err)
+	}
+	if err := data.Validate(); err != nil {
+		return fmt.Errorf("vault: validate restore candidate: %w", err)
+	}
+	if err := os.Rename(path, filepath.Join(s.dir, dataFileName)); err != nil {
+		return fmt.Errorf("vault: replace from restore candidate: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) DiscardRestoreCandidate(candidate RestoreCandidate) error {
+	if candidate.ID == "" || filepath.Base(candidate.ID) != candidate.ID {
+		return errors.New("vault: invalid restore candidate id")
+	}
+	err := os.Remove(filepath.Join(s.dir, restoreCandidateDirName, candidate.ID))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func (s *Store) loadLocked() (model.VaultData, error) {

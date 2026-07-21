@@ -373,6 +373,27 @@ func (p *SSHConnPool) CloseAll() {
 	}
 }
 
+// RetireHost 只退役指定 Host 的所有旧 identity；不影响其他 Host。
+func (p *SSHConnPool) RetireHost(hostID int) {
+	p.mu.Lock()
+	byIdentity := p.entries[hostID]
+	delete(p.entries, hostID)
+	entries := make([]*poolEntry, 0, len(byIdentity))
+	for _, entry := range byIdentity {
+		entries = append(entries, entry)
+	}
+	p.mu.Unlock()
+	for _, entry := range entries {
+		entry.mu.Lock()
+		entry.dead = true
+		closeAll := entry.closeAll
+		entry.mu.Unlock()
+		if closeAll != nil {
+			closeAll()
+		}
+	}
+}
+
 // PoolStat 是单个共享连接条目的状态快照（界面展示连接复用情况用）。
 type PoolStat struct {
 	HostID int  `json:"hostId"`

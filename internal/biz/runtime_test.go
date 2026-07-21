@@ -653,6 +653,54 @@ func TestRuntimeShutdownStopsAll(t *testing.T) {
 	}
 }
 
+func TestRuntimeSuspendAllCanResumeCapturedRunningSet(t *testing.T) {
+	factory := &runFactory{}
+	b := newTestRuntime(seedRuntimeVault(), factory)
+	if err := b.Start(1); err != nil {
+		t.Fatalf("Start(1): %v", err)
+	}
+	if err := b.Start(2); err != nil {
+		t.Fatalf("Start(2): %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	plan, err := b.SuspendAll(ctx)
+	if err != nil {
+		t.Fatalf("SuspendAll: %v", err)
+	}
+	if len(plan.Entries) != 2 || plan.Entries[0].ForwardID != 1 || plan.Entries[1].ForwardID != 2 {
+		t.Fatalf("plan = %+v, want forwards 1 and 2", plan)
+	}
+	if err := b.Start(3); err != nil {
+		t.Fatalf("SuspendAll must not permanently close runtime: %v", err)
+	}
+	if err := b.Stop(3); err != nil {
+		t.Fatalf("Stop(3): %v", err)
+	}
+
+	result := b.Resume(ctx, plan)
+	if len(result.Errors) != 0 {
+		t.Fatalf("Resume errors = %v", result.Errors)
+	}
+	for _, id := range []int{1, 2} {
+		if st, _ := b.Status(id); st.Status != RuntimeStateRunning {
+			t.Fatalf("Status(%d) = %+v, want running", id, st)
+		}
+	}
+}
+
+func TestRuntimeAffectedForHostIncludesEveryChainPosition(t *testing.T) {
+	b := newTestRuntime(seedRuntimeVault(), &runFactory{})
+	if err := b.Start(1); err != nil {
+		t.Fatalf("Start(1): %v", err)
+	}
+	affected := b.AffectedForHost(2)
+	if len(affected) != 2 || affected[0].ForwardID != 1 || affected[1].ForwardID != 2 || affected[0].RunningGeneration == 0 {
+		t.Fatalf("AffectedForHost(2) = %+v", affected)
+	}
+}
+
 // countingSSHServer 是进程内假 SSH 服务器：接受任意密码认证、响应 keepalive
 // 请求、接受并立即关闭 direct-tcpip 通道；统计接入的 TCP 连接数以验证连接复用。
 type countingSSHServer struct {

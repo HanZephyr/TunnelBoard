@@ -362,6 +362,66 @@ func (b *RouterBiz) ResumeCaddy() error {
 	return nil
 }
 
+// AppliedState 返回每用户、每机器的 Route 实际状态；它不执行探测或系统副作用。
+func (b *RouterBiz) AppliedState() (RouteAppliedState, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.state.loadState()
+}
+
+// NeutralizeRoutes 将 TunnelBoard 管理的网络副作用收敛到安全中性态，并持久化
+// quarantined。它不修改 Vault 中的期望配置，供完全还原事务和崩溃恢复复用。
+func (b *RouterBiz) NeutralizeRoutes(ctx context.Context) (retErr error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	before, err := b.state.loadState()
+	if err != nil {
+		return err
+	}
+	state := RouteAppliedState{Status: RouteStatusQuarantined}
+	defer func() {
+		if retErr != nil {
+			state = before
+			state.Status = RouteStatusCleanupPending
+			state.LastError = sanitizeRouteError(retErr)
+		}
+		if err := b.state.saveState(state); retErr == nil && err != nil {
+			retErr = err
+		}
+	}()
+
+	managed := b.currentManagedEntries()
+	if len(managed) != 0 || len(before.AppliedHosts) != 0 {
+		if err := b.helper.EnsureInstalled(); err != nil {
+			return fmt.Errorf("privileged helper unavailable: %w", err)
+		}
+		if err := b.callHelper(helper.Request{Op: helper.OpApplyManagedHosts, Hosts: []route.HostEntry{}}); err != nil {
+			return fmt.Errorf("remove managed hosts: %w", err)
+		}
+	}
+	if b.caddy.Status(ctx).Owned {
+		if err := b.caddy.Stop(ctx); err != nil {
+			return fmt.Errorf("stop caddy: %w", err)
+		}
+	}
+	caStatus, err := b.caTrust.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("query current-user ca: %w", err)
+	}
+	if caStatus.State == helper.CATrusted {
+		if err := b.caTrust.RemoveCurrentCaddyCA(ctx); err != nil {
+			return fmt.Errorf("remove current-user ca: %w", err)
+		}
+	}
+	if err := b.state.clearJournal(); err != nil {
+		return err
+	}
+	return nil
+}
+
 // RouteStatus 汇总每条 Route 的系统生效状态。
 func (b *RouterBiz) RouteStatus() ([]RouteStatusItem, error) {
 	b.mu.Lock()

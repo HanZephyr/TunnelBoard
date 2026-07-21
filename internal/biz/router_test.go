@@ -574,6 +574,36 @@ func TestResumeCaddyDefersCurrentUserCAConfirmation(t *testing.T) {
 	}
 }
 
+func TestNeutralizeRoutesRemovesAllAppliedEffectsAndPersistsQuarantine(t *testing.T) {
+	fx := newRouterFixture(t)
+	fx.helper.calls = nil
+	fx.caddy.running = true
+	fx.caTrust.state = helper.CATrusted
+	managed := helper.BlockBegin + "\r\n127.0.0.1 db.test\r\n" + helper.BlockEnd + "\r\n"
+	if err := os.WriteFile(fx.hosts, []byte(managed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := fx.router.NeutralizeRoutes(ctx); err != nil {
+		t.Fatalf("NeutralizeRoutes: %v", err)
+	}
+	if len(fx.helper.calls) != 1 || len(fx.helper.calls[0].Hosts) != 0 {
+		t.Fatalf("helper calls = %+v, want one empty managed-hosts apply", fx.helper.calls)
+	}
+	if fx.caddy.stopCalls != 1 || fx.caTrust.removeCalls != 1 {
+		t.Fatalf("stop=%d removeCA=%d, want 1/1", fx.caddy.stopCalls, fx.caTrust.removeCalls)
+	}
+	state, err := fx.router.AppliedState()
+	if err != nil {
+		t.Fatalf("AppliedState: %v", err)
+	}
+	if state.Status != biz.RouteStatusQuarantined || state.AppliedDesiredRevision != "" || len(state.AppliedHosts) != 0 {
+		t.Fatalf("state = %+v, want quarantined neutral state", state)
+	}
+}
+
 func TestRouteCoordinatorSerializesAndPersistsAppliedState(t *testing.T) {
 	fx := newRouterFixture(t)
 	fw := fx.seedForward(t, "local", 8080)

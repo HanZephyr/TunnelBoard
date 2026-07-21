@@ -1,6 +1,7 @@
 package biz_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -118,6 +119,10 @@ func TestPreviewImportConflicts(t *testing.T) {
 	}
 	if !strings.HasPrefix(preview.FolderName, "导入备份 ") {
 		t.Fatalf("folderName = %q", preview.FolderName)
+	}
+	raw, _ := json.Marshal(preview)
+	if strings.Contains(string(raw), "s3cr3t") || strings.Contains(string(raw), "\"password\":") {
+		t.Fatalf("import preview leaked a saved secret: %s", raw)
 	}
 }
 

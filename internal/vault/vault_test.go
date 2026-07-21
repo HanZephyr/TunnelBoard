@@ -205,6 +205,36 @@ func TestStoreRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRestoreCandidateIsValidatedBeforeAtomicReplacement(t *testing.T) {
+	dir := t.TempDir()
+	s, err := vault.Open(dir)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if _, err := s.Update(func(d *model.VaultData) error {
+		d.Folders = []model.Folder{{ID: 1, Name: "old"}}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	candidate, err := s.PrepareRestoreCandidate(model.VaultData{Version: 1, Folders: []model.Folder{{ID: 2, Name: "restored"}}})
+	if err != nil {
+		t.Fatalf("PrepareRestoreCandidate: %v", err)
+	}
+	before, _ := s.Load()
+	if len(before.Folders) != 1 || before.Folders[0].Name != "old" {
+		t.Fatalf("preparing candidate changed live vault: %+v", before)
+	}
+	if err := s.CommitRestoreCandidate(candidate); err != nil {
+		t.Fatalf("CommitRestoreCandidate: %v", err)
+	}
+	after, _ := s.Load()
+	if len(after.Folders) != 1 || after.Folders[0].Name != "restored" {
+		t.Fatalf("restored vault = %+v", after)
+	}
+}
+
 // 密钥与 Vault 均不存在时，Open 应完成首次初始化：生成密钥、创建空 Vault。
 func TestOpenInitializesFreshVault(t *testing.T) {
 	dir := t.TempDir()

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/HanZephyr/TunnelBoard/internal/forward"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 )
 
@@ -19,6 +20,20 @@ type VaultStore interface {
 // 是计划文档中的目录与配置 Module。
 type CatalogBiz struct {
 	store VaultStore
+}
+
+type SecretAction string
+
+const (
+	SecretKeep    SecretAction = "keep"
+	SecretReplace SecretAction = "replace"
+	SecretClear   SecretAction = "clear"
+)
+
+type SaveSSHHostRequest struct {
+	Host         model.SSHHost
+	SecretAction SecretAction
+	SecretInput  string
 }
 
 func NewCatalogBiz(store VaultStore) *CatalogBiz {
@@ -78,6 +93,97 @@ func (b *CatalogBiz) SaveSSHHost(host model.SSHHost) (model.SSHHost, error) {
 		return model.SSHHost{}, err
 	}
 	return saved, nil
+}
+
+// SaveSSHHostSecure 是 WebView 写入主机的唯一领域入口：已保存秘密只从 Vault
+// 合并，绝不相信请求 Host.Password；实际 replace/clear 才递增 CredentialRevision。
+func (b *CatalogBiz) SaveSSHHostSecure(request SaveSSHHostRequest) (model.SSHHost, bool, error) {
+	var saved model.SSHHost
+	connectionChanged := false
+	_, err := b.store.Update(func(d *model.VaultData) error {
+		host, previous, changed, err := prepareSSHHostSecure(*d, request)
+		if err != nil {
+			return err
+		}
+		connectionChanged = changed
+		if previous == nil {
+			host.ID = nextID(len(d.SSHHosts), func(i int) int { return d.SSHHosts[i].ID })
+			d.SSHHosts = append(d.SSHHosts, host)
+		} else {
+			d.SSHHosts[indexSSHHost(d.SSHHosts, host.ID)] = host
+		}
+		if err := d.Validate(); err != nil {
+			return err
+		}
+		saved = host
+		return nil
+	})
+	if err != nil {
+		return model.SSHHost{}, false, err
+	}
+	return saved, connectionChanged, nil
+}
+
+func (b *CatalogBiz) PreviewSSHHostSecure(request SaveSSHHostRequest) (model.SSHHost, bool, error) {
+	data, err := b.store.Load()
+	if err != nil {
+		return model.SSHHost{}, false, err
+	}
+	host, _, changed, err := prepareSSHHostSecure(data, request)
+	return host, changed, err
+}
+
+func prepareSSHHostSecure(data model.VaultData, request SaveSSHHostRequest) (model.SSHHost, *model.SSHHost, bool, error) {
+	host := normalizeSSHHost(request.Host)
+	host.Password = ""
+	var previous *model.SSHHost
+	if host.ID != 0 {
+		idx := indexSSHHost(data.SSHHosts, host.ID)
+		if idx < 0 {
+			return model.SSHHost{}, nil, false, fmt.Errorf("ssh host %d not found", host.ID)
+		}
+		copy := data.SSHHosts[idx]
+		previous = &copy
+		host.CredentialRevision = copy.CredentialRevision
+	}
+	oldSecret := ""
+	if previous != nil {
+		oldSecret = previous.Password
+		if request.SecretAction == SecretKeep && previous.AuthType != host.AuthType {
+			return model.SSHHost{}, nil, false, errors.New("secret action must be explicit when authentication type changes")
+		}
+	}
+	switch host.AuthType {
+	case "ssh_agent":
+		host.Password = ""
+	case "password", "ssh_key":
+		switch request.SecretAction {
+		case SecretKeep:
+			if previous == nil {
+				return model.SSHHost{}, nil, false, errors.New("new ssh host cannot keep a missing secret")
+			}
+			host.Password = oldSecret
+		case SecretReplace:
+			if request.SecretInput == "" {
+				return model.SSHHost{}, nil, false, errors.New("replacement secret is required")
+			}
+			host.Password = request.SecretInput
+		case SecretClear:
+			host.Password = ""
+		default:
+			return model.SSHHost{}, nil, false, fmt.Errorf("unknown secret action %q", request.SecretAction)
+		}
+		if host.AuthType == "password" && host.Password == "" {
+			return model.SSHHost{}, nil, false, errors.New("password authentication requires a secret")
+		}
+	default:
+		return model.SSHHost{}, nil, false, fmt.Errorf("unsupported auth type %q", host.AuthType)
+	}
+	if host.Password != oldSecret {
+		host.CredentialRevision++
+	}
+	changed := previous != nil && forward.SSHConnectionIdentity(*previous) != forward.SSHConnectionIdentity(host)
+	return host, previous, changed, nil
 }
 
 // normalizeSSHHost 规范化 SSH 主机资料：默认端口 22、默认超时 5000ms、
@@ -237,6 +343,33 @@ func (b *CatalogBiz) MoveForwards(forwardIDs []int, targetFolderID int) error {
 			indexes = append(indexes, idx)
 		}
 		for _, idx := range indexes {
+			d.Forwards[idx].FolderID = targetFolderID
+		}
+		return d.Validate()
+	})
+	return err
+}
+
+// MoveForwards 在一次 Vault Update 中验证并移动全部 Forward；任一 ID 或目标无效时零项落盘。
+func (b *CatalogBiz) MoveForwards(forwardIDs []int, targetFolderID int) error {
+	_, err := b.store.Update(func(d *model.VaultData) error {
+		if indexFolder(d.Folders, targetFolderID) < 0 {
+			return fmt.Errorf("%w: folder %d", model.ErrRefMissing, targetFolderID)
+		}
+		indices := make([]int, 0, len(forwardIDs))
+		seen := make(map[int]struct{}, len(forwardIDs))
+		for _, id := range forwardIDs {
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			idx := indexForward(d.Forwards, id)
+			if idx < 0 {
+				return fmt.Errorf("forward %d not found", id)
+			}
+			indices = append(indices, idx)
+		}
+		for _, idx := range indices {
 			d.Forwards[idx].FolderID = targetFolderID
 		}
 		return d.Validate()

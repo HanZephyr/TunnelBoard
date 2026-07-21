@@ -223,6 +223,53 @@ func TestMoveForward(t *testing.T) {
 	}
 }
 
+func TestMoveForwardsIsAtomic(t *testing.T) {
+	store := &fakeStore{data: model.VaultData{Version: 1}}
+	c := biz.NewCatalogBiz(store)
+	a, _ := c.CreateFolder("a", 0)
+	b, _ := c.CreateFolder("b", 0)
+	h, _ := c.SaveSSHHost(model.SSHHost{Name: "h", Host: "127.0.0.1", User: "u", AuthType: "password", Password: "x"})
+	f1, _ := c.SaveForward(model.Forward{FolderID: a.ID, Name: "1", Mode: "local", ChainHostIDs: []int{h.ID}, LocalPort: 1001, RemoteHost: "x", RemotePort: 1})
+	f2, _ := c.SaveForward(model.Forward{FolderID: a.ID, Name: "2", Mode: "local", ChainHostIDs: []int{h.ID}, LocalPort: 1002, RemoteHost: "x", RemotePort: 1})
+
+	if err := c.MoveForwards([]int{f1.ID, 999, f2.ID}, b.ID); err == nil {
+		t.Fatal("missing forward must reject whole command")
+	}
+	data, _ := c.Data()
+	if data.Forwards[0].FolderID != a.ID || data.Forwards[1].FolderID != a.ID {
+		t.Fatalf("partial move occurred: %+v", data.Forwards)
+	}
+	if err := c.MoveForwards([]int{f1.ID, f2.ID}, b.ID); err != nil {
+		t.Fatalf("MoveForwards: %v", err)
+	}
+}
+
+func TestSaveSSHHostSecureSecretActionsAndCredentialRevision(t *testing.T) {
+	store := &fakeStore{data: model.VaultData{Version: 1}}
+	c := biz.NewCatalogBiz(store)
+	created, changed, err := c.SaveSSHHostSecure(biz.SaveSSHHostRequest{
+		Host:         model.SSHHost{Name: "h", Host: "10.0.0.1", User: "ops", AuthType: "password"},
+		SecretAction: biz.SecretReplace, SecretInput: "first-secret",
+	})
+	if err != nil || changed || created.CredentialRevision != 1 {
+		t.Fatalf("create = %+v changed=%v err=%v", created, changed, err)
+	}
+
+	keep := created
+	keep.Name = "renamed"
+	keep.Password = "must-not-be-used"
+	kept, changed, err := c.SaveSSHHostSecure(biz.SaveSSHHostRequest{Host: keep, SecretAction: biz.SecretKeep})
+	if err != nil || changed || kept.CredentialRevision != 1 || kept.Password != "first-secret" {
+		t.Fatalf("keep = %+v changed=%v err=%v", kept, changed, err)
+	}
+
+	replace := kept
+	replaced, changed, err := c.SaveSSHHostSecure(biz.SaveSSHHostRequest{Host: replace, SecretAction: biz.SecretReplace, SecretInput: "second-secret"})
+	if err != nil || !changed || replaced.CredentialRevision != 2 || replaced.Password != "second-secret" {
+		t.Fatalf("replace = %+v changed=%v err=%v", replaced, changed, err)
+	}
+}
+
 // SaveForward 新建或更新 Forward：归属文件夹、模式与主机链经 Validate 校验，
 // 非法数据不得落盘。
 func TestSaveForwardValidatesReferences(t *testing.T) {
