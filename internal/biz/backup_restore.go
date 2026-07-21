@@ -86,6 +86,7 @@ type RestoreEffects interface {
 const (
 	RestorePhasePlanned           = "planned"
 	RestorePhaseCandidatePrepared = "candidate_prepared"
+	RestorePhaseRuntimeSuspending = "runtime_suspending"
 	RestorePhaseRuntimeSuspended  = "runtime_suspended"
 	RestorePhaseRoutesNeutralized = "routes_neutralized"
 	RestorePhaseReplacingVault    = "replacing_vault"
@@ -188,40 +189,47 @@ func (c *RestoreCoordinator) CommitRestore(ctx context.Context, request RestoreC
 	candidate, err := c.effects.PrepareCandidate(ctx, staged.Vault)
 	clearKeyFiles(staged.KeyFiles)
 	if err != nil {
-		return RestoreCommitResult{}, c.compensate(ctx, compensation, "prepare restore candidate", err)
+		return c.compensate(ctx, compensation, "prepare restore candidate", err)
 	}
 	compensation.Candidate = candidate
 	journal.CandidateID = candidate.ID
 	journal.Phase = RestorePhaseCandidatePrepared
 	if err := c.effects.WriteJournal(ctx, journal); err != nil {
-		return RestoreCommitResult{}, c.compensate(ctx, compensation, "persist prepared restore candidate", err)
+		return c.compensate(ctx, compensation, "persist prepared restore candidate", err)
+	}
+	// Persist intent before touching Runtime. If the process exits while SuspendAll is
+	// running, startup recovery must conservatively restore the captured running set.
+	journal.Phase = RestorePhaseRuntimeSuspending
+	if err := c.effects.WriteJournal(ctx, journal); err != nil {
+		return c.compensate(ctx, compensation, "persist runtime suspension intent", err)
 	}
 	suspendCtx, suspendCancel := context.WithTimeout(ctx, restoreRuntimeBudget)
 	plan, err := c.effects.SuspendAll(suspendCtx)
 	suspendCancel()
 	compensation.SuspendPlan = plan
 	if err != nil {
-		return RestoreCommitResult{}, c.compensate(ctx, compensation, "suspend runtime", err)
+		return c.compensate(ctx, compensation, "suspend runtime", err)
 	}
+	journal.RunningForwardIDs = append([]int(nil), plan.RunningForwardIDs...)
 	journal.Phase = RestorePhaseRuntimeSuspended
 	if err := c.effects.WriteJournal(ctx, journal); err != nil {
-		return RestoreCommitResult{}, c.compensate(ctx, compensation, "persist suspended runtime", err)
+		return c.compensate(ctx, compensation, "persist suspended runtime", err)
 	}
 	if err := c.effects.NeutralizeRoutes(ctx); err != nil {
-		return RestoreCommitResult{}, c.compensate(ctx, compensation, "neutralize routes", err)
+		return c.compensate(ctx, compensation, "neutralize routes", err)
 	}
 	compensation.RoutesNeutralized = true
 	journal.RoutesNeutralized = true
 	journal.Phase = RestorePhaseRoutesNeutralized
 	if err := c.effects.WriteJournal(ctx, journal); err != nil {
-		return RestoreCommitResult{}, c.compensate(ctx, compensation, "persist neutralized routes", err)
+		return c.compensate(ctx, compensation, "persist neutralized routes", err)
 	}
 	journal.Phase = RestorePhaseReplacingVault
 	if err := c.effects.WriteJournal(ctx, journal); err != nil {
-		return RestoreCommitResult{}, c.compensate(ctx, compensation, "persist vault replacement intent", err)
+		return c.compensate(ctx, compensation, "persist vault replacement intent", err)
 	}
 	if err := c.effects.ReplaceVault(ctx, candidate); err != nil {
-		return RestoreCommitResult{}, c.compensate(ctx, compensation, "replace vault", err)
+		return c.compensate(ctx, compensation, "replace vault", err)
 	}
 	compensation.ReplacedVault = true
 	journal.VaultReplaced = true
@@ -244,16 +252,16 @@ func (c *RestoreCoordinator) CommitRestore(ctx context.Context, request RestoreC
 	return RestoreCommitResult{TransactionID: transactionID, Quarantined: true}, nil
 }
 
-func (c *RestoreCoordinator) compensate(ctx context.Context, state RestoreCompensation, operation string, cause error) error {
+func (c *RestoreCoordinator) compensate(ctx context.Context, state RestoreCompensation, operation string, cause error) (RestoreCommitResult, error) {
 	// Compensation must get a fresh budget: the suspend context may already have expired,
 	// and reusing it would make recovery of successfully stopped Forward instances impossible.
 	compensationCtx, cancel := context.WithTimeout(context.Background(), restoreRuntimeBudget)
 	defer cancel()
 	compensationErr := c.effects.Compensate(compensationCtx, state)
 	if compensationErr != nil {
-		return fmt.Errorf("biz: %s: %w; compensation failed: %v", operation, cause, compensationErr)
+		return RestoreCommitResult{TransactionID: state.TransactionID, JournalPending: true}, fmt.Errorf("biz: %s: %w; compensation failed: %v", operation, cause, compensationErr)
 	}
-	return fmt.Errorf("biz: %s: %w", operation, cause)
+	return RestoreCommitResult{}, fmt.Errorf("biz: %s: %w", operation, cause)
 }
 
 func newRestoreTransactionID() (string, error) {

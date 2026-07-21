@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -48,6 +49,9 @@ type restoreRoutes struct {
 
 func (r *restoreRoutes) NeutralizeRoutes(context.Context) error {
 	r.neutralizeCalls++
+	if r.neutralizeErr == nil {
+		r.applied.Status = biz.RouteStatusQuarantined
+	}
 	return r.neutralizeErr
 }
 
@@ -214,6 +218,45 @@ func TestRecoverPendingAfterVaultReplacementQuarantinesOnceAndConsumesJournal(t 
 	}
 }
 
+func TestRecoverPendingQuarantineReNeutralizesInterruptedActivation(t *testing.T) {
+	dir := t.TempDir()
+	store, err := vault.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := &restoreRoutes{fakeRoutes: fakeRoutes{applied: biz.RouteAppliedState{Status: biz.RouteStatusApplied}}}
+	recovery := application.NewRecoveryStore(dir)
+	effects := application.NewRestoreEffects(store, &restoreRuntime{}, routes, recovery)
+	writeRestoreState(t, dir, true)
+
+	if err := effects.RecoverPending(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	quarantined, pending, err := recovery.State()
+	if err != nil || !quarantined || pending || routes.neutralizeCalls != 1 {
+		t.Fatalf("quarantined=%v pending=%v neutralize=%d err=%v", quarantined, pending, routes.neutralizeCalls, err)
+	}
+}
+
+func TestRecoverPendingStableQuarantineDoesNotRepeatNeutralization(t *testing.T) {
+	dir := t.TempDir()
+	store, err := vault.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := &restoreRoutes{fakeRoutes: fakeRoutes{applied: biz.RouteAppliedState{Status: biz.RouteStatusQuarantined}}}
+	recovery := application.NewRecoveryStore(dir)
+	effects := application.NewRestoreEffects(store, &restoreRuntime{}, routes, recovery)
+	writeRestoreState(t, dir, true)
+
+	if err := effects.RecoverPending(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if routes.neutralizeCalls != 0 {
+		t.Fatalf("stable quarantine repeated neutralization %d times", routes.neutralizeCalls)
+	}
+}
+
 func TestRecoverPendingDetectsReplacementThatOnlyChangesSecrets(t *testing.T) {
 	dir := t.TempDir()
 	store, err := vault.Open(dir)
@@ -314,6 +357,66 @@ func TestRecoverPendingKeepsJournalWhenOldRuntimeCannotBeRestored(t *testing.T) 
 	}
 }
 
+func TestRecoverPendingRuntimeSuspendingRestoresCapturedRuntime(t *testing.T) {
+	dir := t.TempDir()
+	store, err := vault.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Update(func(data *model.VaultData) error {
+		data.Forwards = []model.Forward{{ID: 1, Name: "one"}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &restoreRuntime{}
+	routes := &restoreRoutes{}
+	recovery := application.NewRecoveryStore(dir)
+	effects := application.NewRestoreEffects(store, runtime, routes, recovery)
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: routes,
+		Restore: biz.NewRestoreCoordinator(biz.NewBackupPackage("test"), effects), Recovery: recovery,
+	})
+	before, err := service.GetSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeRestoreJournal(t, dir, biz.RestoreJournal{
+		TransactionID: "tx-suspending", Before: biz.RestoreFacts{VaultRevision: before.Revisions.Vault},
+		Phase: biz.RestorePhaseRuntimeSuspending, RunningForwardIDs: []int{1},
+	})
+	if err := effects.RecoverPending(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.starts != 1 || routes.reconciles != 1 {
+		t.Fatalf("suspending recovery starts=%d reconciles=%d", runtime.starts, routes.reconciles)
+	}
+}
+
+func TestCompensationFailurePreservesRestoreJournal(t *testing.T) {
+	dir := t.TempDir()
+	store, err := vault.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := &restoreRoutes{fakeRoutes: fakeRoutes{err: errors.New("route restore failed")}}
+	recovery := application.NewRecoveryStore(dir)
+	effects := application.NewRestoreEffects(store, &restoreRuntime{}, routes, recovery)
+	journal := biz.RestoreJournal{
+		TransactionID: "tx-compensation", Phase: biz.RestorePhaseRoutesNeutralized, RoutesNeutralized: true,
+	}
+	writeRestoreJournal(t, dir, journal)
+	if err := effects.Compensate(context.Background(), biz.RestoreCompensation{
+		TransactionID: "tx-compensation", RoutesNeutralized: true,
+	}); err == nil {
+		t.Fatal("compensation failure must be returned")
+	}
+	_, pending, err := recovery.State()
+	if err != nil || !pending {
+		t.Fatalf("journal pending=%v err=%v", pending, err)
+	}
+}
+
 func TestRecoverPendingKeepsJournalWhenNewVaultCannotBeNeutralized(t *testing.T) {
 	dir := t.TempDir()
 	store, err := vault.Open(dir)
@@ -341,4 +444,19 @@ func readTestJSON(path string, target any) error {
 		return err
 	}
 	return json.Unmarshal(raw, target)
+}
+
+func writeRestoreState(t *testing.T, dir string, quarantined bool) {
+	t.Helper()
+	stateDir := filepath.Join(dir, "state")
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(map[string]bool{"quarantined": quarantined})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "restore-state.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }

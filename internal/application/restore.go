@@ -199,10 +199,16 @@ func (e *RestoreEffectsAdapter) Compensate(ctx context.Context, state biz.Restor
 			failures = append(failures, err)
 		}
 	}
-	if err := os.Remove(filepath.Join(e.recovery.dir, restoreJournalFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		failures = append(failures, err)
+	if len(failures) != 0 {
+		// The durable journal is the only restart-safe record of the original
+		// Runtime set and Route state. Never consume it until compensation has
+		// completely converged.
+		return errors.Join(failures...)
 	}
-	return errors.Join(failures...)
+	if err := os.Remove(filepath.Join(e.recovery.dir, restoreJournalFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // RecoverPending 在启动网络功能前恢复未完成的 Restore 事务。
@@ -213,7 +219,7 @@ func (e *RestoreEffectsAdapter) RecoverPending(ctx context.Context) error {
 	var journal biz.RestoreJournal
 	if err := readApplicationJSON(journalPath, &journal); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil
+			return e.convergePersistedQuarantine(ctx)
 		}
 		return err
 	}
@@ -259,7 +265,7 @@ func (e *RestoreEffectsAdapter) RecoverPending(ctx context.Context) error {
 	if currentRevision != journal.Before.VaultRevision {
 		return errors.New("application: pending restore vault revision is ambiguous")
 	}
-	if restorePhaseAtLeast(journal.Phase, biz.RestorePhaseRuntimeSuspended) {
+	if restorePhaseAtLeast(journal.Phase, biz.RestorePhaseRuntimeSuspending) {
 		if _, err := e.routes.ReconcileRoutes(); err != nil {
 			return fmt.Errorf("application: restore pre-restore routes: %w", err)
 		}
@@ -274,6 +280,32 @@ func (e *RestoreEffectsAdapter) RecoverPending(ctx context.Context) error {
 		return fmt.Errorf("application: clear stale restore quarantine: %w", err)
 	}
 	return e.CommitJournal(ctx, journal.TransactionID)
+}
+
+// convergePersistedQuarantine treats restore-state.json as a durable write-ahead
+// intent. A completed restore already leaves Route state quarantined, so ordinary
+// restarts do not repeat privileged cleanup. If activation crashed after starting a
+// Route transaction or publishing applied state, startup idempotently neutralizes it.
+func (e *RestoreEffectsAdapter) convergePersistedQuarantine(ctx context.Context) error {
+	quarantined, _, err := e.recovery.State()
+	if err != nil || !quarantined {
+		return err
+	}
+	pending, err := e.routes.RecoveryPending()
+	if err != nil {
+		return fmt.Errorf("application: inspect quarantined route recovery: %w", err)
+	}
+	applied, err := e.routes.AppliedState()
+	if err != nil {
+		return fmt.Errorf("application: inspect quarantined route state: %w", err)
+	}
+	if !pending && applied.Status == biz.RouteStatusQuarantined {
+		return nil
+	}
+	if err := e.routes.NeutralizeRoutes(ctx); err != nil {
+		return fmt.Errorf("application: restore quarantined network state: %w", err)
+	}
+	return nil
 }
 
 func (e *RestoreEffectsAdapter) resumeJournalForwards(ctx context.Context, journal *biz.RestoreJournal) error {
@@ -329,11 +361,12 @@ func restorePhaseAtLeast(actual, expected string) bool {
 var restorePhaseOrder = map[string]int{
 	biz.RestorePhasePlanned:           1,
 	biz.RestorePhaseCandidatePrepared: 2,
-	biz.RestorePhaseRuntimeSuspended:  3,
-	biz.RestorePhaseRoutesNeutralized: 4,
-	biz.RestorePhaseReplacingVault:    5,
-	biz.RestorePhaseVaultReplaced:     6,
-	biz.RestorePhaseQuarantined:       7,
+	biz.RestorePhaseRuntimeSuspending: 3,
+	biz.RestorePhaseRuntimeSuspended:  4,
+	biz.RestorePhaseRoutesNeutralized: 5,
+	biz.RestorePhaseReplacingVault:    6,
+	biz.RestorePhaseVaultReplaced:     7,
+	biz.RestorePhaseQuarantined:       8,
 }
 
 func readApplicationJSON(path string, target any) error {

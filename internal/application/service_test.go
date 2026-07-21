@@ -205,6 +205,32 @@ type updateRecovery struct {
 func (f updateRecovery) State() (bool, bool, error) { return f.quarantined, f.pending, f.err }
 func (updateRecovery) ClearQuarantine() error       { return nil }
 
+type recoveryState struct {
+	quarantined bool
+	pending     bool
+	err         error
+}
+
+type sequenceRecovery struct {
+	mu     sync.Mutex
+	states []recoveryState
+	calls  int
+}
+
+func (r *sequenceRecovery) State() (bool, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	index := r.calls
+	r.calls++
+	if index >= len(r.states) {
+		index = len(r.states) - 1
+	}
+	state := r.states[index]
+	return state.quarantined, state.pending, state.err
+}
+
+func (*sequenceRecovery) ClearQuarantine() error { return nil }
+
 type fakeUpdates struct {
 	mu      sync.Mutex
 	calls   int
@@ -298,6 +324,27 @@ func TestRecoveryStateBlocksManualNetworkOperationsButAllowsSafeStop(t *testing.
 		}
 		if err := service.StopForward(7); err != nil || runtime.stops != 1 {
 			t.Fatalf("safe stop must remain available: err=%v stops=%d", err, runtime.stops)
+		}
+	}
+}
+
+func TestLegacyMutationAndCapabilitiesRespectRestoreRecovery(t *testing.T) {
+	for _, recovery := range []fakeRecovery{{quarantined: true}, {pending: true}} {
+		store := &memStore{data: model.VaultData{Version: 1}}
+		service := application.NewService(application.Dependencies{
+			Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{},
+			Restore: fakeRestore{}, Recovery: recovery,
+		})
+		called := false
+		if err := service.LegacyMutation(context.Background(), func() error { called = true; return nil }); !errors.Is(err, application.ErrRecoveryNetworkBlocked) || called {
+			t.Fatalf("recovery=%+v legacy mutation err=%v called=%v", recovery, err, called)
+		}
+		snapshot, err := service.GetSnapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.Capabilities.MutationAllowed {
+			t.Fatalf("recovery=%+v reported mutation allowed", recovery)
 		}
 	}
 }
@@ -626,6 +673,41 @@ func TestUpdateCheckSingleflightUsesBackendVersion(t *testing.T) {
 	}
 }
 
+func TestStartupUpdateCheckRunsAtMostOnceSequentially(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1, Prefs: model.Prefs{UpdateCheckEnabled: true}}}
+	updates := &fakeUpdates{}
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: updateRecovery{},
+		Updates: updates, AppVersion: "1.2.3",
+	})
+	command := application.CheckForUpdatesCommand{Trigger: application.UpdateCheckStartup}
+	first, err := service.CheckForUpdates(context.Background(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.CheckForUpdates(context.Background(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updates.calls != 1 || first.LatestVersion != "1.2.3.next" || !reflect.DeepEqual(first, second) {
+		t.Fatalf("calls=%d first=%+v second=%+v", updates.calls, first, second)
+	}
+}
+
+func TestUpdateCheckRechecksRecoveryBeforeHTTP(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1, Prefs: model.Prefs{UpdateCheckEnabled: true}}}
+	updates := &fakeUpdates{}
+	recovery := &sequenceRecovery{states: []recoveryState{{}, {quarantined: true}}}
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: recovery,
+		Updates: updates, AppVersion: "1.2.3",
+	})
+	result, err := service.CheckForUpdates(context.Background(), application.CheckForUpdatesCommand{Trigger: application.UpdateCheckStartup})
+	if err != nil || !result.Skipped || updates.calls != 0 || recovery.calls < 2 {
+		t.Fatalf("result=%+v err=%v calls=%d recoveryCalls=%d", result, err, updates.calls, recovery.calls)
+	}
+}
+
 func TestCommitSSHHostChangePreflightFailureHasZeroSideEffectsAndConsumesToken(t *testing.T) {
 	store := &memStore{data: model.VaultData{Version: 1, SSHHosts: []model.SSHHost{{ID: 1, Name: "h", Host: "old", Port: 22, User: "u", AuthType: "password", Password: "old-secret", CredentialRevision: 1}}}}
 	runtime := &fakeRuntime{affected: []biz.AffectedForward{{ForwardID: 7, RunningGeneration: 3}}, preflight: map[int]string{7: "authentication failed for new-secret"}}
@@ -661,6 +743,23 @@ func TestCommitSSHHostChangePreflightFailureHasZeroSideEffectsAndConsumesToken(t
 	_, err = service.CommitSSHHostChange(context.Background(), application.CommitSSHHostChangeCommand{Token: preview.Token})
 	if !errors.Is(err, application.ErrSSHHostChangeToken) {
 		t.Fatalf("second commit err = %v", err)
+	}
+}
+
+func TestCommitSSHHostChangeRechecksRecoveryAfterEnteringMutationGate(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1, SSHHosts: []model.SSHHost{{ID: 1, Name: "h", Host: "old", Port: 22, User: "u", AuthType: "password", Password: "old-secret", CredentialRevision: 1}}}}
+	runtime := &fakeRuntime{}
+	recovery := &sequenceRecovery{states: []recoveryState{{}, {quarantined: true}}}
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: recovery})
+	preview, err := service.PreviewSSHHostChange(context.Background(), application.SaveSSHHostCommand{
+		Host: application.SSHHostInput{ID: 1, Name: "h", Host: "new", Port: 22, User: "u", AuthType: "password"}, SecretAction: biz.SecretKeep,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.CommitSSHHostChange(context.Background(), application.CommitSSHHostChangeCommand{Token: preview.Token})
+	if !errors.Is(err, application.ErrRecoveryNetworkBlocked) || store.updates != 0 || len(runtime.operations) != 0 || recovery.calls < 2 {
+		t.Fatalf("err=%v updates=%d operations=%v recoveryCalls=%d", err, store.updates, runtime.operations, recovery.calls)
 	}
 }
 
@@ -863,6 +962,31 @@ func TestRouteChangeCommitRejectsStaleTokenBeforeSaving(t *testing.T) {
 	}
 	if store.data.WebRoutes[0].HostsEnabled {
 		t.Fatal("stale commit changed desired route")
+	}
+}
+
+func TestCommitRouteChangeRechecksRecoveryAfterEnteringMutationGate(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	routes := &fakeRoutes{}
+	recovery := &sequenceRecovery{states: []recoveryState{{}, {quarantined: true}}}
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: routes, Restore: fakeRestore{}, Recovery: recovery})
+	snapshot, err := service.GetSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// GetSnapshot consumed one recovery state; reset the deterministic transition for Commit.
+	recovery.mu.Lock()
+	recovery.calls = 0
+	recovery.mu.Unlock()
+	preview, err := service.PreviewRouteChange(context.Background(), application.RouteChangeIntent{
+		ExpectedRevision: snapshot.Revisions.Vault, Action: application.RouteChangeSetFlag, RouteID: 1, Flag: application.RouteFlagHostsEnabled, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.CommitRouteChange(context.Background(), application.CommitRouteChangeCommand{Token: preview.Token, ConfirmedDomains: preview.RequiresConfirmation})
+	if !errors.Is(err, application.ErrRecoveryNetworkBlocked) || store.updates != 0 || routes.reconciles != 0 || recovery.calls < 2 {
+		t.Fatalf("err=%v updates=%d reconciles=%d recoveryCalls=%d", err, store.updates, routes.reconciles, recovery.calls)
 	}
 }
 
