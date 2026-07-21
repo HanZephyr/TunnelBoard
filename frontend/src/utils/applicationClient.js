@@ -2,6 +2,11 @@ function runtimeBindings() {
   return globalThis.window?.go?.main?.App || {}
 }
 
+export function createCommandMeta(expectedRevision = '') {
+  const commandId = globalThis.crypto?.randomUUID?.() || `cmd-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  return { commandId, ...(expectedRevision ? { expectedRevision } : {}) }
+}
+
 export function createApplicationClient(bindings = runtimeBindings()) {
   const invoke = (name, ...args) => {
     const binding = bindings[name]

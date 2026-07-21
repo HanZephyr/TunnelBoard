@@ -5,7 +5,7 @@ import { errorMessage, isValidPort } from '../../utils/backend'
 import BaseDialog from '../common/BaseDialog.vue'
 import SSHHostFields from '../hosts/SSHHostFields.vue'
 import { createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
-import { createApplicationClient } from '../../utils/applicationClient'
+import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
 
 const props = defineProps({
   show: {
@@ -33,7 +33,8 @@ const props = defineProps({
   validationError: {
     type: String,
     default: ''
-  }
+  },
+  vaultRevision: { type: String, default: '' }
 })
 
 const emit = defineEmits(['close', 'submit', 'host-created'])
@@ -116,6 +117,7 @@ async function saveNewHost() {
   newHostSaving.value = true
   newHostError.value = ''
   const command = toSaveSSHHostCommand(newHostForm)
+  command.meta = createCommandMeta(props.vaultRevision)
   try {
     const result = await application.saveSSHHost(command)
     const saved = result?.host || result

@@ -1,6 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createApplicationClient } from './applicationClient.js'
+import { createApplicationClient, createCommandMeta } from './applicationClient.js'
+
+test('命令元数据包含唯一 ID 和当前 Vault revision', () => {
+  const first = createCommandMeta('vault-a')
+  const second = createCommandMeta('vault-a')
+  assert.equal(first.expectedRevision, 'vault-a')
+  assert.ok(first.commandId)
+  assert.notEqual(first.commandId, second.commandId)
+})
 
 test('SSH Host 只调用不含持久秘密响应的高层命令', async () => {
   let modern

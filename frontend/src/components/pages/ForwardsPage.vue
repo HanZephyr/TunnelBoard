@@ -14,7 +14,7 @@ import {
 } from '../../../wailsjs/go/main/App'
 import { callBackend, errorMessage, isValidPort } from '../../utils/backend'
 import { formatLatency as formatLatencyUtil } from '../../utils/format'
-import { createApplicationClient } from '../../utils/applicationClient'
+import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import StatusChip from '../common/StatusChip.vue'
@@ -36,7 +36,8 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
-  configurationLocked: { type: Boolean, default: false }
+  configurationLocked: { type: Boolean, default: false },
+  vaultRevision: { type: String, default: '' }
 })
 
 const emit = defineEmits(['vault-changed', 'notify'])
@@ -432,7 +433,7 @@ function onMoveTargetChange() {
     confirmClass: 'btn-primary',
     onConfirm: async () => {
       try {
-        await application.moveForwards({ meta: {}, forwardIds: ids, targetFolderId: targetId })
+        await application.moveForwards({ meta: createCommandMeta(props.vaultRevision), forwardIds: ids, targetFolderId: targetId })
         moveTargetId.value = ''
         clearSelection()
         emit('vault-changed')
@@ -984,6 +985,7 @@ function chainLabel(forward) {
     :form="forwardForm"
     :folders="folderOptions"
     :ssh-hosts="sshHosts"
+    :vault-revision="vaultRevision"
     :validation-error="forwardValidationError"
     @close="forwardModalOpen = false"
     @submit="saveForward"

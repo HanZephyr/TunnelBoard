@@ -96,6 +96,7 @@ const snapshotStore = createAppSnapshotStore()
 const snapshotPhase = ref('loading')
 const snapshotError = ref('')
 const hasSnapshot = ref(false)
+const vaultRevision = ref('')
 
 async function loadVault() {
   await snapshotStore.refresh(async () => {
@@ -116,6 +117,7 @@ async function loadVault() {
     sshHosts.value = Array.isArray(data?.sshHosts) ? data.sshHosts : []
     forwards.value = Array.isArray(data?.forwards) ? data.forwards : []
     webRoutes.value = Array.isArray(data?.webRoutes) ? data.webRoutes : []
+    vaultRevision.value = String(data?.vaultRevision || '')
   }
 }
 
@@ -286,6 +288,7 @@ onBeforeUnmount(() => {
           :ssh-hosts="sshHosts"
           :forwards="forwards"
           :configuration-locked="snapshotPhase !== 'ready'"
+          :vault-revision="vaultRevision"
           @vault-changed="loadVault"
           @notify="notify"
         />
@@ -296,6 +299,7 @@ onBeforeUnmount(() => {
           :ssh-hosts="sshHosts"
           :forwards="forwards"
           :configuration-locked="snapshotPhase !== 'ready'"
+          :vault-revision="vaultRevision"
           @vault-changed="loadVault"
           @notify="notify"
         />

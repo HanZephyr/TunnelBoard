@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { DeleteSelection } from '../../../wailsjs/go/main/App'
 import { callBackend, errorMessage } from '../../utils/backend'
 import { createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
-import { createApplicationClient } from '../../utils/applicationClient'
+import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
@@ -19,7 +19,8 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
-  configurationLocked: { type: Boolean, default: false }
+  configurationLocked: { type: Boolean, default: false },
+  vaultRevision: { type: String, default: '' }
 })
 
 const emit = defineEmits(['vault-changed', 'notify'])
@@ -122,6 +123,7 @@ async function saveHost() {
   if (props.configurationLocked) return
   hostForm.id = editingHostId.value || 0
   const command = toSaveSSHHostCommand(hostForm)
+  command.meta = createCommandMeta(props.vaultRevision)
   const error = validationMessage(validateSSHHostDraft(hostForm))
   if (error) {
     hostValidationError.value = error
