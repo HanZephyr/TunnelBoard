@@ -350,33 +350,6 @@ func (b *CatalogBiz) MoveForwards(forwardIDs []int, targetFolderID int) error {
 	return err
 }
 
-// MoveForwards 在一次 Vault Update 中验证并移动全部 Forward；任一 ID 或目标无效时零项落盘。
-func (b *CatalogBiz) MoveForwards(forwardIDs []int, targetFolderID int) error {
-	_, err := b.store.Update(func(d *model.VaultData) error {
-		if indexFolder(d.Folders, targetFolderID) < 0 {
-			return fmt.Errorf("%w: folder %d", model.ErrRefMissing, targetFolderID)
-		}
-		indices := make([]int, 0, len(forwardIDs))
-		seen := make(map[int]struct{}, len(forwardIDs))
-		for _, id := range forwardIDs {
-			if _, ok := seen[id]; ok {
-				continue
-			}
-			seen[id] = struct{}{}
-			idx := indexForward(d.Forwards, id)
-			if idx < 0 {
-				return fmt.Errorf("forward %d not found", id)
-			}
-			indices = append(indices, idx)
-		}
-		for _, idx := range indices {
-			d.Forwards[idx].FolderID = targetFolderID
-		}
-		return d.Validate()
-	})
-	return err
-}
-
 // ResolveChain 按 fw.ChainHostIDs 顺序从 Vault 解析 SSH 主机链；缺 ID 以
 // model.ErrRefMissing 包装报错，供运行时 Module 在拨号前取得完整主机配置。
 func (b *CatalogBiz) ResolveChain(fw model.Forward) ([]model.SSHHost, error) {

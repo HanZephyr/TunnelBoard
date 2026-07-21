@@ -223,27 +223,6 @@ func TestMoveForward(t *testing.T) {
 	}
 }
 
-func TestMoveForwardsIsAtomic(t *testing.T) {
-	store := &fakeStore{data: model.VaultData{Version: 1}}
-	c := biz.NewCatalogBiz(store)
-	a, _ := c.CreateFolder("a", 0)
-	b, _ := c.CreateFolder("b", 0)
-	h, _ := c.SaveSSHHost(model.SSHHost{Name: "h", Host: "127.0.0.1", User: "u", AuthType: "password", Password: "x"})
-	f1, _ := c.SaveForward(model.Forward{FolderID: a.ID, Name: "1", Mode: "local", ChainHostIDs: []int{h.ID}, LocalPort: 1001, RemoteHost: "x", RemotePort: 1})
-	f2, _ := c.SaveForward(model.Forward{FolderID: a.ID, Name: "2", Mode: "local", ChainHostIDs: []int{h.ID}, LocalPort: 1002, RemoteHost: "x", RemotePort: 1})
-
-	if err := c.MoveForwards([]int{f1.ID, 999, f2.ID}, b.ID); err == nil {
-		t.Fatal("missing forward must reject whole command")
-	}
-	data, _ := c.Data()
-	if data.Forwards[0].FolderID != a.ID || data.Forwards[1].FolderID != a.ID {
-		t.Fatalf("partial move occurred: %+v", data.Forwards)
-	}
-	if err := c.MoveForwards([]int{f1.ID, f2.ID}, b.ID); err != nil {
-		t.Fatalf("MoveForwards: %v", err)
-	}
-}
-
 func TestSaveSSHHostSecureSecretActionsAndCredentialRevision(t *testing.T) {
 	store := &fakeStore{data: model.VaultData{Version: 1}}
 	c := biz.NewCatalogBiz(store)
