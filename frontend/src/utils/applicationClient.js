@@ -34,6 +34,9 @@ export function createApplicationClient(bindings = runtimeBindings()) {
     },
     async previewLocalListener(command) {
       return invoke('PreviewLocalListenerCommand', command)
+    },
+    async checkForUpdates(trigger) {
+      return invoke('CheckForUpdatesCommand', { trigger })
     }
   }
 }

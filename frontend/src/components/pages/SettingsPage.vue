@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ApplyTrayLocale,
-  CheckForUpdates as CheckForUpdatesAPI,
   ExportBackupWithDialog,
   ExportDiagnosticsWithDialog,
   GetAutoRunEnabled,
@@ -24,6 +23,7 @@ import { callBackend, errorMessage } from '../../utils/backend'
 import { ensureLocaleMessages } from '../../i18n'
 import BaseDialog from '../common/BaseDialog.vue'
 import { DEFAULT_RELEASES_PAGE_URL, officialReleaseUrl } from '../../modules/releaseUrl'
+import { createApplicationClient } from '../../utils/applicationClient'
 
 const props = defineProps({
   theme: {
@@ -41,6 +41,7 @@ const emit = defineEmits(['theme-change', 'notify', 'vault-changed', 'update-out
 
 const i18n = useI18n()
 const { t, locale } = i18n
+const application = createApplicationClient()
 
 const releasePageUrl = ref(DEFAULT_RELEASES_PAGE_URL)
 const autoRunEnabled = ref(false)
@@ -157,7 +158,10 @@ async function checkForUpdates() {
   if (isCheckingUpdates.value) return
   isCheckingUpdates.value = true
   try {
-    const result = await callBackend(CheckForUpdatesAPI, props.appMeta.version)
+	const result = await application.checkForUpdates('manual')
+	if (result?.skipped) {
+		throw new Error(t('settings.updateCheckFailed'))
+	}
 
     if (!result?.hasUpdate) {
       releasePageUrl.value = DEFAULT_RELEASES_PAGE_URL

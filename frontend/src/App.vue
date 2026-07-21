@@ -3,7 +3,6 @@ import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, r
 import { useI18n } from 'vue-i18n'
 import {
   ApplyTrayLocale,
-  CheckForUpdates as CheckForUpdatesAPI,
   GetAppVersion,
   GetUpdateCheckEnabled,
   SaveUILocale
@@ -193,7 +192,8 @@ function onUpdateOutcome(outcome) {
 
 async function checkForUpdatesSilently() {
   try {
-    const result = await callBackend(CheckForUpdatesAPI, appMeta.version)
+	const result = await application.checkForUpdates('startup')
+	if (result?.skipped) return
     if (result?.hasUpdate) {
       hasNewVersion.value = true
       releasePageUrl.value = officialReleaseUrl(result.releasePageUrl)

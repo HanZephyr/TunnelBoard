@@ -47,3 +47,12 @@ test('Route 变更只调用绑定 revision 的高层命令', async () => {
     ['commit', command]
   ])
 })
+
+test('更新检查由后端接收可信触发来源且不接受前端版本号', async () => {
+  let received
+  const client = createApplicationClient({
+    CheckForUpdatesCommand: async (command) => { received = command; return { skipped: false, hasUpdate: false } }
+  })
+  await client.checkForUpdates('startup')
+  assert.deepEqual(received, { trigger: 'startup' })
+})
