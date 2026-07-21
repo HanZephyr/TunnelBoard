@@ -279,6 +279,29 @@ func seedRuntimeVault() *memStore {
 	}}
 }
 
+func TestPreflightHostChangeUsesProposedHostInsideCompleteChain(t *testing.T) {
+	store := seedRuntimeVault()
+	runtime := NewRuntimeBiz(store)
+	var captured []model.SSHHost
+	runtime.preflightChain = func(_ context.Context, hosts []model.SSHHost, _ forward.HostKeyVerifier) error {
+		captured = append([]model.SSHHost(nil), hosts...)
+		return nil
+	}
+	proposed := store.data.SSHHosts[1]
+	proposed.Host = "new-hop.example"
+	proposed.Password = "new-secret"
+	errorsByForward := runtime.PreflightHostChange(context.Background(), proposed, []AffectedForward{{ForwardID: 1, RunningGeneration: 9}})
+	if len(errorsByForward) != 0 {
+		t.Fatalf("preflight errors = %v", errorsByForward)
+	}
+	if len(captured) != 2 || captured[0].ID != 1 || captured[1].Host != "new-hop.example" || captured[1].Password != "new-secret" {
+		t.Fatalf("captured chain = %+v", captured)
+	}
+	if store.data.SSHHosts[1].Host != "10.0.0.2" || store.data.SSHHosts[1].Password != "x" {
+		t.Fatalf("preflight mutated vault: %+v", store.data.SSHHosts[1])
+	}
+}
+
 func newTestRuntime(store *memStore, factory *runFactory) *RuntimeBiz {
 	b := NewRuntimeBiz(store)
 	b.newRun = factory.make
