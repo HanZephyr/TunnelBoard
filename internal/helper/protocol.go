@@ -4,7 +4,6 @@
 package helper
 
 import (
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,24 +17,27 @@ const (
 	OpPing               = "ping"
 	OpApplyManagedHosts  = "apply_managed_hosts"
 	OpRemoveManagedHosts = "remove_managed_hosts"
-	OpTrustLocalCA       = "trust_local_ca"
-	OpUntrustLocalCA     = "untrust_local_ca"
+	// OpTrustLocalCA 与 OpUntrustLocalCA 仅为旧调用方迁移期保留标识符。
+	// 它们不属于 Helper 白名单，ValidateRequest/HandleRequest 必须拒绝。
+	OpTrustLocalCA   = "trust_local_ca"
+	OpUntrustLocalCA = "untrust_local_ca"
 )
 
 // 请求校验上限，与设计文档 §2 的 schema 校验一致；IP 仅允许回环。
 const (
-	maxHostEntries  = 256
-	maxDomainLen    = 253
-	maxCertDERBytes = 16 << 10 // 16 KiB
-	loopbackIP      = "127.0.0.1"
+	maxHostEntries = 256
+	maxDomainLen   = 253
+	loopbackIP     = "127.0.0.1"
 )
 
 // Request 是主程序经命名管道发给 helper 的结构化请求。
 type Request struct {
-	Op         string            `json:"op"`
-	Hosts      []route.HostEntry `json:"hosts,omitempty"`
-	CertDER    []byte            `json:"certDer,omitempty"`
-	CertSHA256 string            `json:"certSha256,omitempty"`
+	Op    string            `json:"op"`
+	Hosts []route.HostEntry `json:"hosts,omitempty"`
+	// Deprecated: 提权 Helper 不再接受 CA 内容或指纹；字段仅用于让旧调用方
+	// 在其他模块迁移期间保持可编译，服务端仍会按未知操作拒绝。
+	CertDER    []byte `json:"-"`
+	CertSHA256 string `json:"-"`
 }
 
 // Response 是 helper 对每个 Request 的应答；Error 非空即失败。
@@ -49,6 +51,7 @@ type Response struct {
 // handler 只依赖该注入面，因而可在测试中以 fake 纯内存验证。
 type Environment struct {
 	HostsPath string
+	// Deprecated: CA 已移出提权 Helper；即使旧测试注入也永不调用。
 	TrustCA   func(certDER []byte, sha256 string) error
 	UntrustCA func(sha256 string) error
 	Version   string
@@ -67,10 +70,6 @@ func HandleRequest(req Request, env Environment) Response {
 		return done(WriteManagedHosts(env.HostsPath, req.Hosts))
 	case OpRemoveManagedHosts:
 		return done(WriteManagedHosts(env.HostsPath, nil))
-	case OpTrustLocalCA:
-		return done(env.TrustCA(req.CertDER, req.CertSHA256))
-	case OpUntrustLocalCA:
-		return done(env.UntrustCA(req.CertSHA256))
 	default:
 		return fail(fmt.Errorf("helper: unknown op %q", req.Op))
 	}
@@ -83,19 +82,6 @@ func ValidateRequest(req Request) error {
 		return nil
 	case OpApplyManagedHosts:
 		return validateHostEntries(req.Hosts)
-	case OpTrustLocalCA:
-		if err := validateSHA256Hex(req.CertSHA256); err != nil {
-			return err
-		}
-		if len(req.CertDER) == 0 {
-			return errors.New("helper: empty certificate DER")
-		}
-		if len(req.CertDER) > maxCertDERBytes {
-			return fmt.Errorf("helper: certificate DER too large: %d > %d bytes", len(req.CertDER), maxCertDERBytes)
-		}
-		return ValidateLocalCA(req.CertDER, req.CertSHA256)
-	case OpUntrustLocalCA:
-		return validateSHA256Hex(req.CertSHA256)
 	default:
 		return fmt.Errorf("helper: unknown op %q", req.Op)
 	}
@@ -147,19 +133,6 @@ func validateDomain(domain string) error {
 	for _, r := range domain {
 		if unicode.IsSpace(r) || unicode.IsControl(r) {
 			return fmt.Errorf("helper: domain %q contains whitespace or control characters", domain)
-		}
-	}
-	return nil
-}
-
-// validateSHA256Hex 校验指纹格式：恰好 64 位小写十六进制（SHA-256）。
-func validateSHA256Hex(s string) error {
-	if len(s) != sha256.Size*2 {
-		return fmt.Errorf("helper: sha256 must be %d lowercase hex chars, got %d", sha256.Size*2, len(s))
-	}
-	for _, c := range s {
-		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
-			return fmt.Errorf("helper: sha256 %q must be lowercase hex", s)
 		}
 	}
 	return nil
