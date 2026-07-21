@@ -26,9 +26,15 @@ func NewCurrentUserCATrust() (LocalCATrust, error) {
 	if err != nil {
 		return nil, err
 	}
+	return NewCurrentUserCATrustAt(root), nil
+}
+
+// NewCurrentUserCATrustAt 供已钉死当前用户 Caddy 数据目录的应用组装与冒烟使用。
+// 该目录不是业务请求参数；证书操作的方法仍不接受 DER、路径或指纹。
+func NewCurrentUserCATrustAt(root string) LocalCATrust {
 	authority := filepath.Join(root, "caddy", "pki", "authorities", "local", "root.crt")
 	record := filepath.Join(root, "state", "ca-trust.json")
-	return NewLocalCATrust(authority, record, windowsCurrentUserRootStore{}), nil
+	return NewLocalCATrust(authority, record, windowsCurrentUserRootStore{})
 }
 
 // CurrentUserDataDir 是设备本地、不可随 Vault 重定向的当前用户运行目录。
