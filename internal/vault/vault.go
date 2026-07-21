@@ -64,11 +64,11 @@ func Open(dir string) (*Store, error) {
 			return nil, fmt.Errorf("vault: save key: %w", err)
 		}
 		s.key = key
-		return s, s.saveLocked(model.VaultData{Version: payloadVersion})
+		return s, s.saveLocked(model.VaultData{Version: payloadVersion, Prefs: model.Prefs{UpdateCheckEnabled: true}})
 	default:
 		s.key = key
 		if !datExists {
-			return s, s.saveLocked(model.VaultData{Version: payloadVersion})
+			return s, s.saveLocked(model.VaultData{Version: payloadVersion, Prefs: model.Prefs{UpdateCheckEnabled: true}})
 		}
 		return s, nil
 	}
