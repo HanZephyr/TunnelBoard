@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
@@ -86,6 +87,25 @@ func (e *RestoreEffectsAdapter) Snapshot(context.Context) (biz.RestoreFacts, err
 		return biz.RestoreFacts{}, err
 	}
 	return biz.RestoreFacts{VaultRevision: revisionOfCatalog(data), RuntimeRevision: revisionOf(runtimeState), RouteRevision: revisionOf(routeState)}, nil
+}
+
+func (e *RestoreEffectsAdapter) VaultStorageRevision(context.Context) (string, error) {
+	return e.store.StorageRevision()
+}
+
+func (e *RestoreEffectsAdapter) CaptureRunningForwards(context.Context) ([]int, error) {
+	runtimeState, err := e.runtime.Snapshot()
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int, 0, len(runtimeState))
+	for _, state := range runtimeState {
+		if state.Status == biz.RuntimeStateRunning || state.Status == biz.RuntimeStateReconnecting {
+			ids = append(ids, state.ForwardID)
+		}
+	}
+	sort.Ints(ids)
+	return ids, nil
 }
 
 func (e *RestoreEffectsAdapter) PrepareCandidate(_ context.Context, data model.VaultData) (biz.RestoreVaultCandidate, error) {
@@ -185,16 +205,135 @@ func (e *RestoreEffectsAdapter) Compensate(ctx context.Context, state biz.Restor
 	return errors.Join(failures...)
 }
 
-// RecoverPending 在启动时保守处理未知中断点：保持/进入隔离并再次收敛网络副作用。
+// RecoverPending 在启动网络功能前恢复未完成的 Restore 事务。
+// Vault 尚未替换时恢复旧 Route 和原运行 Forward；Vault 已替换时则只能
+// 收敛到新 Vault 的隔离态，绝不复活旧网络副作用。只有全部恢复动作成功后才消费 journal。
 func (e *RestoreEffectsAdapter) RecoverPending(ctx context.Context) error {
-	_, pending, err := e.recovery.State()
-	if err != nil || !pending {
+	journalPath := filepath.Join(e.recovery.dir, restoreJournalFile)
+	var journal biz.RestoreJournal
+	if err := readApplicationJSON(journalPath, &journal); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return err
 	}
-	if err := e.routes.NeutralizeRoutes(ctx); err != nil {
+	if journal.TransactionID == "" || !knownRestorePhase(journal.Phase) {
+		return errors.New("application: invalid pending restore journal")
+	}
+
+	data, err := e.store.Load()
+	if err != nil {
+		return fmt.Errorf("application: inspect pending restore vault: %w", err)
+	}
+	currentRevision := revisionOfCatalog(data)
+	currentStorageRevision, err := e.store.StorageRevision()
+	if err != nil {
+		return fmt.Errorf("application: inspect pending restore storage revision: %w", err)
+	}
+	vaultReplaced := journal.VaultReplaced || restorePhaseAtLeast(journal.Phase, biz.RestorePhaseVaultReplaced)
+	if journal.Phase == biz.RestorePhaseReplacingVault {
+		// replacing_vault is deliberately persisted before the atomic rename. Comparing the
+		// live revision resolves which side of that rename the process reached before crashing.
+		if journal.BeforeVaultStorageRevision != "" {
+			vaultReplaced = currentStorageRevision != journal.BeforeVaultStorageRevision
+		} else {
+			// Legacy journals did not persist an encrypted storage digest. Fail safely when
+			// their public revision cannot prove that the old Vault is still active.
+			vaultReplaced = journal.Before.VaultRevision == "" || currentRevision != journal.Before.VaultRevision
+		}
+	}
+
+	if vaultReplaced {
+		if err := e.routes.NeutralizeRoutes(ctx); err != nil {
+			return fmt.Errorf("application: neutralize replaced restore routes: %w", err)
+		}
+		if err := e.recovery.setQuarantine(true); err != nil {
+			return fmt.Errorf("application: persist restore quarantine: %w", err)
+		}
+		if err := e.discardJournalCandidate(journal.CandidateID); err != nil {
+			return err
+		}
+		return e.CommitJournal(ctx, journal.TransactionID)
+	}
+
+	if currentRevision != journal.Before.VaultRevision {
+		return errors.New("application: pending restore vault revision is ambiguous")
+	}
+	if restorePhaseAtLeast(journal.Phase, biz.RestorePhaseRuntimeSuspended) {
+		if _, err := e.routes.ReconcileRoutes(); err != nil {
+			return fmt.Errorf("application: restore pre-restore routes: %w", err)
+		}
+		if err := e.resumeJournalForwards(ctx, &journal); err != nil {
+			return err
+		}
+	}
+	if err := e.discardJournalCandidate(journal.CandidateID); err != nil {
 		return err
 	}
-	return e.recovery.setQuarantine(true)
+	if err := e.recovery.setQuarantine(false); err != nil {
+		return fmt.Errorf("application: clear stale restore quarantine: %w", err)
+	}
+	return e.CommitJournal(ctx, journal.TransactionID)
+}
+
+func (e *RestoreEffectsAdapter) resumeJournalForwards(ctx context.Context, journal *biz.RestoreJournal) error {
+	runtimeState, err := e.runtime.Snapshot()
+	if err != nil {
+		return fmt.Errorf("application: inspect runtime during restore recovery: %w", err)
+	}
+	running := make(map[int]struct{}, len(runtimeState))
+	for _, state := range runtimeState {
+		if state.Status == biz.RuntimeStateRunning || state.Status == biz.RuntimeStateReconnecting {
+			running[state.ForwardID] = struct{}{}
+		}
+	}
+	remaining := append([]int(nil), journal.RunningForwardIDs...)
+	for len(remaining) != 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		id := remaining[0]
+		if _, alreadyRunning := running[id]; !alreadyRunning {
+			if err := e.runtime.Start(id); err != nil {
+				return fmt.Errorf("application: resume forward %d after restore interruption: %w", id, err)
+			}
+		}
+		remaining = remaining[1:]
+		journal.RunningForwardIDs = append([]int(nil), remaining...)
+		if err := e.WriteJournal(ctx, *journal); err != nil {
+			return fmt.Errorf("application: checkpoint restored forward %d: %w", id, err)
+		}
+	}
+	return nil
+}
+
+func (e *RestoreEffectsAdapter) discardJournalCandidate(candidateID string) error {
+	if candidateID == "" {
+		return nil
+	}
+	if err := e.store.DiscardRestoreCandidate(vault.RestoreCandidate{ID: candidateID}); err != nil {
+		return fmt.Errorf("application: discard restore candidate: %w", err)
+	}
+	return nil
+}
+
+func knownRestorePhase(phase string) bool {
+	_, ok := restorePhaseOrder[phase]
+	return ok
+}
+
+func restorePhaseAtLeast(actual, expected string) bool {
+	return restorePhaseOrder[actual] >= restorePhaseOrder[expected]
+}
+
+var restorePhaseOrder = map[string]int{
+	biz.RestorePhasePlanned:           1,
+	biz.RestorePhaseCandidatePrepared: 2,
+	biz.RestorePhaseRuntimeSuspended:  3,
+	biz.RestorePhaseRoutesNeutralized: 4,
+	biz.RestorePhaseReplacingVault:    5,
+	biz.RestorePhaseVaultReplaced:     6,
+	biz.RestorePhaseQuarantined:       7,
 }
 
 func readApplicationJSON(path string, target any) error {

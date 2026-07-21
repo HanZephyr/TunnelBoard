@@ -7,6 +7,8 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,6 +91,19 @@ func (s *Store) Load() (model.VaultData, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.loadLocked()
+}
+
+// StorageRevision returns a digest of the encrypted Vault file. It can distinguish
+// replacements that only change secrets without exposing plaintext-derived hashes.
+func (s *Store) StorageRevision() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	raw, err := os.ReadFile(filepath.Join(s.dir, dataFileName))
+	if err != nil {
+		return "", fmt.Errorf("vault: read storage revision: %w", err)
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // Update 在锁内读出数据、执行 mutate、原子写回，返回写回后的数据。

@@ -312,6 +312,70 @@ func TestApplyRouteRollbackOnCaddyFailure(t *testing.T) {
 	if len(rollback) != 1 || rollback[0].Domain != "old.test" {
 		t.Fatalf("rollback should restore previous entries, got %+v", rollback)
 	}
+	if pending, err := fx.router.RecoveryPending(); err != nil || pending {
+		t.Fatalf("successful compensation must consume journal: pending=%v err=%v", pending, err)
+	}
+	state, err := fx.router.AppliedState()
+	if err != nil || state.PendingTxID != "" || state.Status != biz.RouteStatusError {
+		t.Fatalf("compensated state = %+v err=%v", state, err)
+	}
+}
+
+func TestPendingRouteJournalBlocksStartupAndForwardReconcilesLatestVault(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	stale := helper.BlockBegin + "\r\n127.0.0.1 stale.test\r\n" + helper.BlockEnd + "\r\n"
+	if err := os.WriteFile(fx.hosts, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	journalPath := filepath.Join(filepath.Dir(fx.caddyJSON), "state", "route-journal.json")
+	if err := os.MkdirAll(filepath.Dir(journalPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{
+		"txId": "crashed-tx", "desiredRevision": "stale", "phase": "hosts_applied", "createdAt": time.Now().UTC(),
+	})
+	if err := os.WriteFile(journalPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := fx.router.RecoveryPending(); err != nil || !pending {
+		t.Fatalf("pending=%v err=%v", pending, err)
+	}
+	if err := fx.router.ResumeCaddy(); !errors.Is(err, biz.ErrRouteRecoveryPending) {
+		t.Fatalf("ResumeCaddy error = %v", err)
+	}
+	if len(fx.helper.calls) != 0 || len(fx.caddy.reloads) != 0 {
+		t.Fatalf("startup recovery must have zero privileged effects: helper=%v reloads=%d", fx.helper.calls, len(fx.caddy.reloads))
+	}
+	if _, err := fx.router.ReconcileRoutes(); err != nil {
+		t.Fatal(err)
+	}
+	if len(fx.helper.calls) != 1 || len(fx.helper.calls[0].Hosts) != 1 || fx.helper.calls[0].Hosts[0].Domain != "db.test" {
+		t.Fatalf("forward recovery did not converge latest desired hosts: %+v", fx.helper.calls)
+	}
+	if pending, err := fx.router.RecoveryPending(); err != nil || pending {
+		t.Fatalf("recovered journal pending=%v err=%v", pending, err)
+	}
+}
+
+func TestInvalidPendingRouteJournalBlocksReconciliationWithoutEffects(t *testing.T) {
+	fx := newRouterFixture(t)
+	journalPath := filepath.Join(filepath.Dir(fx.caddyJSON), "state", "route-journal.json")
+	if err := os.MkdirAll(filepath.Dir(journalPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(journalPath, []byte(`{"txId":"bad","phase":"unknown"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fx.router.ReconcileRoutes(); err == nil {
+		t.Fatal("invalid recovery journal must block reconciliation")
+	}
+	if len(fx.helper.calls) != 0 || len(fx.caddy.reloads) != 0 {
+		t.Fatalf("invalid journal caused effects: helper=%v reloads=%d", fx.helper.calls, len(fx.caddy.reloads))
+	}
 }
 
 // 最后一个 Caddy Route 移除：停止 Caddy 并撤销 CA 信任，偏好清空。

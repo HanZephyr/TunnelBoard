@@ -21,7 +21,10 @@ import (
 
 // ErrDomainConfirmationRequired 表示将覆盖非 .test/.localhost 域名的 DNS 解析，
 // 调用方必须让用户明确确认后把该域名放入 confirmedDomains 重试（CONTEXT.md:63）。
-var ErrDomainConfirmationRequired = errors.New("biz: domain override requires explicit confirmation")
+var (
+	ErrDomainConfirmationRequired = errors.New("biz: domain override requires explicit confirmation")
+	ErrRouteRecoveryPending       = errors.New("biz: interrupted route transaction requires explicit recovery")
+)
 
 // HelperClient 是特权辅助服务的调用接缝（生产 = *helper.Client，测试 = fake）。
 type HelperClient interface {
@@ -143,6 +146,9 @@ func (b *RouterBiz) RemoveRoute(routeID int) (RouteApplyResult, error) {
 
 // applySystem 是统一的系统重推流程：快照 → hosts → Caddy → CA；失败逆序回滚。
 func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) {
+	if err := b.validatePendingJournalLocked(); err != nil {
+		return RouteApplyResult{}, err
+	}
 	data, err := b.store.Load()
 	if err != nil {
 		return RouteApplyResult{}, err
@@ -166,6 +172,15 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 	if err != nil {
 		return RouteApplyResult{}, err
 	}
+	prevEntries := b.currentManagedEntries()
+	prevRunning := b.caddy.Status(context.Background()).Owned
+	prevConfig, _ := os.ReadFile(b.caddyConfigPth)
+	caFingerprint := ""
+	prevCATrusted := false
+	if caStatus, statusErr := b.caTrust.Status(context.Background()); statusErr == nil && caStatus.State == helper.CATrusted {
+		caFingerprint = caStatus.Identity.SHA256
+		prevCATrusted = true
+	}
 	journal := routeJournal{
 		TxID:            newRouteTxID(),
 		DesiredRevision: desiredRevision,
@@ -178,49 +193,56 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 	if err := b.state.saveJournal(journal); err != nil {
 		return RouteApplyResult{}, err
 	}
-	caFingerprint := ""
-	if caStatus, statusErr := b.caTrust.Status(context.Background()); statusErr == nil && caStatus.State == helper.CATrusted {
-		caFingerprint = caStatus.Identity.SHA256
-	}
+	hostsMutated := false
+	caddyMutated := false
+	caMutated := false
 	defer func() {
-		status := RouteStatusApplied
-		if result.PortConflict != "" {
-			status = RouteStatusHostsOnly
+		if retErr == nil {
+			status := RouteStatusApplied
+			if result.PortConflict != "" {
+				status = RouteStatusHostsOnly
+			}
+			state := RouteAppliedState{
+				AppliedDesiredRevision: desiredRevision,
+				HostsDigest:            digestHosts(entries),
+				AppliedHosts:           append([]route.HostEntry(nil), entries...),
+				CaddyConfigDigest:      digestBytes(caddyConfig),
+				CATrustedSHA256:        caFingerprint,
+				Status:                 status,
+				PortConflict:           result.PortConflict,
+				CaddyGeneration:        b.caddy.Status(context.Background()).Generation,
+			}
+			if err := b.state.saveState(state); err != nil {
+				retErr = fmt.Errorf("persist applied route state: %w", err)
+			} else if err := b.state.clearJournal(); err != nil {
+				retErr = fmt.Errorf("complete route journal: %w", err)
+			}
 		}
-		state := RouteAppliedState{
-			AppliedDesiredRevision: desiredRevision,
-			HostsDigest:            digestHosts(entries),
-			AppliedHosts:           append([]route.HostEntry(nil), entries...),
-			CaddyConfigDigest:      digestBytes(caddyConfig),
-			CATrustedSHA256:        caFingerprint,
-			Status:                 status,
-			PortConflict:           result.PortConflict,
+		if retErr == nil {
+			return
 		}
-		caddyStatus := b.caddy.Status(context.Background())
-		state.CaddyGeneration = caddyStatus.Generation
-		if retErr != nil {
-			state = beforeApplied
-			state.Status = RouteStatusError
-			state.LastError = sanitizeRouteError(retErr)
+		compensationErr := b.compensateRoute(prevEntries, prevRunning, prevConfig, prevCATrusted, hostsMutated, caddyMutated, caMutated)
+		state := beforeApplied
+		state.Status = RouteStatusError
+		state.LastError = sanitizeRouteError(errors.Join(retErr, compensationErr))
+		if compensationErr != nil {
 			state.PendingTxID = journal.TxID
-			_ = b.state.saveState(state)
-			return
+		} else {
+			state.PendingTxID = ""
+			if clearErr := b.state.clearJournal(); clearErr != nil {
+				compensationErr = errors.Join(compensationErr, fmt.Errorf("clear compensated route journal: %w", clearErr))
+				state.PendingTxID = journal.TxID
+			}
 		}
-		if err := b.state.saveState(state); err != nil {
-			retErr = err
-			return
+		if stateErr := b.state.saveState(state); stateErr != nil {
+			compensationErr = errors.Join(compensationErr, fmt.Errorf("persist route failure state: %w", stateErr))
 		}
-		if err := b.state.clearJournal(); err != nil {
-			retErr = err
-		}
+		retErr = errors.Join(retErr, compensationErr)
 	}()
 	advanceJournal := func(phase string) error {
 		journal.Phase = phase
 		return b.state.saveJournal(journal)
 	}
-
-	prevEntries := b.currentManagedEntries()
-	prevRunning := b.caddy.Status(context.Background()).Owned
 
 	// 需要特权操作的场景：写 hosts、信任/撤销 CA；否则完全无需 helper。
 	needHelper := len(entries) > 0 || len(prevEntries) > 0
@@ -234,6 +256,7 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 
 	hostsChanged := !entriesEqual(entries, prevEntries)
 	if hostsChanged {
+		hostsMutated = true
 		if err := b.callHelper(helper.Request{Op: helper.OpApplyManagedHosts, Hosts: entries, TransactionID: journal.TxID, ExpectedManagedDigest: digestHosts(prevEntries)}); err != nil {
 			slog.Error("apply managed hosts failed", "err", err)
 			return result, fmt.Errorf("apply managed hosts: %w", err)
@@ -250,6 +273,7 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 	// Caddy：无启用 Route 时确保停止并撤销 CA；有则诊断端口→重载→信任 CA。
 	if len(caddyConfig) == 0 {
 		if prevRunning {
+			caddyMutated = true
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			err := b.caddy.Stop(ctx)
 			cancel()
@@ -260,6 +284,7 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 			slog.Info("caddy stopped (no enabled routes)")
 		}
 		if caFingerprint != "" {
+			caMutated = true
 			if err := b.caTrust.RemoveCurrentCaddyCA(context.Background()); err != nil {
 				slog.Error("untrust local ca failed", "err", err)
 				return result, fmt.Errorf("untrust local ca: %w", err)
@@ -273,7 +298,6 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 		return result, nil
 	}
 
-	prevConfig, _ := os.ReadFile(b.caddyConfigPth)
 	// 短路：Caddy 已运行且新编译配置与磁盘 caddy.json 字节相同时，跳过 admin API 热重载。
 	// CompileCaddy 对同一输入字节稳定（路由/subjects 排序、json map 键排序），bytes.Equal 安全。
 	// 既避免无谓的 /load 请求，也避免 Caddy 落盘 caddy.json 时重写相同文件。
@@ -281,9 +305,9 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 		slog.Info("caddy config unchanged, supervisor will verify digest")
 	}
 	revision := configRevision(caddyConfig)
+	caddyMutated = true
 	applyResult, err := b.caddy.Apply(context.Background(), revision, caddyConfig)
 	if err != nil {
-		b.rollbackHosts(prevEntries, entries, hostsChanged)
 		slog.Error("reload caddy failed", "err", err)
 		return result, fmt.Errorf("reload caddy: %w", err)
 	}
@@ -304,10 +328,9 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 		return result, fmt.Errorf("query current-user ca: %w", err)
 	}
 	if caStatus.State != helper.CATrusted {
+		caMutated = true
 		identity, err := b.caTrust.EnsureCurrentCaddyCATrusted(context.Background())
 		if err != nil {
-			b.rollbackCaddy(prevRunning, prevConfig)
-			b.rollbackHosts(prevEntries, entries, hostsChanged)
 			slog.Error("trust local ca failed", "err", err)
 			return result, fmt.Errorf("trust local ca: %w", err)
 		}
@@ -328,6 +351,13 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 func (b *RouterBiz) ResumeCaddy() error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	pending, err := b.recoveryPendingLocked()
+	if err != nil {
+		return err
+	}
+	if pending {
+		return ErrRouteRecoveryPending
+	}
 	data, err := b.store.Load()
 	if err != nil {
 		return err
@@ -362,6 +392,39 @@ func (b *RouterBiz) ResumeCaddy() error {
 	}
 	// 启动恢复不替用户作出新的根证书信任决定；下一次显式 Apply 再登记当前用户 CA。
 	slog.Info("current-user ca confirmation required; defer until explicit route apply")
+	return nil
+}
+
+// RecoveryPending reports whether a previous Route transaction did not reach a
+// durable terminal state. It is read-only and never prompts for privilege.
+func (b *RouterBiz) RecoveryPending() (bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.recoveryPendingLocked()
+}
+
+func (b *RouterBiz) recoveryPendingLocked() (bool, error) {
+	_, err := b.state.loadJournal()
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (b *RouterBiz) validatePendingJournalLocked() error {
+	journal, err := b.state.loadJournal()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("load pending route transaction: %w", err)
+	}
+	if journal.TxID == "" || !knownRouteJournalPhase(journal.Phase) {
+		return errors.New("biz: invalid pending route transaction")
+	}
+	// The next journal save atomically supersedes this record. Re-applying the latest
+	// Vault desired state is idempotent and safely converges any crash-interrupted phase.
+	slog.Warn("recover interrupted route transaction by forward reconciliation", "tx_id", journal.TxID, "phase", journal.Phase)
 	return nil
 }
 
@@ -523,22 +586,54 @@ func (b *RouterBiz) callHelper(req helper.Request) error {
 	return nil
 }
 
-func (b *RouterBiz) rollbackHosts(prevEntries, currentEntries []route.HostEntry, hostsChanged bool) {
-	if hostsChanged {
-		slog.Warn("rollback managed hosts to previous entries", "entries", len(prevEntries))
-		_ = b.callHelper(helper.Request{Op: helper.OpApplyManagedHosts, Hosts: prevEntries, TransactionID: newRouteTxID(), ExpectedManagedDigest: digestHosts(currentEntries)})
+func (b *RouterBiz) compensateRoute(prevEntries []route.HostEntry, prevRunning bool, prevConfig []byte, prevCATrusted, hostsMutated, caddyMutated, caMutated bool) error {
+	var failures []error
+	// Remove newly introduced trust before restoring the previous Caddy generation.
+	if caMutated && !prevCATrusted {
+		if err := b.caTrust.RemoveCurrentCaddyCA(context.Background()); err != nil {
+			failures = append(failures, fmt.Errorf("rollback current-user ca: %w", err))
+		}
 	}
+	if caddyMutated {
+		if prevRunning && len(prevConfig) > 0 {
+			slog.Warn("rollback caddy to previous config")
+			if _, err := b.caddy.Apply(context.Background(), configRevision(prevConfig), prevConfig); err != nil {
+				failures = append(failures, fmt.Errorf("rollback caddy config: %w", err))
+			}
+		} else if !prevRunning {
+			slog.Warn("rollback caddy: stop process")
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := b.caddy.Stop(ctx)
+			cancel()
+			if err != nil {
+				failures = append(failures, fmt.Errorf("rollback caddy process: %w", err))
+			}
+		}
+	}
+	if hostsMutated {
+		slog.Warn("rollback managed hosts to previous entries", "entries", len(prevEntries))
+		if err := b.callHelper(helper.Request{
+			Op: helper.OpApplyManagedHosts, Hosts: prevEntries, TransactionID: newRouteTxID(),
+		}); err != nil {
+			failures = append(failures, fmt.Errorf("rollback managed hosts: %w", err))
+		}
+	}
+	// If neutralization removed an existing trust, restore it only after the previous
+	// Caddy configuration is active again so the trust operation observes the old CA.
+	if caMutated && prevCATrusted {
+		if _, err := b.caTrust.EnsureCurrentCaddyCATrusted(context.Background()); err != nil {
+			failures = append(failures, fmt.Errorf("restore current-user ca: %w", err))
+		}
+	}
+	return errors.Join(failures...)
 }
 
-func (b *RouterBiz) rollbackCaddy(prevRunning bool, prevConfig []byte) {
-	if prevRunning && len(prevConfig) > 0 {
-		slog.Warn("rollback caddy to previous config")
-		_, _ = b.caddy.Apply(context.Background(), configRevision(prevConfig), prevConfig)
-	} else if !prevRunning {
-		slog.Warn("rollback caddy: stop process")
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = b.caddy.Stop(ctx)
-		cancel()
+func knownRouteJournalPhase(phase string) bool {
+	switch phase {
+	case "planned", "hosts_applied", "caddy_applied", "ca_applied", "neutralized":
+		return true
+	default:
+		return false
 	}
 }
 
