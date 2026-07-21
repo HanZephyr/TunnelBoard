@@ -18,6 +18,7 @@ import (
 )
 
 type memStore struct {
+	mu            sync.Mutex
 	data          model.VaultData
 	updates       int
 	loads         int
@@ -37,6 +38,8 @@ func (f *fakeImportPackage) Take(context.Context, biz.TakeStageRequest) (biz.Sta
 func (*fakeImportPackage) Cancel(string) {}
 
 func (m *memStore) Load() (model.VaultData, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.loads++
 	if m.failLoadAfter > 0 && m.loads > m.failLoadAfter {
 		return model.VaultData{}, errors.New("injected load failure")
@@ -44,6 +47,8 @@ func (m *memStore) Load() (model.VaultData, error) {
 	return m.data, nil
 }
 func (m *memStore) Update(fn func(*model.VaultData) error) (model.VaultData, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	d := m.data
 	if err := fn(&d); err != nil {
 		return model.VaultData{}, err
