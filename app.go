@@ -132,7 +132,7 @@ func (a *App) shutdown(ctx context.Context) {
 		a.runtime.Shutdown()
 	}
 	if a.caddy != nil {
-		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := a.caddy.Stop(stopCtx); err != nil {
 			slog.Error("stop caddy on shutdown failed", "err", err)
