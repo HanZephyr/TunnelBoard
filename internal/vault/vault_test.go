@@ -221,6 +221,9 @@ func TestOpenInitializesFreshVault(t *testing.T) {
 	if data.Version != 1 {
 		t.Fatalf("fresh vault version = %d, want 1", data.Version)
 	}
+	if !data.Prefs.UpdateCheckEnabled {
+		t.Fatal("fresh vault must explicitly enable update checks")
+	}
 	if len(data.SSHHosts) != 0 || len(data.Forwards) != 0 {
 		t.Fatalf("fresh vault should be empty, got %+v", data)
 	}
