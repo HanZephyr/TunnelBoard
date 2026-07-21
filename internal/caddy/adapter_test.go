@@ -3,6 +3,7 @@ package caddy_test
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -274,6 +275,41 @@ func TestRootCACertReadsPEM(t *testing.T) {
 	}
 }
 
+func TestPrepareRootCAGeneratesAuthorityWithoutStartingProcess(t *testing.T) {
+	a := caddy.NewWithRuntimeBase(t.TempDir(), t.TempDir())
+	bin := filepath.Join(t.TempDir(), "caddy.exe")
+	if runtime.GOOS != "windows" {
+		bin = filepath.Join(t.TempDir(), "caddy")
+	}
+	if err := os.WriteFile(bin, []byte("fake"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(caddy.EnvPathOverride, bin)
+	wantDER := []byte("prepared-ca-der")
+	a.ValidateConfig = func(_ context.Context, _, _, _ string, _ []string, _ io.Writer) error {
+		dir := filepath.Join(a.DataDir, "caddy", "pki", "authorities", "local")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dir, "root.crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: wantDER}), 0o600)
+	}
+	a.StartProcess = func(string, []string, string, []string, io.Writer, io.Writer) (caddy.Process, error) {
+		t.Fatal("PrepareRootCA must not start Caddy")
+		return nil, nil
+	}
+
+	got, err := a.PrepareRootCA(context.Background(), routeConfig("prepare.test"))
+	if err != nil {
+		t.Fatalf("PrepareRootCA: %v", err)
+	}
+	if string(got) != string(wantDER) {
+		t.Fatalf("PrepareRootCA DER = %q, want %q", got, wantDER)
+	}
+	if a.Status(context.Background()).Owned {
+		t.Fatal("PrepareRootCA must not own a running process")
+	}
+}
+
 // TestPinnedCaddyAFUnixPOC 是发布门禁使用的真二进制 POC；普通单元测试没有钉版二进制时跳过。
 func TestPinnedCaddyAFUnixPOC(t *testing.T) {
 	bin := strings.TrimSpace(os.Getenv("TUNNELBOARD_CADDY_POC_PATH"))
@@ -291,7 +327,18 @@ func TestPinnedCaddyAFUnixPOC(t *testing.T) {
 	a := caddy.NewWithRuntimeBase(t.TempDir(), runtimeBase)
 	t.Cleanup(func() { _ = os.RemoveAll(a.RuntimeDir()) })
 	a.CheckPort = func() error { return nil }
-	config := []byte(`{"apps":{"http":{"servers":{"poc":{"listen":["127.0.0.1:0"],"routes":[]}}}}}`)
+	config := []byte(`{"apps":{"http":{"servers":{"poc":{"listen":["127.0.0.1:0"],"routes":[]}}},"tls":{"automation":{"policies":[{"subjects":["poc.test"],"issuers":[{"module":"internal"}]}]}},"pki":{"certificate_authorities":{"local":{"install_trust":false}}}}}`)
+	der, err := a.PrepareRootCA(context.Background(), config)
+	if err != nil {
+		t.Fatalf("PrepareRootCA: %v", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil || !cert.IsCA {
+		t.Fatalf("prepared authority is not a CA: cert=%v err=%v", cert, err)
+	}
+	if a.Status(context.Background()).Owned {
+		t.Fatal("PrepareRootCA must not start Caddy")
+	}
 	result, err := a.Apply(context.Background(), "poc-1", config)
 	if err != nil || result.Outcome != caddy.OutcomeApplied {
 		logBytes, _ := os.ReadFile(filepath.Join(a.DataDir, "logs", "caddy.log"))

@@ -218,6 +218,7 @@ type RouteChangePreview struct {
 	HostsRecords         []route.HostEntry `json:"hostsRecords,omitempty"`
 	RequiresConfirmation []string          `json:"requiresConfirmation,omitempty"`
 	CATrustNeeded        bool              `json:"caTrustNeeded"`
+	CAFingerprint        string            `json:"caFingerprint,omitempty"`
 }
 
 type CommitRouteChangeCommand struct {

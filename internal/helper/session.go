@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 var ErrSessionClosed = errors.New("helper: privileged session is closed")
+
+const brokenConnectionCloseTimeout = 250 * time.Millisecond
 
 // SessionConnection 是一次已经过身份和协议校验的 Helper IPC 连接。
 type SessionConnection interface {
@@ -74,7 +77,9 @@ func (s *privilegedSession) Call(ctx context.Context, request Request) (Response
 	if err != nil {
 		broken := s.conn
 		s.conn = nil
-		_ = broken.Close(context.Background())
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), brokenConnectionCloseTimeout)
+		_ = broken.Close(cleanupCtx)
+		cancel()
 		return Response{}, err
 	}
 	if !response.OK {

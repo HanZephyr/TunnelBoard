@@ -394,6 +394,7 @@ type stagedRouteChange struct {
 	route           *model.WebRoute
 	requiredDomains []string
 	caTrustNeeded   bool
+	caFingerprint   string
 }
 
 func (s *Service) GetSnapshot(ctx context.Context) (AppSnapshot, error) {
@@ -758,7 +759,7 @@ func (s *Service) PreviewRouteChange(ctx context.Context, intent RouteChangeInte
 		token: token, expiresAt: expiresAt, desiredRevision: desiredRevision,
 		appliedRevision: applied.AppliedDesiredRevision, intent: intent, candidate: candidate,
 		route: cloneWebRoute(changedRoute), requiredDomains: append([]string(nil), requiredDomains...),
-		caTrustNeeded: caTrustNeeded,
+		caTrustNeeded: caTrustNeeded, caFingerprint: systemPreview.CAFingerprint,
 	}
 	s.routeStageMu.Lock()
 	// UI 全局只允许一个 Route mutation；新 Preview 同时废止旧 token，既避免
@@ -771,6 +772,7 @@ func (s *Service) PreviewRouteChange(ctx context.Context, intent RouteChangeInte
 		LinkedChanges: linkedRouteFlagChanges(previous, changedRoute), HostsRecords: systemPreview.HostsRecords,
 		RequiresConfirmation: requiredDomains,
 		CATrustNeeded:        caTrustNeeded,
+		CAFingerprint:        systemPreview.CAFingerprint,
 	}, nil
 }
 
@@ -810,6 +812,20 @@ func (s *Service) CommitRouteChange(ctx context.Context, command CommitRouteChan
 	}
 	if stage.caTrustNeeded && !command.ConfirmCATrust {
 		return s.cacheRouteCommandResult(command, digest, rejectedRouteResult("ca_confirmation_required", "current-user CA trust confirmation is required"))
+	}
+	if stage.caFingerprint != "" {
+		routeID := 0
+		if stage.route != nil {
+			routeID = stage.route.ID
+		}
+		currentPreview, previewErr := s.routes.PreviewDesired(stage.candidate, routeID)
+		if previewErr != nil {
+			return RouteCommandResult{}, previewErr
+		}
+		if currentPreview.CAFingerprint == "" || currentPreview.CAFingerprint != stage.caFingerprint || currentPreview.CATrustNeeded != stage.caTrustNeeded {
+			s.deleteRouteStage(command.Token)
+			return s.cacheRouteCommandResult(command, digest, rejectedRouteResult("stale_ca_identity", "current-user CA identity or trust state changed after preview"))
+		}
 	}
 	data, err := s.store.Load()
 	if err != nil {

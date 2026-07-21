@@ -399,6 +399,7 @@
             "caTrustTitle": "確認本機 CA 信任",
             "dnsOverrideMessage": "將為以下網域寫入 hosts 記錄：{domains}",
             "caTrustMessage": "Caddy HTTPS 需要為目前 Windows 使用者信任 TunnelBoard 本機 CA，請確認後繼續。",
+            "caFingerprintLabel": "憑證 SHA-256 指紋：",
             "hostsRecordDomain": "網域",
             "hostsRecordIp": "IP",
             "dnsOverrideWarning": "該網域非 .test/.localhost，將在本機覆寫正常 DNS 解析。",

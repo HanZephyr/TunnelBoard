@@ -2,8 +2,15 @@ package biz_test
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,18 +54,21 @@ func (f *fakeHelperClient) EnsureInstalled() error {
 }
 
 type fakeCaddyAdapter struct {
-	mu          sync.Mutex
-	running     bool
-	diagnoseErr error
-	reloadErr   error
-	rootCA      []byte
-	rootCAErr   error
-	reloads     [][]byte
-	lastConfig  []byte
-	stopCalls   int
-	applyDelay  time.Duration
-	activeApply int
-	maxApply    int
+	mu           sync.Mutex
+	running      bool
+	diagnoseErr  error
+	reloadErr    error
+	rootCA       []byte
+	rootCAErr    error
+	reloads      [][]byte
+	lastConfig   []byte
+	stopCalls    int
+	applyDelay   time.Duration
+	activeApply  int
+	maxApply     int
+	prepareDER   []byte
+	prepareErr   error
+	prepareCalls int
 }
 
 func (f *fakeCaddyAdapter) DiagnosePort() error {
@@ -106,6 +116,10 @@ func (f *fakeCaddyAdapter) Apply(_ context.Context, _ string, config []byte) (ca
 	return caddycore.ApplyResult{Outcome: caddycore.OutcomeApplied}, nil
 }
 func (f *fakeCaddyAdapter) Stop(context.Context) error { f.stopCalls++; f.running = false; return nil }
+func (f *fakeCaddyAdapter) PrepareRootCA(context.Context, []byte) ([]byte, error) {
+	f.prepareCalls++
+	return append([]byte(nil), f.prepareDER...), f.prepareErr
+}
 func (f *fakeCaddyAdapter) RootCACert(time.Duration) ([]byte, error) {
 	return f.rootCA, f.rootCAErr
 }
@@ -469,9 +483,62 @@ func TestPreviewRoute(t *testing.T) {
 	if !preview.CATrustNeeded {
 		t.Fatal("CATrustNeeded should be true")
 	}
+	if preview.CAFingerprint != strings.Repeat("a", 64) {
+		t.Fatalf("CAFingerprint=%q", preview.CAFingerprint)
+	}
 	if len(preview.HostsRecords) != 1 || preview.HostsRecords[0] != (route.HostEntry{Domain: "grafana.example.com", IP: "127.0.0.1"}) {
 		t.Fatalf("HostsRecords = %+v", preview.HostsRecords)
 	}
+}
+
+func TestPreviewRoutePreparesFirstCurrentUserCA(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "first.test", HostsEnabled: true, CaddyEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	der := selfSignedTestCA(t)
+	fx.caTrust.state = helper.CAUnavailable
+	fx.caTrust.identity = helper.CAIdentity{}
+	fx.caddy.prepareDER = der
+
+	preview, err := fx.router.PreviewRoute(rt.ID)
+	if err != nil {
+		t.Fatalf("PreviewRoute: %v", err)
+	}
+	sum := sha256.Sum256(der)
+	if preview.CAFingerprint != hex.EncodeToString(sum[:]) {
+		t.Fatalf("CAFingerprint = %q", preview.CAFingerprint)
+	}
+	if fx.caddy.prepareCalls != 1 {
+		t.Fatalf("PrepareRootCA calls = %d, want 1", fx.caddy.prepareCalls)
+	}
+	if fx.caddy.running || len(fx.caddy.reloads) != 0 {
+		t.Fatal("Preview must generate the authority without starting or applying Caddy")
+	}
+}
+
+func selfSignedTestCA(t *testing.T) []byte {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "TunnelBoard Preview Test CA"},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return der
 }
 
 // Caddy 已运行时再应用一条 Caddy 路由：跳过 443 端口预检，直接走 admin API 热重载，

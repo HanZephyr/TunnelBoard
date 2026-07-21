@@ -36,6 +36,7 @@ type HelperClient interface {
 // CaddyAdapter 是 Caddy 进程管理接缝（生产 = *caddy.Adapter，测试 = fake）。
 type CaddyAdapter interface {
 	Apply(ctx context.Context, revision string, config []byte) (caddycore.ApplyResult, error)
+	PrepareRootCA(ctx context.Context, config []byte) ([]byte, error)
 	Stop(ctx context.Context) error
 	Status(ctx context.Context) caddycore.Status
 }
@@ -70,6 +71,7 @@ type RoutePreview struct {
 	RequiresConfirmation []string          `json:"requiresConfirmation"`
 	PortConflict         bool              `json:"portConflict"`
 	CATrustNeeded        bool              `json:"caTrustNeeded"`
+	CAFingerprint        string            `json:"caFingerprint,omitempty"`
 }
 
 // RouterBiz 是本地路由 Module：把 Vault 中的 Web Route 状态推到系统
@@ -561,8 +563,31 @@ func (b *RouterBiz) previewDesiredLocked(data model.VaultData, routeID int) (Rou
 		}
 	}
 	// Preview 保持纯读：端口冲突由 Supervisor 在 Commit/Apply 时按真实启动结果分类。
-	caStatus, caErr := b.caTrust.Status(context.Background())
-	preview.CATrustNeeded = hasCaddyEnabledRoute(data) && (caErr != nil || caStatus.State != helper.CATrusted)
+	if !hasCaddyEnabledRoute(data) {
+		return preview, nil
+	}
+	ctx := context.Background()
+	caStatus, caErr := b.caTrust.Status(ctx)
+	if caErr != nil {
+		return RoutePreview{}, fmt.Errorf("query current-user ca for preview: %w", caErr)
+	}
+	preview.CATrustNeeded = caStatus.State != helper.CATrusted
+	preview.CAFingerprint = caStatus.Identity.SHA256
+	if preview.CAFingerprint == "" {
+		config, err := route.CompileCaddy(data)
+		if err != nil {
+			return RoutePreview{}, err
+		}
+		der, err := b.caddy.PrepareRootCA(ctx, config)
+		if err != nil {
+			return RoutePreview{}, fmt.Errorf("prepare current-user ca for preview: %w", err)
+		}
+		sum := sha256.Sum256(der)
+		preview.CAFingerprint = hex.EncodeToString(sum[:])
+		if err := helper.ValidateLocalCA(der, preview.CAFingerprint); err != nil {
+			return RoutePreview{}, fmt.Errorf("validate current-user ca for preview: %w", err)
+		}
+	}
 	return preview, nil
 }
 
