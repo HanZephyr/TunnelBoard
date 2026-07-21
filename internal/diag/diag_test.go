@@ -55,8 +55,8 @@ func TestWithAttrsSharesBuffer(t *testing.T) {
 // 脱敏：秘密键值遮蔽，用户目录归一。
 func TestSanitize(t *testing.T) {
 	cases := map[string]string{
-		`dial failed password=hunter2`:               `dial failed password=***`,
-		`passphrase=abc123 end`:                      `passphrase=*** end`,
+		`dial failed password=hunter2`:               `dial failed password=[REDACTED]`,
+		`passphrase=abc123 end`:                      `passphrase=[REDACTED] end`,
 		`read C:\Users\alice\.ssh\id_ed25519 failed`: `read ~\.ssh\id_ed25519 failed`,
 		`open /home/bob/.ssh/config`:                 `open ~/.ssh/config`,
 		`nothing sensitive`:                          `nothing sensitive`,
@@ -76,7 +76,7 @@ func TestBuildBundle(t *testing.T) {
 	if bundle.AppVersion != "1.2.3" || bundle.Platform != "windows/amd64" {
 		t.Fatalf("meta wrong: %+v", bundle)
 	}
-	if len(bundle.Logs) != 1 || !strings.Contains(bundle.Logs[0].Message, "password=***") {
+	if len(bundle.Logs) != 1 || !strings.Contains(bundle.Logs[0].Message, "password=[REDACTED]") {
 		t.Fatalf("logs not sanitized: %+v", bundle.Logs)
 	}
 	if bundle.Summary["forwards"] != 2 {

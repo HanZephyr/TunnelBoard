@@ -88,15 +88,12 @@ func (b *RingBuffer) Snapshot() []LogEntry {
 
 // 脱敏规则：键值形态的密码/口令/密钥材料一律遮蔽；用户目录路径归一为 ~。
 var (
-	secretPattern = regexp.MustCompile(`(?i)(password|passphrase|secret|private[_ -]?key|token)=(\S+)`)
-	homePattern   = regexp.MustCompile(`(?i)([A-Z]:\\Users\\[^\\\s]+|/home/[^/\s]+|/Users/[^/\s]+)`)
+	homePattern = regexp.MustCompile(`(?i)([A-Z]:\\Users\\[^\\\s]+|/home/[^/\s]+|/Users/[^/\s]+)`)
 )
 
 // Sanitize 对单条文本脱敏：秘密键值遮蔽为 ***，用户目录归一为 ~。
 func Sanitize(text string) string {
-	text = secretPattern.ReplaceAllString(text, "$1=***")
-	text = homePattern.ReplaceAllString(text, "~")
-	return text
+	return RedactLogText(text)
 }
 
 // Bundle 是诊断包内容：版本/平台信息、内存日志与上层附加的状态摘要。
