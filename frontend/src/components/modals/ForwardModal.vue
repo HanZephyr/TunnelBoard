@@ -4,7 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { errorMessage, isValidPort } from '../../utils/backend'
 import BaseDialog from '../common/BaseDialog.vue'
 import SSHHostFields from '../hosts/SSHHostFields.vue'
-import { createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
+import { clearSSHHostTransientSecrets, createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
 import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
 
 const props = defineProps({
@@ -87,7 +87,10 @@ const newHostForm = reactive(createSSHHostDraft())
 watch(
   () => props.show,
   (visible) => {
-    if (!visible) newHostOpen.value = false
+    if (!visible) {
+      clearSSHHostTransientSecrets(newHostForm)
+      newHostOpen.value = false
+    }
   }
 )
 
@@ -98,6 +101,7 @@ function openNewHostForm() {
 }
 
 function cancelNewHostForm() {
+  clearSSHHostTransientSecrets(newHostForm)
   newHostOpen.value = false
   newHostError.value = ''
 }
@@ -126,6 +130,7 @@ async function saveNewHost() {
       props.form.chainHostIds.push(newId)
     }
     newHostOpen.value = false
+    clearSSHHostTransientSecrets(newHostForm)
     emit('host-created')
   } catch (err) {
     newHostError.value = errorMessage(err)

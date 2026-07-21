@@ -121,6 +121,7 @@ const dnsConfirm = reactive({
 })
 
 function openRouteConfirm(preview) {
+  if (routeMutation.context?.source === 'modal') routeModalOpen.value = false
   dnsConfirm.preview = preview
   dnsConfirm.hostsRecords = Array.isArray(preview?.hostsRecords) ? preview.hostsRecords : []
   dnsConfirm.domains = Array.isArray(preview?.requiresConfirmation) ? preview.requiresConfirmation : []
@@ -138,11 +139,13 @@ function resetRouteConfirm() {
 
 function cancelRouteConfirm() {
   if (dnsConfirm.busy) return
+  const restoreRouteModal = routeMutation.context?.source === 'modal'
   routeMutation.requestToken = ++routeRequestSequence
   resetRouteConfirm()
   routeMutation.active = false
   routeMutation.phase = ''
   routeMutation.context = null
+  if (restoreRouteModal) routeModalOpen.value = true
 }
 
 function resultError(result) {

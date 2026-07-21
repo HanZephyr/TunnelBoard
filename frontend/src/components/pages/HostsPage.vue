@@ -3,7 +3,7 @@ import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { DeleteSelection } from '../../../wailsjs/go/main/App'
 import { callBackend, errorMessage } from '../../utils/backend'
-import { createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
+import { clearSSHHostTransientSecrets, createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
 import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
@@ -109,6 +109,7 @@ function closeHostModal() {
 }
 
 function finishHostModal() {
+  clearSSHHostTransientSecrets(hostForm)
   resetHostChangePreview()
   hostValidationError.value = ''
   hostModalOpen.value = false

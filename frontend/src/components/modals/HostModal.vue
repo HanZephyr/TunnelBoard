@@ -24,7 +24,9 @@ const { t } = useI18n()
         {{ t('hosts.restart.running', { count: restartPreview.runningForwardIds.length }) }}
       </p>
     </div>
-    <SSHHostFields v-else :draft="form" mode="full" id-prefix="host-dialog" />
+    <fieldset v-else class="border-0 p-0 m-0 w-100" :disabled="busy">
+      <SSHHostFields :draft="form" mode="full" id-prefix="host-dialog" />
+    </fieldset>
     <div v-if="validationError" class="form-error mt-2" role="alert">{{ validationError }}</div>
     <template #footer>
       <button v-if="restartPreview" type="button" class="btn btn-outline-secondary" data-dialog-initial-focus :disabled="busy" @click="$emit('back-to-edit')">{{ t('hosts.restart.back') }}</button>

@@ -47,6 +47,7 @@ const forwardOptions = computed(() =>
 
 <template>
   <BaseDialog :visible="show" :title="editingRouteId ? t('routes.modal.editTitle') : t('routes.modal.newTitle')" :busy="busy" @close="$emit('close')">
+    <fieldset class="border-0 p-0 m-0 w-100" :disabled="busy">
         <div class="row g-2">
           <div class="col-12">
             <label class="form-label" for="routeDomain">{{ t('routes.modal.domain') }}</label>
@@ -97,6 +98,7 @@ const forwardOptions = computed(() =>
           </div>
         </div>
         <div v-if="validationError" class="form-error mt-2">{{ validationError }}</div>
+    </fieldset>
     <template #footer>
         <button type="button" class="btn btn-outline-secondary" :disabled="busy" @click="$emit('close')">
           {{ t('app.common.cancel') }}

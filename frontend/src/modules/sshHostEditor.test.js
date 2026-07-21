@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from './sshHostEditor.js'
+import { createSSHAuthDrafts, createSSHHostDraft, switchSSHHostAuthDraft, toSaveSSHHostCommand, validateSSHHostDraft } from './sshHostEditor.js'
 
 test('编辑无秘密 Host 默认保留已保存秘密', () => {
   const draft = createSSHHostDraft({ id: 7, name: 'prod', host: 'example.test', port: 22, user: 'u', authType: 'password', hasSecret: true })
@@ -20,4 +20,18 @@ test('切换到 agent 清除旧秘密并移除不适用字段', () => {
 test('full 与 compact 使用同一验证规则', () => {
   const draft = createSSHHostDraft({ authType: 'ssh_key' })
   assert.equal(validateSSHHostDraft(draft), 'nameRequired')
+})
+
+test('认证方式 A 到 B 再回 A 保留本次表单输入', () => {
+  const draft = createSSHHostDraft({ authType: 'password' })
+  draft.secretInput = 'password-draft'
+  const drafts = createSSHAuthDrafts(draft)
+  switchSSHHostAuthDraft(draft, drafts, 'ssh_key')
+  draft.keyPath = '~/.ssh/id_ed25519'
+  draft.secretInput = 'key-passphrase'
+  switchSSHHostAuthDraft(draft, drafts, 'password')
+  assert.equal(draft.secretInput, 'password-draft')
+  switchSSHHostAuthDraft(draft, drafts, 'ssh_key')
+  assert.equal(draft.keyPath, '~/.ssh/id_ed25519')
+  assert.equal(draft.secretInput, 'key-passphrase')
 })

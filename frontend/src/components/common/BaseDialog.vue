@@ -99,6 +99,7 @@ onBeforeUnmount(() => {
         class="dialog-card compact-dialog"
         role="dialog"
         aria-modal="true"
+        :aria-busy="busy ? 'true' : 'false'"
         :aria-labelledby="labelledBy || titleId"
         tabindex="-1"
       >
