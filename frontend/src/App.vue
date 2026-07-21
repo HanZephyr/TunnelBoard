@@ -124,6 +124,13 @@ async function loadVault() {
   }
 }
 
+async function onVaultChanged(result) {
+  if (result?.acceptedRevision || result?.eventSequence) {
+    snapshotStore.acceptRevision(result?.acceptedRevision, result?.eventSequence)
+  }
+  await loadVault()
+}
+
 // ---- 全局 toast ----
 const toastMessage = ref('')
 const showToast = ref(false)
@@ -294,7 +301,7 @@ onBeforeUnmount(() => {
           :forwards="forwards"
           :configuration-locked="snapshotPhase !== 'ready'"
           :vault-revision="vaultRevision"
-          @vault-changed="loadVault"
+          @vault-changed="onVaultChanged"
           @notify="notify"
         />
 
@@ -305,7 +312,7 @@ onBeforeUnmount(() => {
           :forwards="forwards"
           :configuration-locked="snapshotPhase !== 'ready'"
           :vault-revision="vaultRevision"
-          @vault-changed="loadVault"
+          @vault-changed="onVaultChanged"
           @notify="notify"
         />
 
@@ -317,7 +324,7 @@ onBeforeUnmount(() => {
           :route-statuses="routeStatuses"
           :vault-revision="vaultRevision"
           :configuration-locked="snapshotPhase !== 'ready'"
-          @vault-changed="loadVault"
+          @vault-changed="onVaultChanged"
           @notify="notify"
         />
 

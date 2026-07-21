@@ -159,7 +159,7 @@ async function saveHost() {
     }
     const saved = result?.host || result
     finishHostModal()
-    emit('vault-changed')
+    emit('vault-changed', result)
     emit('notify', t('hosts.notify.saved', { name: saved?.name || command.host.name }))
   } catch (err) {
     hostValidationError.value = errorMessage(err)
@@ -192,7 +192,7 @@ async function commitHostChange() {
     }
     const saved = result.host || preview.host
     finishHostModal()
-    emit('vault-changed')
+    emit('vault-changed', result)
     emit('notify', result.failureStage === 'restart'
       ? t('hosts.notify.savedWithRestartErrors', { name: saved?.name || hostForm.name })
       : t('hosts.notify.saved', { name: saved?.name || hostForm.name }))

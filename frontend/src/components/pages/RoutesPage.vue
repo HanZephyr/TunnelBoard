@@ -182,7 +182,7 @@ function acceptCommittedResult(result, context) {
   } else {
     emit('notify', t('routes.notify.applied'))
   }
-  emit('vault-changed')
+  emit('vault-changed', result)
 }
 
 async function commitPreview(preview, confirmedDomains = [], confirmCATrust = false) {

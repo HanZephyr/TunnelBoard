@@ -35,3 +35,10 @@ test('认证方式 A 到 B 再回 A 保留本次表单输入', () => {
   assert.equal(draft.keyPath, '~/.ssh/id_ed25519')
   assert.equal(draft.secretInput, 'key-passphrase')
 })
+
+test('切换到密码认证必须显式输入新密码', () => {
+  const draft = createSSHHostDraft({ name: 'host', host: 'example.test', user: 'ops', authType: 'ssh_key', hasSecret: true, keyPath: '~/.ssh/id_ed25519' })
+  draft.authType = 'password'
+  assert.equal(validateSSHHostDraft(draft), 'passwordRequired')
+  assert.equal(toSaveSSHHostCommand(draft).secretAction, 'replace')
+})

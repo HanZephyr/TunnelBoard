@@ -51,7 +51,10 @@ export function clearSSHHostTransientSecrets(draft) {
 
 function resolvedSecretAction(draft) {
   if (draft.authType === 'ssh_agent') return 'clear'
-  if (draft.hasSecret && draft.authType !== draft.originalAuthType) return draft.secretInput ? 'replace' : 'clear'
+  if (draft.hasSecret && draft.authType !== draft.originalAuthType) {
+    if (draft.authType === 'password') return 'replace'
+    return draft.secretInput ? 'replace' : 'clear'
+  }
   return draft.secretAction
 }
 

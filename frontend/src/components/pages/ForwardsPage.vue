@@ -433,10 +433,10 @@ function onMoveTargetChange() {
     confirmClass: 'btn-primary',
     onConfirm: async () => {
       try {
-        await application.moveForwards({ meta: createCommandMeta(props.vaultRevision), forwardIds: ids, targetFolderId: targetId })
+        const result = await application.moveForwards({ meta: createCommandMeta(props.vaultRevision), forwardIds: ids, targetFolderId: targetId })
         moveTargetId.value = ''
         clearSelection()
-        emit('vault-changed')
+        emit('vault-changed', result)
         emit('notify', t('forwards.notify.movedCount', { count: ids.length }))
       } catch (err) {
         emit('notify', errorMessage(err))

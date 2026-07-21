@@ -14,3 +14,9 @@ test('Route 确认前隐藏表单弹窗，取消确认时恢复', async () => {
   assert.match(source, /function openRouteConfirm[\s\S]*routeModalOpen\.value = false/)
   assert.match(source, /function cancelRouteConfirm[\s\S]*routeModalOpen\.value = true/)
 })
+
+test('高层命令结果先登记 revision 和 event sequence 再刷新', async () => {
+  const source = await readFile(new URL('./App.vue', import.meta.url), 'utf8')
+  assert.match(source, /function onVaultChanged[\s\S]*acceptRevision\(result\?\.acceptedRevision, result\?\.eventSequence\)[\s\S]*await loadVault/)
+  assert.equal((source.match(/@vault-changed="onVaultChanged"/g) || []).length, 3)
+})
