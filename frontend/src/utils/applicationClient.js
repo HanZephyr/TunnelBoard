@@ -17,6 +17,14 @@ export function createApplicationClient(bindings = runtimeBindings()) {
       if (typeof bindings.MoveForwardsCommand === 'function') return bindings.MoveForwardsCommand(command)
       return legacyMove(command.forwardIds, command.targetFolderId)
     },
+    async previewRouteChange(intent) {
+      if (typeof bindings.PreviewRouteChange !== 'function') throw new Error('PreviewRouteChange binding is unavailable')
+      return bindings.PreviewRouteChange(intent)
+    },
+    async commitRouteChange(command) {
+      if (typeof bindings.CommitRouteChange !== 'function') throw new Error('CommitRouteChange binding is unavailable')
+      return bindings.CommitRouteChange(command)
+    },
     async previewLocalListener(command, legacyCheck) {
       if (typeof bindings.PreviewLocalListenerCommand === 'function') return bindings.PreviewLocalListenerCommand(command)
       try {

@@ -1,14 +1,8 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import {
-  ApplyRoute,
-  GetRouteStatus,
-  PreviewRoute,
-  RemoveRoute,
-  SaveWebRoute
-} from '../../../wailsjs/go/main/App'
-import { callBackend, errorMessage } from '../../utils/backend'
+import { errorMessage } from '../../utils/backend'
+import { createApplicationClient } from '../../utils/applicationClient'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import StatusChip from '../common/StatusChip.vue'
@@ -25,18 +19,39 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  routeStatuses: {
+    type: Array,
+    default: () => []
+  },
+  vaultRevision: {
+    type: String,
+    default: ''
+  },
   configurationLocked: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['vault-changed', 'notify'])
 
 const { t } = useI18n()
+const application = createApplicationClient()
 
 // 仅 local 模式的 Forward 可被 Route 引用
 const localForwards = computed(() => props.forwards.filter((forward) => forward.mode === 'local'))
 
+const committedRoutes = ref({})
+const committedDeletions = ref({})
+const routeErrors = ref({})
+const visibleRoutes = computed(() => {
+  const routes = props.webRoutes
+    .filter((route) => !committedDeletions.value[route.id])
+    .map((route) => committedRoutes.value[route.id]?.route || route)
+  for (const entry of Object.values(committedRoutes.value)) {
+    if (!routes.some((route) => route.id === entry.route.id)) routes.push(entry.route)
+  }
+  return routes
+})
 const sortedRoutes = computed(() =>
-  [...props.webRoutes].sort((a, b) => String(a.domain).localeCompare(String(b.domain)) || (a.id - b.id))
+  [...visibleRoutes.value].sort((a, b) => String(a.domain).localeCompare(String(b.domain)) || (a.id - b.id))
 )
 
 function forwardName(forwardId) {
@@ -53,107 +68,199 @@ function upstreamDetail(route) {
   return `${scheme} → ${target}${sni}`
 }
 
-// ---- 系统状态（GetRouteStatus 轮询合并）----
-const statusMap = ref({})
-const statusPhase = ref('checking')
-let statusTimer = null
+// ---- 系统状态：只消费根 AppSnapshot，页面不再独立轮询或猜测 ----
+const statusMap = computed(() => {
+  const next = {}
+  for (const item of props.routeStatuses) next[item.routeId] = item
+  return next
+})
 
 function statusOf(routeId) {
   return statusMap.value[routeId] || null
 }
 
-async function refreshStatus() {
-  if (!Object.keys(statusMap.value).length) statusPhase.value = 'checking'
-  try {
-    const items = await callBackend(GetRouteStatus)
-    const next = {}
-    for (const item of Array.isArray(items) ? items : []) {
-      next[item.routeId] = item
-    }
-    statusMap.value = next
-    statusPhase.value = 'ready'
-  } catch (_) {
-    statusPhase.value = Object.keys(statusMap.value).length ? 'stale' : 'unknown'
-  }
+function routeErrorMessage(routeId) {
+  return routeErrors.value[routeId] || statusOf(routeId)?.error || ''
 }
 
-onMounted(() => {
-  void refreshStatus()
-  statusTimer = window.setInterval(refreshStatus, 5000)
-})
-
-onBeforeUnmount(() => {
-  if (statusTimer !== null) {
-    window.clearInterval(statusTimer)
-    statusTimer = null
+watch(() => props.vaultRevision, (revision) => {
+  const routes = { ...committedRoutes.value }
+  for (const [id, entry] of Object.entries(routes)) {
+    if (entry.acceptedRevision === revision) delete routes[id]
   }
+  committedRoutes.value = routes
+  const deletions = { ...committedDeletions.value }
+  for (const [id, entry] of Object.entries(deletions)) {
+    if (entry.acceptedRevision === revision) delete deletions[id]
+  }
+  committedDeletions.value = deletions
 })
 
-// ---- 保存即应用：SaveWebRoute → PreviewRoute →（按需确认）→ ApplyRoute ----
+// ---- revision-bound Route intent：Preview → 确认 → Commit ----
+let routeRequestSequence = 0
+const routeMutation = reactive({
+  active: false,
+  routeId: 0,
+  flag: '',
+  originalValue: false,
+  targetValue: false,
+  phase: '',
+  requestToken: 0,
+  context: null,
+  error: ''
+})
+const routeMutationBusy = computed(() => routeMutation.active)
+
 const dnsConfirm = reactive({
   visible: false,
-  routeId: 0,
+  preview: null,
   hostsRecords: [],
   domains: [],
+  caTrustNeeded: false,
   busy: false
 })
 
-function openDnsConfirm(routeId, preview) {
-  dnsConfirm.routeId = routeId
+function openRouteConfirm(preview) {
+  dnsConfirm.preview = preview
   dnsConfirm.hostsRecords = Array.isArray(preview?.hostsRecords) ? preview.hostsRecords : []
   dnsConfirm.domains = Array.isArray(preview?.requiresConfirmation) ? preview.requiresConfirmation : []
+  dnsConfirm.caTrustNeeded = !!preview?.caTrustNeeded
   dnsConfirm.visible = true
 }
 
-function closeDnsConfirm() {
+function resetRouteConfirm() {
   dnsConfirm.visible = false
-  dnsConfirm.routeId = 0
+  dnsConfirm.preview = null
   dnsConfirm.hostsRecords = []
   dnsConfirm.domains = []
+  dnsConfirm.caTrustNeeded = false
 }
 
-async function applyRoute(routeId, confirmedDomains) {
+function cancelRouteConfirm() {
+  if (dnsConfirm.busy) return
+  routeMutation.requestToken = ++routeRequestSequence
+  resetRouteConfirm()
+  routeMutation.active = false
+  routeMutation.phase = ''
+  routeMutation.context = null
+}
+
+function resultError(result) {
+  return result?.error?.message || result?.error?.Message || ''
+}
+
+function setRouteError(routeId, message) {
+  if (!routeId) return
+  const next = { ...routeErrors.value }
+  if (message) next[routeId] = message
+  else delete next[routeId]
+  routeErrors.value = next
+}
+
+function acceptCommittedResult(result, context) {
+  const acceptedRevision = result?.acceptedRevision || ''
+  if (result?.route && acceptedRevision !== props.vaultRevision) {
+    committedRoutes.value = {
+      ...committedRoutes.value,
+      [result.route.id]: { route: result.route, acceptedRevision }
+    }
+  } else if (context?.action === 'delete' && context.routeId) {
+    committedDeletions.value = {
+      ...committedDeletions.value,
+      [context.routeId]: { acceptedRevision }
+    }
+  }
+  if (context?.source === 'modal') routeModalOpen.value = false
+  setRouteError(context?.routeId || result?.route?.id, result?.outcome === 'saved_not_applied' || result?.outcome === 'state_unknown' ? resultError(result) || t('routes.status.error') : '')
+  if (result?.outcome === 'hosts_only') {
+    emit('notify', t('routes.notify.portConflictWarning'))
+  } else if (result?.outcome === 'saved_not_applied' || result?.outcome === 'state_unknown') {
+    emit('notify', resultError(result) || t('routes.status.error'))
+  } else {
+    emit('notify', t('routes.notify.applied'))
+  }
+  emit('vault-changed')
+}
+
+async function commitPreview(preview, confirmedDomains = [], confirmCATrust = false) {
+  const requestToken = routeMutation.requestToken
+  routeMutation.phase = 'committing'
+  const context = routeMutation.context
   try {
-    const result = await callBackend(ApplyRoute, routeId, confirmedDomains)
-    if (result?.portConflict) {
-      emit('notify', t('routes.notify.portConflictWarning'))
+    const result = await application.commitRouteChange({
+      token: preview.token,
+      confirmedDomains,
+      confirmCATrust
+    })
+    if (requestToken !== routeMutation.requestToken) return
+    if (result?.desiredSaved) {
+      acceptCommittedResult(result, context)
     } else {
-      emit('notify', t('routes.notify.applied'))
+      routeMutation.error = resultError(result)
+      setRouteError(context?.routeId, routeMutation.error)
+      if (context?.source === 'modal') routeValidationError.value = routeMutation.error
+      else if (routeMutation.error) emit('notify', routeMutation.error)
     }
   } catch (err) {
-    // helper 未安装 / 服务不可用等场景：toast 展示错误，不中断页面
-    emit('notify', errorMessage(err))
+    if (requestToken !== routeMutation.requestToken) return
+    // 传输中断无法证明 Commit 是否到达后端，保留最后已知值并请求 Snapshot 刷新。
+    routeMutation.error = errorMessage(err)
+    setRouteError(context?.routeId, routeMutation.error)
+    emit('notify', routeMutation.error)
+    emit('vault-changed')
   } finally {
-    void refreshStatus()
+    if (requestToken === routeMutation.requestToken) {
+      resetRouteConfirm()
+      dnsConfirm.busy = false
+      routeMutation.active = false
+      routeMutation.phase = ''
+      routeMutation.context = null
+    }
   }
 }
 
-async function previewAndApply(routeId) {
-  let preview
+async function beginRouteChange(intent, context) {
+  if (routeMutation.active || props.configurationLocked) return
+  const requestToken = ++routeRequestSequence
+  Object.assign(routeMutation, {
+    active: true,
+    routeId: intent.routeId || intent.route?.id || 0,
+    flag: intent.flag || '',
+    originalValue: !!context?.originalValue,
+    targetValue: !!intent.enabled,
+    phase: 'previewing',
+    requestToken,
+    context,
+    error: ''
+  })
+  setRouteError(context?.routeId, '')
   try {
-    preview = await callBackend(PreviewRoute, routeId)
+    const preview = await application.previewRouteChange(intent)
+    if (requestToken !== routeMutation.requestToken) return
+    const needsConfirmation = (Array.isArray(preview?.requiresConfirmation) && preview.requiresConfirmation.length) || preview?.caTrustNeeded
+    if (needsConfirmation) {
+      routeMutation.phase = 'confirming'
+      openRouteConfirm(preview)
+      return
+    }
+    await commitPreview(preview)
   } catch (err) {
-    emit('notify', errorMessage(err))
-    return
+    if (requestToken !== routeMutation.requestToken) return
+    routeMutation.error = errorMessage(err)
+    if (context?.source === 'modal') routeValidationError.value = routeMutation.error
+    else emit('notify', routeMutation.error)
+    routeMutation.active = false
+    routeMutation.phase = ''
+    routeMutation.context = null
   }
-  if (Array.isArray(preview?.requiresConfirmation) && preview.requiresConfirmation.length) {
-    openDnsConfirm(routeId, preview)
-    return
-  }
-  await applyRoute(routeId, [])
 }
 
 async function confirmDnsOverride() {
   if (dnsConfirm.busy) return
   dnsConfirm.busy = true
-  const routeId = dnsConfirm.routeId
+  const preview = dnsConfirm.preview
   const domains = [...dnsConfirm.domains]
-  closeDnsConfirm()
-  try {
-    await applyRoute(routeId, domains)
-  } finally {
-    dnsConfirm.busy = false
-  }
+  await commitPreview(preview, domains, dnsConfirm.caTrustNeeded)
 }
 
 // ---- Route 新建 / 编辑 ----
@@ -211,7 +318,7 @@ function validateRoutePayload(payload) {
 }
 
 async function saveRoute() {
-  if (props.configurationLocked) return
+  if (props.configurationLocked || routeMutation.active) return
   const payload = {
     id: editingRouteId.value || 0,
     forwardId: Number(routeForm.forwardId),
@@ -226,67 +333,43 @@ async function saveRoute() {
     routeValidationError.value = error
     return
   }
-  try {
-    const saved = await callBackend(SaveWebRoute, payload)
-    routeModalOpen.value = false
-    emit('vault-changed')
-    emit('notify', t('routes.notify.saved', { domain: saved?.domain || payload.domain }))
-    await previewAndApply(saved?.id || payload.id)
-  } catch (err) {
-    routeValidationError.value = errorMessage(err)
-  }
+  routeValidationError.value = ''
+  await beginRouteChange(
+    { action: 'upsert', route: payload, expectedRevision: props.vaultRevision },
+    { source: 'modal', action: 'upsert' }
+  )
 }
 
-// ---- 表格内开关：保存（带全部字段）→ 预览 / 确认 / 应用 ----
-const pendingRouteIds = ref(new Set())
-const routeMutationBusy = computed(() => pendingRouteIds.value.size > 0 || dnsConfirm.busy)
-
-function setRoutePending(routeId, pending) {
-  const next = new Set(pendingRouteIds.value)
-  if (pending) {
-    next.add(routeId)
-  } else {
-    next.delete(routeId)
+// ---- 表格内开关：仅发送事件的真实 checked 意图 ----
+function routeFlagValue(route, field) {
+  const committed = committedRoutes.value[route.id]?.route
+  if (committed) return !!committed[field]
+  if (routeMutation.active && routeMutation.routeId === route.id && routeMutation.flag === field) {
+    return routeMutation.targetValue
   }
-  pendingRouteIds.value = next
+  return !!route[field]
 }
 
 async function toggleRouteFlag(route, field, event) {
-  if (props.configurationLocked) {
-    event.target.checked = !!route[field]
-    return
-  }
-  if (pendingRouteIds.value.has(route.id)) return
-  setRoutePending(route.id, true)
-  const payload = {
-    id: route.id,
-    forwardId: route.forwardId,
-    domain: route.domain,
-    hostsEnabled: field === 'hostsEnabled' ? !!event.target.checked : !!route.hostsEnabled,
-    caddyEnabled: field === 'caddyEnabled' ? !!event.target.checked : !!route.caddyEnabled,
-    upstreamScheme: route.upstreamScheme || 'http',
-    tlsSni: route.tlsSni || ''
-  }
-  // Caddy 生效的前提是 hosts 启用：开 Caddy 联动开 hosts；关 hosts 联动关 Caddy
-  if (field === 'caddyEnabled' && payload.caddyEnabled) payload.hostsEnabled = true
-  if (field === 'hostsEnabled' && !payload.hostsEnabled) payload.caddyEnabled = false
-  try {
-    await callBackend(SaveWebRoute, payload)
-    emit('vault-changed')
-    await previewAndApply(route.id)
-  } catch (err) {
-    event.target.checked = !!route[field]
-    emit('notify', errorMessage(err))
-  } finally {
-    setRoutePending(route.id, false)
-    void refreshStatus()
-  }
+  if (props.configurationLocked || routeMutation.active) return
+  const enabled = !!event.target.checked
+  await beginRouteChange(
+    { action: 'set_flag', routeId: route.id, flag: field, enabled, expectedRevision: props.vaultRevision },
+    { source: 'toggle', action: 'set_flag', routeId: route.id, originalValue: !!route[field] }
+  )
+}
+
+async function retryRoute(route) {
+  if (props.configurationLocked || routeMutation.active) return
+  await beginRouteChange(
+    { action: 'upsert', route: { ...route }, expectedRevision: props.vaultRevision },
+    { source: 'retry', action: 'upsert', routeId: route.id }
+  )
 }
 
 function routeAppliedView(route) {
   const status = statusOf(route.id)
-  if (statusPhase.value === 'checking') return { status: 'reconnecting', label: t('routes.status.checking') }
-  if (!status || statusPhase.value === 'unknown') return { status: 'reconnecting', label: t('routes.status.unknown') }
+  if (!status) return { status: 'reconnecting', label: t('routes.status.unknown') }
   const state = status.state || status.status
   const states = {
     applied: ['running', 'routes.status.applied'],
@@ -323,15 +406,10 @@ async function confirmDeleteRoute() {
   deleteDialog.visible = false
   deleteDialog.route = null
   if (!route) return
-  try {
-    await callBackend(RemoveRoute, route.id)
-    emit('vault-changed')
-    emit('notify', t('routes.notify.deleted', { domain: route.domain }))
-  } catch (err) {
-    emit('notify', errorMessage(err))
-  } finally {
-    void refreshStatus()
-  }
+  await beginRouteChange(
+    { action: 'delete', routeId: route.id, expectedRevision: props.vaultRevision },
+    { source: 'delete', action: 'delete', routeId: route.id }
+  )
 }
 </script>
 
@@ -397,9 +475,9 @@ async function confirmDeleteRoute() {
                   <input
                     type="checkbox"
                     class="form-check-input"
-                    :checked="route.hostsEnabled"
+                    :checked="routeFlagValue(route, 'hostsEnabled')"
                     :disabled="configurationLocked || routeMutationBusy"
-                    :aria-busy="pendingRouteIds.has(route.id)"
+                    :aria-busy="routeMutation.active && routeMutation.routeId === route.id"
                     :aria-label="t('routes.table.hosts')"
                     @change="toggleRouteFlag(route, 'hostsEnabled', $event)"
                   />
@@ -411,9 +489,9 @@ async function confirmDeleteRoute() {
                   <input
                     type="checkbox"
                     class="form-check-input"
-                    :checked="route.caddyEnabled"
+                    :checked="routeFlagValue(route, 'caddyEnabled')"
                     :disabled="configurationLocked || routeMutationBusy"
-                    :aria-busy="pendingRouteIds.has(route.id)"
+                    :aria-busy="routeMutation.active && routeMutation.routeId === route.id"
                     :aria-label="t('routes.table.caddy')"
                     @change="toggleRouteFlag(route, 'caddyEnabled', $event)"
                   />
@@ -430,6 +508,12 @@ async function confirmDeleteRoute() {
               ></i>
             </div>
           </div>
+          <div v-if="routeErrorMessage(route.id)" class="form-error mt-2" role="alert">
+            <span>{{ routeErrorMessage(route.id) }}</span>
+            <button type="button" class="btn btn-sm btn-outline-danger ms-2" :disabled="configurationLocked || routeMutationBusy" @click="retryRoute(route)">
+              {{ t('app.snapshot.retry') }}
+            </button>
+          </div>
         </div>
       </div>
       <span class="visually-hidden" aria-live="polite">{{ routeMutationBusy ? t('routes.status.pending') : '' }}</span>
@@ -442,7 +526,8 @@ async function confirmDeleteRoute() {
     :form="routeForm"
     :forwards="localForwards"
     :validation-error="routeValidationError"
-    @close="routeModalOpen = false"
+    :busy="routeMutationBusy"
+    @close="!routeMutationBusy && (routeModalOpen = false)"
     @submit="saveRoute"
   />
 
@@ -454,9 +539,10 @@ async function confirmDeleteRoute() {
     @close="deleteDialog.visible = false"
   />
 
-  <BaseDialog :visible="dnsConfirm.visible" :title="t('routes.confirmations.dnsOverrideTitle')" :busy="dnsConfirm.busy" @close="closeDnsConfirm">
-        <p class="action-dialog-message">{{ t('routes.confirmations.dnsOverrideMessage', { domains: dnsConfirm.domains.join(', ') }) }}</p>
-        <table class="table table-sm align-middle mt-2 mb-2">
+  <BaseDialog :visible="dnsConfirm.visible" :title="dnsConfirm.domains.length ? t('routes.confirmations.dnsOverrideTitle') : t('routes.confirmations.caTrustTitle')" :busy="dnsConfirm.busy" @close="cancelRouteConfirm">
+        <p v-if="dnsConfirm.domains.length" class="action-dialog-message">{{ t('routes.confirmations.dnsOverrideMessage', { domains: dnsConfirm.domains.join(', ') }) }}</p>
+        <p v-if="dnsConfirm.caTrustNeeded" class="action-dialog-message">{{ t('routes.confirmations.caTrustMessage') }}</p>
+        <table v-if="dnsConfirm.hostsRecords.length" class="table table-sm align-middle mt-2 mb-2">
           <thead>
             <tr>
               <th>{{ t('routes.confirmations.hostsRecordDomain') }}</th>
@@ -470,12 +556,12 @@ async function confirmDeleteRoute() {
             </tr>
           </tbody>
         </table>
-        <div class="inline-notice" role="alert">
+        <div v-if="dnsConfirm.domains.length" class="inline-notice" role="alert">
           <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
           <span>{{ t('routes.confirmations.dnsOverrideWarning') }}</span>
         </div>
     <template #footer>
-        <button type="button" class="btn btn-outline-secondary" :disabled="dnsConfirm.busy" @click="closeDnsConfirm">
+        <button type="button" class="btn btn-outline-secondary" :disabled="dnsConfirm.busy" @click="cancelRouteConfirm">
           {{ t('app.common.cancel') }}
         </button>
         <button type="button" class="btn btn-warning" :disabled="dnsConfirm.busy" @click="confirmDnsOverride">

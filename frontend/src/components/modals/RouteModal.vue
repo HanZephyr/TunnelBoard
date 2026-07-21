@@ -1,5 +1,5 @@
 <script setup>
-import { computed, watch } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import BaseDialog from '../common/BaseDialog.vue'
 
@@ -25,6 +25,10 @@ const props = defineProps({
   validationError: {
     type: String,
     default: ''
+  },
+  busy: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -39,23 +43,10 @@ const forwardOptions = computed(() =>
   }))
 )
 
-// Caddy 生效的前提是 hosts 启用：开 Caddy 联动开 hosts；关 hosts 联动关 Caddy
-watch(
-  () => props.form.caddyEnabled,
-  (enabled) => {
-    if (enabled) props.form.hostsEnabled = true
-  }
-)
-watch(
-  () => props.form.hostsEnabled,
-  (enabled) => {
-    if (!enabled) props.form.caddyEnabled = false
-  }
-)
 </script>
 
 <template>
-  <BaseDialog :visible="show" :title="editingRouteId ? t('routes.modal.editTitle') : t('routes.modal.newTitle')" @close="$emit('close')">
+  <BaseDialog :visible="show" :title="editingRouteId ? t('routes.modal.editTitle') : t('routes.modal.newTitle')" :busy="busy" @close="$emit('close')">
         <div class="row g-2">
           <div class="col-12">
             <label class="form-label" for="routeDomain">{{ t('routes.modal.domain') }}</label>
@@ -107,10 +98,10 @@ watch(
         </div>
         <div v-if="validationError" class="form-error mt-2">{{ validationError }}</div>
     <template #footer>
-        <button type="button" class="btn btn-outline-secondary" @click="$emit('close')">
+        <button type="button" class="btn btn-outline-secondary" :disabled="busy" @click="$emit('close')">
           {{ t('app.common.cancel') }}
         </button>
-        <button type="button" class="btn btn-primary" @click="$emit('submit')">
+        <button type="button" class="btn btn-primary" :disabled="busy" @click="$emit('submit')">
           {{ t('app.common.save') }}
         </button>
     </template>

@@ -1,7 +1,7 @@
 function normalizeSnapshot(input) {
   return {
     ...input,
-    vaultRevision: Number(input?.vaultRevision ?? input?.revision ?? 0),
+    vaultRevision: input?.vaultRevision ?? input?.revision ?? '',
     folders: Array.isArray(input?.folders) ? input.folders : [],
     sshHosts: Array.isArray(input?.sshHosts) ? input.sshHosts : [],
     forwards: Array.isArray(input?.forwards) ? input.forwards : [],
@@ -16,7 +16,7 @@ export function createAppSnapshotStore() {
     phase: 'idle',
     snapshot: null,
     error: '',
-    acceptedRevision: 0
+    acceptedRevision: ''
   }
 
   async function refresh(load) {
@@ -26,7 +26,7 @@ export function createAppSnapshotStore() {
     try {
       const next = normalizeSnapshot(await load())
       if (request !== generation) return false
-      if (next.vaultRevision < state.acceptedRevision) {
+      if (state.acceptedRevision && next.vaultRevision !== state.acceptedRevision) {
         state.phase = 'stale'
         state.error = 'snapshot revision is older than an accepted command'
         return false
@@ -46,7 +46,7 @@ export function createAppSnapshotStore() {
     state,
     refresh,
     acceptRevision(revision) {
-      state.acceptedRevision = Math.max(state.acceptedRevision, Number(revision) || 0)
+      state.acceptedRevision = String(revision || '')
     },
     canMutate() {
       return state.phase === 'ready'
