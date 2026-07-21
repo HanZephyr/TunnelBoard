@@ -327,11 +327,19 @@
             "saveKeyFile": "另存…",
             "restoreTitle": "完全還原",
             "restoreDanger": "危險區",
-            "restoreDesc": "用備份內容取代目前全部資料；開始前會停止全部執行中的 Forward。",
+            "restoreDesc": "先驗證並預覽備份；驗證階段不會停止 Forward，也不會修改任何資料。",
+			"restorePreviewButton": "驗證並預覽",
+			"restoreStaging": "驗證中…",
+			"restorePreviewReady": "備份驗證通過，請核對內容後再確認取代。",
             "restoreConfirm": "我已知曉將用備份內容取代目前全部資料",
             "restoreButton": "完全還原",
             "restoring": "還原中…",
-            "restoreSuccess": "資料已取代為備份內容，執行中的 Forward 已全部停止。"
+			"restoreSuccess": "資料已取代為備份內容。",
+			"restoreQuarantined": "資料已還原；網路副作用仍處於隔離狀態，等待你手動啟用。",
+			"restoreQuarantineNotice": "還原後的 Route 和自動啟動 Forward 仍被隔離，請檢查設定後再啟用網路。",
+			"activateRestore": "啟用還原後的網路",
+			"activatingRestore": "啟用中…",
+			"restoreActivated": "還原後的網路設定已啟用。"
         }
     },
     "routes": {

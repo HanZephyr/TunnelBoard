@@ -327,11 +327,19 @@
             "saveKeyFile": "Save As...",
             "restoreTitle": "Full Restore",
             "restoreDanger": "Danger Zone",
-            "restoreDesc": "Replaces ALL current data with the backup content. All running forwards will be stopped first.",
+            "restoreDesc": "Validate and preview the backup before stopping any forward or replacing data.",
+			"restorePreviewButton": "Validate Backup",
+			"restoreStaging": "Validating...",
+			"restorePreviewReady": "Backup validated. Review the contents before confirming.",
             "restoreConfirm": "I understand this will replace all current data with the backup content",
             "restoreButton": "Restore Backup",
             "restoring": "Restoring...",
-            "restoreSuccess": "All data has been replaced by the backup; every running forward was stopped."
+			"restoreSuccess": "All data has been replaced by the backup.",
+			"restoreQuarantined": "Data restored. Network effects remain isolated until you activate them.",
+			"restoreQuarantineNotice": "Restored routes and auto-start forwards are isolated. Review them before activating network access.",
+			"activateRestore": "Activate Restored Network",
+			"activatingRestore": "Activating...",
+			"restoreActivated": "Restored network configuration is active."
         }
     },
     "routes": {

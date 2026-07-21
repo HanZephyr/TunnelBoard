@@ -93,6 +93,7 @@ const forwards = ref([])
 const webRoutes = ref([])
 const routeStatuses = ref([])
 const sshHostDefaults = ref({ port: 22, authType: 'ssh_key', keepAliveIntervalMs: 5000, timeoutMs: 5000 })
+const recoveryState = ref({ quarantined: false, journalPending: false, maintenance: false })
 const vaultRevision = ref('')
 const snapshotStore = createAppSnapshotStore()
 const snapshotPhase = ref('loading')
@@ -108,6 +109,7 @@ async function loadVault() {
       vaultRevision: raw?.revisions?.vault || raw?.Revisions?.Vault || raw?.vaultRevision || 0,
       eventSequence: raw?.eventSequence || raw?.EventSequence || 0,
       sshHostDefaults: raw?.sshHostDefaults || raw?.SSHHostDefaults || {},
+	  recovery: raw?.recovery || raw?.Recovery || {},
       routeStatuses: Array.isArray(raw?.routes) ? raw.routes : Array.isArray(raw?.Routes) ? raw.Routes : raw?.routeStatuses || []
     }
   })
@@ -122,6 +124,7 @@ async function loadVault() {
     webRoutes.value = Array.isArray(data?.webRoutes) ? data.webRoutes : []
     routeStatuses.value = Array.isArray(data?.routeStatuses) ? data.routeStatuses : []
     sshHostDefaults.value = data?.sshHostDefaults || sshHostDefaults.value
+	recoveryState.value = data?.recovery || recoveryState.value
     vaultRevision.value = String(data?.vaultRevision || '')
   }
 }
@@ -340,6 +343,7 @@ onBeforeUnmount(() => {
           :theme="theme"
           :app-meta="appMeta"
 		  :vault-revision="vaultRevision"
+		  :recovery-state="recoveryState"
           :configuration-locked="snapshotPhase !== 'ready'"
           @theme-change="setThemeBySwitch"
 		  @vault-changed="onVaultChanged"

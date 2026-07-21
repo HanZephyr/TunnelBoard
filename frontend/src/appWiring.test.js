@@ -64,3 +64,12 @@ test('导入提交携带幂等命令 ID 与当前 Vault revision', async () => {
 	assert.match(source, /CommitImportCommand, \{ meta: createCommandMeta\(props\.vaultRevision\)/)
 	assert.match(source, /emit\('vault-changed', result\)/)
 })
+
+test('完整还原使用预检、提交和隔离激活三阶段接口', async () => {
+	const source = await readFile(new URL('./components/pages/SettingsPage.vue', import.meta.url), 'utf8')
+	assert.match(source, /StageRestoreCommand/)
+	assert.match(source, /CommitRestoreCommand/)
+	assert.match(source, /ActivateRestoredNetwork/)
+	assert.match(source, /restoreState\.password = ''[\s\S]*restoreState\.confirmed = false/)
+	assert.doesNotMatch(source, /\bRestoreBackup\b/)
+})

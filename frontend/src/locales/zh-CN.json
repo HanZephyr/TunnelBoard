@@ -327,11 +327,19 @@
             "saveKeyFile": "另存…",
             "restoreTitle": "完全还原",
             "restoreDanger": "危险区",
-            "restoreDesc": "用备份内容替换当前全部数据；开始前会停止全部运行中的 Forward。",
+            "restoreDesc": "先校验并预览备份；校验阶段不会停止 Forward，也不会修改任何数据。",
+			"restorePreviewButton": "校验并预览",
+			"restoreStaging": "校验中…",
+			"restorePreviewReady": "备份校验通过，请核对内容后再确认替换。",
             "restoreConfirm": "我已知晓将用备份内容替换当前全部数据",
             "restoreButton": "完全还原",
             "restoring": "还原中…",
-            "restoreSuccess": "数据已替换为备份内容，运行中的 Forward 已全部停止。"
+			"restoreSuccess": "数据已替换为备份内容。",
+			"restoreQuarantined": "数据已还原；网络副作用仍处于隔离状态，等待你手动激活。",
+			"restoreQuarantineNotice": "还原后的 Route 和自动启动 Forward 仍被隔离，请检查配置后再激活网络。",
+			"activateRestore": "激活还原后的网络",
+			"activatingRestore": "激活中…",
+			"restoreActivated": "还原后的网络配置已激活。"
         }
     },
     "routes": {

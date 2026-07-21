@@ -9,7 +9,9 @@ import {
   GetConfigPath,
   GetUpdateCheckEnabled,
   OpenConfigDir,
-  RestoreBackup,
+	StageRestoreCommand,
+	CommitRestoreCommand,
+	ActivateRestoredNetwork,
   StageImportCommand,
   CommitImportCommand,
   SaveImportKeyFileCommand,
@@ -35,7 +37,8 @@ const props = defineProps({
     required: true
   },
 	configurationLocked: { type: Boolean, default: false },
-	vaultRevision: { type: String, default: '' }
+	vaultRevision: { type: String, default: '' },
+	recoveryState: { type: Object, default: () => ({}) }
 })
 
 const emit = defineEmits(['theme-change', 'notify', 'vault-changed', 'update-outcome'])
@@ -240,9 +243,14 @@ const importSummary = ref(null)
 const restoreState = reactive({
   srcPath: '',
   password: '',
-  confirmed: false
+	confirmed: false,
+	token: '',
+	preview: null,
+	quarantined: false
 })
+const isStagingRestore = ref(false)
 const isRestoring = ref(false)
+const isActivatingRestore = ref(false)
 
 const previewCounts = computed(() => {
   const counts = importState.preview?.counts || {}
@@ -267,9 +275,13 @@ const previewKeyFiles = computed(() => {
 
 const summaryKeyFiles = computed(() => importState.keyFiles)
 
-const canRestore = computed(
-  () => !!(restoreState.srcPath && restoreState.password && restoreState.confirmed)
-)
+const canStageRestore = computed(() => !!(restoreState.srcPath && restoreState.password))
+const canCommitRestore = computed(() => !!(restoreState.token && restoreState.preview && restoreState.confirmed))
+
+const restorePreviewCounts = computed(() => {
+	const counts = restoreState.preview?.counts || {}
+	return previewCounts.value.map((item) => ({ ...item, value: counts[item.key] || 0 }))
+})
 
 async function onExportBackup() {
   if (isExporting.value || !exportForm.password) return
@@ -398,21 +410,45 @@ async function onSelectRestoreFile() {
     const srcPath = String(selected || '').trim()
     if (!srcPath) return // 用户取消：静默
     restoreState.srcPath = srcPath
+	restoreState.token = ''
+	restoreState.preview = null
+	restoreState.confirmed = false
   } catch (err) {
     emit('notify', errorMessage(err))
   }
 }
 
-async function onRestoreBackup() {
+async function onStageRestore() {
+	if (isStagingRestore.value || !canStageRestore.value) return
+	isStagingRestore.value = true
+	try {
+		const preview = await callBackend(StageRestoreCommand, { path: restoreState.srcPath, password: restoreState.password })
+		restoreState.token = String(preview?.token || '')
+		restoreState.preview = preview || null
+		restoreState.password = ''
+		restoreState.confirmed = false
+	} catch (err) {
+		restoreState.token = ''
+		restoreState.preview = null
+		emit('notify', errorMessage(err))
+	} finally {
+		isStagingRestore.value = false
+	}
+}
+
+async function onCommitRestore() {
   if (props.configurationLocked) return
-  if (isRestoring.value || !canRestore.value) return
+	if (isRestoring.value || !canCommitRestore.value) return
   isRestoring.value = true
   try {
-    await callBackend(RestoreBackup, restoreState.srcPath, restoreState.password, restoreState.confirmed)
-    emit('notify', t('settings.backup.restoreSuccess'))
+		const result = await callBackend(CommitRestoreCommand, { token: restoreState.token, confirmed: true })
+		restoreState.quarantined = result?.quarantined === true
+		emit('notify', restoreState.quarantined ? t('settings.backup.restoreQuarantined') : t('settings.backup.restoreSuccess'))
     restoreState.srcPath = ''
     restoreState.password = ''
-    restoreState.confirmed = false
+		restoreState.confirmed = false
+		restoreState.token = ''
+		restoreState.preview = null
     // Vault 已整体替换，导入区状态一并失效。
     importState.srcPath = ''
     importState.password = ''
@@ -425,6 +461,21 @@ async function onRestoreBackup() {
   } finally {
     isRestoring.value = false
   }
+}
+
+async function onActivateRestoredNetwork() {
+	if (isActivatingRestore.value) return
+	isActivatingRestore.value = true
+	try {
+		await callBackend(ActivateRestoredNetwork)
+		restoreState.quarantined = false
+		emit('notify', t('settings.backup.restoreActivated'))
+		emit('vault-changed')
+	} catch (err) {
+		emit('notify', errorMessage(err))
+	} finally {
+		isActivatingRestore.value = false
+	}
 }
 
 </script>
@@ -759,7 +810,13 @@ async function onRestoreBackup() {
 
           <div class="danger-zone">
             <div class="config-name">{{ t('settings.backup.restoreTitle') }} · {{ t('settings.backup.restoreDanger') }}</div>
-            <div class="config-desc mb-2">{{ t('settings.backup.restoreDesc') }}</div>
+			<div class="config-desc mb-2">{{ t('settings.backup.restoreDesc') }}</div>
+			<div v-if="restoreState.quarantined || recoveryState.quarantined" class="alert alert-warning py-2" role="status">
+			  <div>{{ t('settings.backup.restoreQuarantineNotice') }}</div>
+			  <button type="button" class="btn btn-sm btn-warning mt-2" :disabled="isActivatingRestore" @click="onActivateRestoredNetwork">
+				{{ isActivatingRestore ? t('settings.backup.activatingRestore') : t('settings.backup.activateRestore') }}
+			  </button>
+			</div>
             <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
               <button type="button" class="btn btn-sm btn-outline-danger flex-shrink-0" @click="onSelectRestoreFile">
                 {{ t('settings.backup.selectFile') }}
@@ -778,7 +835,21 @@ async function onRestoreBackup() {
                 />
               </div>
             </div>
-            <div class="form-check mt-2">
+			<button
+			  type="button"
+			  class="btn btn-sm btn-outline-danger mt-2"
+			  :disabled="!canStageRestore || isStagingRestore || isRestoring"
+			  @click="onStageRestore"
+			>
+			  {{ isStagingRestore ? t('settings.backup.restoreStaging') : t('settings.backup.restorePreviewButton') }}
+			</button>
+			<div v-if="restoreState.preview" class="mt-3" role="status">
+			  <div class="config-name">{{ t('settings.backup.restorePreviewReady') }}</div>
+			  <div class="d-flex flex-wrap gap-2 mt-1">
+				<span v-for="item in restorePreviewCounts" :key="item.key" class="badge text-bg-secondary">{{ item.label }}: {{ item.value }}</span>
+			  </div>
+			</div>
+			<div v-if="restoreState.preview" class="form-check mt-2">
               <input
                 id="backupRestoreConfirmed"
                 v-model="restoreState.confirmed"
@@ -792,8 +863,8 @@ async function onRestoreBackup() {
             <button
               type="button"
               class="btn btn-sm btn-danger mt-2"
-              :disabled="configurationLocked || !canRestore || isRestoring"
-              @click="onRestoreBackup"
+			  :disabled="configurationLocked || !canCommitRestore || isRestoring"
+			  @click="onCommitRestore"
             >
               {{ isRestoring ? t('settings.backup.restoring') : t('settings.backup.restoreButton') }}
             </button>
