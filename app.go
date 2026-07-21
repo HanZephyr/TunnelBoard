@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -15,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/HanZephyr/TunnelBoard/internal/application"
 	"github.com/HanZephyr/TunnelBoard/internal/autostart"
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
 	"github.com/HanZephyr/TunnelBoard/internal/caddy"
@@ -33,24 +37,30 @@ import (
 // App 是 Wails 的唯一绑定入口（应用 Module）：把目录与配置 Module、Vault
 // 和应用偏好转换为 UI 可用的结果，不承载业务规则。
 type App struct {
-	ctx         context.Context
-	store       *vault.Store
-	catalog     *biz.CatalogBiz
-	runtime     *biz.RuntimeBiz
-	router      *biz.RouterBiz
-	backup      *biz.BackupBiz
-	diagBuf     *diag.RingBuffer
-	logStore    diag.LogStore
-	caddy       *caddy.Adapter
-	updater     *updater.Service
-	initErr     error
-	helperClose func(context.Context) error
+	ctx            context.Context
+	store          *vault.Store
+	catalog        *biz.CatalogBiz
+	runtime        *biz.RuntimeBiz
+	router         *biz.RouterBiz
+	backup         *biz.BackupBiz
+	application    *application.Service
+	recovery       *application.RecoveryStore
+	restoreEffects *application.RestoreEffectsAdapter
+	diagBuf        *diag.RingBuffer
+	logStore       diag.LogStore
+	caddy          *caddy.Adapter
+	updater        *updater.Service
+	initErr        error
+	helperClose    func(context.Context) error
 
 	trayMu   sync.Mutex
 	trayShow *systray.MenuItem
 	trayQuit *systray.MenuItem
 
-	allowClose atomic.Bool
+	allowClose        atomic.Bool
+	legacyImportMu    sync.Mutex
+	legacyImportPath  string
+	legacyImportToken string
 }
 
 // NewApp 打开默认数据目录下的 Vault 并组装应用 Module。
@@ -84,19 +94,33 @@ func NewApp() *App {
 	caddyAdapter := caddy.New(platformDataDir)
 	caddyAdapter.ExpectedSHA256 = caddyBundleSHA256
 	caddyAdapter.Output = diag.NewSourceWriter(logStore, diag.LogCaddy)
+	runtimeBiz := biz.NewRuntimeBiz(store)
+	routerBiz := biz.NewRouterBiz(
+		store, catalog, helperOperator, caTrust, caddyAdapter,
+		helper.SystemHostsPath(), filepath.Join(platformDataDir, "caddy.json"),
+	)
+	backupBiz := biz.NewBackupBiz(store)
+	recovery := application.NewRecoveryStore(store.Dir())
+	restoreEffects := application.NewRestoreEffects(store, runtimeBiz, routerBiz, recovery)
+	packages := biz.NewBackupPackage(newApplicationGeneration())
+	restoreCoordinator := biz.NewRestoreCoordinator(packages, restoreEffects)
+	applicationService := application.NewService(application.Dependencies{
+		Store: store, Catalog: catalog, Runtime: runtimeBiz, Routes: routerBiz,
+		Restore: restoreCoordinator, Recovery: recovery, Backup: backupBiz, Packages: packages,
+	})
 	app := &App{
-		store:   store,
-		catalog: catalog,
-		runtime: biz.NewRuntimeBiz(store),
-		router: biz.NewRouterBiz(
-			store, catalog, helperOperator, caTrust, caddyAdapter,
-			helper.SystemHostsPath(), filepath.Join(platformDataDir, "caddy.json"),
-		),
-		backup:   biz.NewBackupBiz(store),
-		diagBuf:  diagBuf,
-		logStore: logStore,
-		caddy:    caddyAdapter,
-		updater:  updater.NewDefaultService(),
+		store:          store,
+		catalog:        catalog,
+		runtime:        runtimeBiz,
+		router:         routerBiz,
+		backup:         backupBiz,
+		application:    applicationService,
+		recovery:       recovery,
+		restoreEffects: restoreEffects,
+		diagBuf:        diagBuf,
+		logStore:       logStore,
+		caddy:          caddyAdapter,
+		updater:        updater.NewDefaultService(),
 	}
 	if closer, ok := helperOperator.(interface{ Close(context.Context) error }); ok {
 		app.helperClose = closer.Close
@@ -109,6 +133,20 @@ func (a *App) startup(ctx context.Context) {
 	slog.Info("app startup")
 	if err := a.ensureReady(); err == nil {
 		a.syncAutoRunWithConfig()
+		networkAllowed := true
+		if err := a.restoreEffects.RecoverPending(ctx); err != nil {
+			networkAllowed = false
+			slog.Error("recover pending restore failed; keep network disabled", "err", err)
+		} else if quarantined, _, stateErr := a.recovery.State(); stateErr != nil {
+			networkAllowed = false
+			slog.Error("read restore quarantine failed; keep network disabled", "err", stateErr)
+		} else if quarantined {
+			networkAllowed = false
+			slog.Info("restore quarantine active; skip automatic network effects")
+		}
+		if !networkAllowed {
+			return
+		}
 		go func() {
 			if errs, err := a.runtime.StartAutoStart(); err != nil {
 				slog.Error("auto start forwards failed", "err", err)
@@ -155,10 +193,18 @@ func (a *App) ensureReady() error {
 	if a.initErr != nil {
 		return a.initErr
 	}
-	if a.store == nil || a.catalog == nil || a.runtime == nil || a.router == nil || a.backup == nil {
+	if a.store == nil || a.catalog == nil || a.runtime == nil || a.router == nil || a.backup == nil || a.application == nil {
 		return fmt.Errorf("app is not initialized")
 	}
 	return nil
+}
+
+func newApplicationGeneration() string {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err == nil {
+		return hex.EncodeToString(value[:])
+	}
+	return fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 }
 
 // PrepareForQuit 标记下一次窗口关闭为显式退出（托盘菜单退出路径）。
@@ -242,12 +288,32 @@ func (a *App) SaveUILocale(locale string) error {
 	return nil
 }
 
-// GetVaultData 返回当前 Vault 数据快照（文件夹、SSH 主机、Forward、Web Route、偏好）。
-func (a *App) GetVaultData() (model.VaultData, error) {
+// GetSnapshot 是前端首屏唯一聚合查询；返回值不包含任何已保存秘密。
+func (a *App) GetSnapshot() (application.AppSnapshot, error) {
 	if err := a.ensureReady(); err != nil {
+		return application.AppSnapshot{}, err
+	}
+	return a.application.GetSnapshot(context.Background())
+}
+
+// GetVaultData 是旧前端兼容查询；内部委托无秘密 Snapshot，再映射旧 shape。
+// Deprecated: 新前端应只使用 GetSnapshot。
+func (a *App) GetVaultData() (model.VaultData, error) {
+	snapshot, err := a.GetSnapshot()
+	if err != nil {
 		return model.VaultData{}, err
 	}
-	return a.catalog.Data()
+	hosts := make([]model.SSHHost, 0, len(snapshot.Catalog.SSHHosts))
+	for _, h := range snapshot.Catalog.SSHHosts {
+		hosts = append(hosts, model.SSHHost{ID: h.ID, Name: h.Name, Host: h.Host, Port: h.Port, User: h.User,
+			AuthType: h.AuthType, KeyPath: h.KeyPath, AgentSocketPath: h.AgentSocketPath,
+			KeepAliveIntervalMs: h.KeepAliveIntervalMs, TimeoutMs: h.TimeoutMs,
+			HostKeyAlgorithms: h.HostKeyAlgorithms, Notes: h.Notes})
+	}
+	return model.VaultData{Version: snapshot.SchemaVersion, Folders: snapshot.Catalog.Folders, SSHHosts: hosts,
+		Forwards: snapshot.Catalog.Forwards, WebRoutes: snapshot.Catalog.WebRoutes,
+		HostKeys: snapshot.Catalog.HostKeys, Prefs: model.Prefs{AutoRun: snapshot.Preferences.AutoRun,
+			UpdateCheckEnabled: snapshot.Preferences.UpdateCheckEnabled, UILocale: snapshot.Preferences.UILocale}}, nil
 }
 
 // CreateFolder 在 parentID（0 为顶层）下新建文件夹。
@@ -255,7 +321,13 @@ func (a *App) CreateFolder(name string, parentID int) (model.Folder, error) {
 	if err := a.ensureReady(); err != nil {
 		return model.Folder{}, err
 	}
-	return a.catalog.CreateFolder(name, parentID)
+	var created model.Folder
+	err := a.application.LegacyMutation(context.Background(), func() error {
+		var err error
+		created, err = a.catalog.CreateFolder(name, parentID)
+		return err
+	})
+	return created, err
 }
 
 // MoveForward 把 Forward 移到目标文件夹。
@@ -263,7 +335,15 @@ func (a *App) MoveForward(forwardID, targetFolderID int) error {
 	if err := a.ensureReady(); err != nil {
 		return err
 	}
-	return a.catalog.MoveForward(forwardID, targetFolderID)
+	_, err := a.application.MoveForwards(context.Background(), application.MoveForwardsCommand{ForwardIDs: []int{forwardID}, TargetFolderID: targetFolderID})
+	return err
+}
+
+func (a *App) MoveForwardsCommand(command application.MoveForwardsCommand) (application.MoveForwardsResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return application.MoveForwardsResult{}, err
+	}
+	return a.application.MoveForwards(context.Background(), command)
 }
 
 // MoveForwards 把多条 Forward 作为一个 Vault 事务移动到目标文件夹。
@@ -279,7 +359,36 @@ func (a *App) SaveSSHHost(host model.SSHHost) (model.SSHHost, error) {
 	if err := a.ensureReady(); err != nil {
 		return model.SSHHost{}, err
 	}
-	return a.catalog.SaveSSHHost(host)
+	action := biz.SecretKeep
+	if host.ID == 0 && host.Password == "" {
+		action = biz.SecretClear
+	} else if host.Password != "" {
+		action = biz.SecretReplace
+	}
+	result, err := a.application.SaveSSHHost(context.Background(), application.SaveSSHHostCommand{
+		Host: application.SSHHostInput{ID: host.ID, Name: host.Name, Host: host.Host, Port: host.Port, User: host.User,
+			AuthType: host.AuthType, KeyPath: host.KeyPath, AgentSocketPath: host.AgentSocketPath,
+			KeepAliveIntervalMs: host.KeepAliveIntervalMs, TimeoutMs: host.TimeoutMs,
+			HostKeyAlgorithms: host.HostKeyAlgorithms, Notes: host.Notes},
+		SecretAction: action, SecretInput: host.Password,
+	})
+	if err != nil {
+		return model.SSHHost{}, err
+	}
+	if result.RequiresRestart {
+		return model.SSHHost{}, fmt.Errorf("ssh host change requires restart confirmation")
+	}
+	h := result.Host
+	return model.SSHHost{ID: h.ID, Name: h.Name, Host: h.Host, Port: h.Port, User: h.User, AuthType: h.AuthType,
+		KeyPath: h.KeyPath, AgentSocketPath: h.AgentSocketPath, KeepAliveIntervalMs: h.KeepAliveIntervalMs,
+		TimeoutMs: h.TimeoutMs, HostKeyAlgorithms: h.HostKeyAlgorithms, Notes: h.Notes}, nil
+}
+
+func (a *App) SaveSSHHostCommand(command application.SaveSSHHostCommand) (application.SaveSSHHostResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return application.SaveSSHHostResult{}, err
+	}
+	return a.application.SaveSSHHost(context.Background(), command)
 }
 
 // SaveForward 新建（ID 为 0）或更新 Forward；运行中的 Forward 必须先停止再编辑。
@@ -287,12 +396,18 @@ func (a *App) SaveForward(forward model.Forward) (model.Forward, error) {
 	if err := a.ensureReady(); err != nil {
 		return model.Forward{}, err
 	}
-	if forward.ID != 0 {
-		if st, ok := a.runtime.Status(forward.ID); ok && (st.Status == biz.RuntimeStateRunning || st.Status == biz.RuntimeStateReconnecting) {
-			return model.Forward{}, fmt.Errorf("forward %d is running, stop it before editing", forward.ID)
+	var saved model.Forward
+	err := a.application.LegacyMutation(context.Background(), func() error {
+		if forward.ID != 0 {
+			if st, ok := a.runtime.Status(forward.ID); ok && (st.Status == biz.RuntimeStateRunning || st.Status == biz.RuntimeStateReconnecting) {
+				return fmt.Errorf("forward %d is running, stop it before editing", forward.ID)
+			}
 		}
-	}
-	return a.catalog.SaveForward(forward)
+		var err error
+		saved, err = a.catalog.SaveForward(forward)
+		return err
+	})
+	return saved, err
 }
 
 // DeleteSelection 批量删除文件夹、SSH 主机与 Forward；非空文件夹需 CascadeFolders。
@@ -301,37 +416,39 @@ func (a *App) DeleteSelection(sel biz.DeleteSelection) error {
 	if err := a.ensureReady(); err != nil {
 		return err
 	}
-	for _, id := range sel.ForwardIDs {
-		_ = a.runtime.Stop(id)
-	}
-	if sel.CascadeFolders && len(sel.FolderIDs) > 0 {
-		data, err := a.catalog.Data()
-		if err != nil {
-			return err
+	return a.application.LegacyMutation(context.Background(), func() error {
+		for _, id := range sel.ForwardIDs {
+			_ = a.runtime.Stop(id)
 		}
-		deletedFolders := map[int]bool{}
-		for _, fid := range sel.FolderIDs {
-			deletedFolders[fid] = true
-		}
-		for _, f := range data.Folders {
-			if deletedFolders[f.ParentID] {
-				deletedFolders[f.ID] = true
+		if sel.CascadeFolders && len(sel.FolderIDs) > 0 {
+			data, err := a.catalog.Data()
+			if err != nil {
+				return err
+			}
+			deletedFolders := map[int]bool{}
+			for _, fid := range sel.FolderIDs {
+				deletedFolders[fid] = true
+			}
+			for _, f := range data.Folders {
+				if deletedFolders[f.ParentID] {
+					deletedFolders[f.ID] = true
+				}
+			}
+			for _, fw := range data.Forwards {
+				if deletedFolders[fw.FolderID] {
+					_ = a.runtime.Stop(fw.ID)
+				}
 			}
 		}
-		for _, fw := range data.Forwards {
-			if deletedFolders[fw.FolderID] {
-				_ = a.runtime.Stop(fw.ID)
+		err := a.catalog.DeleteSelection(sel)
+		if err == nil {
+			// Forward 删除会级联清理 WebRoute；按 CONTEXT.md:67 同步撤销其 hosts 记录。
+			if _, recErr := a.router.ReconcileRoutes(); recErr != nil {
+				return fmt.Errorf("deleted, but failed to reconcile routes: %w", recErr)
 			}
 		}
-	}
-	err := a.catalog.DeleteSelection(sel)
-	if err == nil {
-		// Forward 删除会级联清理 WebRoute；按 CONTEXT.md:67 同步撤销其 hosts 记录。
-		if _, recErr := a.router.ReconcileRoutes(); recErr != nil {
-			return fmt.Errorf("deleted, but failed to reconcile routes: %w", recErr)
-		}
-	}
-	return err
+		return err
+	})
 }
 
 // SaveWebRoute 新建（ID 为 0）或更新 Web Route（域名、hosts/Caddy 开关、HTTPS SNI）。
@@ -339,7 +456,9 @@ func (a *App) SaveWebRoute(route model.WebRoute) (model.WebRoute, error) {
 	if err := a.ensureReady(); err != nil {
 		return model.WebRoute{}, err
 	}
-	return a.catalog.SaveWebRoute(route)
+	var saved model.WebRoute
+	err := a.application.LegacyMutation(context.Background(), func() error { var err error; saved, err = a.catalog.SaveWebRoute(route); return err })
+	return saved, err
 }
 
 // PreviewRoute 返回应用前预览：将写入的 hosts 记录、需要确认的域名、443 冲突与 CA 信任需求。
@@ -355,7 +474,9 @@ func (a *App) ApplyRoute(routeID int, confirmedDomains []string) (biz.RouteApply
 	if err := a.ensureReady(); err != nil {
 		return biz.RouteApplyResult{}, err
 	}
-	return a.router.ApplyRoute(routeID, confirmedDomains)
+	var result biz.RouteApplyResult
+	err := a.application.LegacyMutation(context.Background(), func() error { var err error; result, err = a.router.ApplyRoute(routeID, confirmedDomains); return err })
+	return result, err
 }
 
 // RemoveRoute 删除 Route 并重推系统（撤销 hosts 记录；最后一个 Caddy Route 移除后停 Caddy 并撤 CA）。
@@ -363,7 +484,9 @@ func (a *App) RemoveRoute(routeID int) (biz.RouteApplyResult, error) {
 	if err := a.ensureReady(); err != nil {
 		return biz.RouteApplyResult{}, err
 	}
-	return a.router.RemoveRoute(routeID)
+	var result biz.RouteApplyResult
+	err := a.application.LegacyMutation(context.Background(), func() error { var err error; result, err = a.router.RemoveRoute(routeID); return err })
+	return result, err
 }
 
 // GetRouteStatus 返回全部 Route 的系统生效状态。
@@ -422,11 +545,16 @@ func (a *App) PreviewImport(srcPath, password string) (biz.ImportPreview, error)
 	if err := a.ensureReady(); err != nil {
 		return biz.ImportPreview{}, err
 	}
-	raw, err := os.ReadFile(strings.TrimSpace(srcPath))
+	path := strings.TrimSpace(srcPath)
+	preview, err := a.application.StageImport(context.Background(), application.StageImportRequest{Path: path, Password: password})
 	if err != nil {
-		return biz.ImportPreview{}, fmt.Errorf("read backup file: %w", err)
+		return biz.ImportPreview{}, err
 	}
-	return a.backup.PreviewImport(raw, password)
+	a.legacyImportMu.Lock()
+	a.legacyImportPath = path
+	a.legacyImportToken = preview.Token
+	a.legacyImportMu.Unlock()
+	return preview.Preview, nil
 }
 
 // ApplyImport 追加导入到新顶层文件夹；不改变任何网络行为。
@@ -434,24 +562,55 @@ func (a *App) ApplyImport(srcPath, password string, plan biz.ImportPlan) (biz.Im
 	if err := a.ensureReady(); err != nil {
 		return biz.ImportSummary{}, err
 	}
-	raw, err := os.ReadFile(strings.TrimSpace(srcPath))
-	if err != nil {
-		return biz.ImportSummary{}, fmt.Errorf("read backup file: %w", err)
+	path := strings.TrimSpace(srcPath)
+	a.legacyImportMu.Lock()
+	token := a.legacyImportToken
+	stagedPath := a.legacyImportPath
+	a.legacyImportToken = ""
+	a.legacyImportPath = ""
+	a.legacyImportMu.Unlock()
+	if token == "" || stagedPath != path {
+		return biz.ImportSummary{}, fmt.Errorf("backup import preview is missing or stale")
 	}
-	return a.backup.ApplyImport(raw, password, plan)
+	result, err := a.application.CommitImport(context.Background(), application.CommitImportCommand{Token: token, Plan: plan})
+	return result.Summary, err
 }
 
-// RestoreBackup 完全还原：先停止全部 Forward，再整体替换 Vault；必须显式确认。
+// RestoreBackup 是旧前端兼容入口；内部仍严格执行零副作用 Stage + 事务 Commit。
 func (a *App) RestoreBackup(srcPath, password string, confirmed bool) error {
 	if err := a.ensureReady(); err != nil {
 		return err
 	}
-	raw, err := os.ReadFile(strings.TrimSpace(srcPath))
-	if err != nil {
-		return fmt.Errorf("read backup file: %w", err)
+	if !confirmed {
+		return biz.ErrRestoreNotConfirmed
 	}
-	a.runtime.Shutdown()
-	return a.backup.RestoreBackup(raw, password, confirmed)
+	preview, err := a.application.StageRestore(context.Background(), biz.RestoreStageRequest{Path: strings.TrimSpace(srcPath), Password: password})
+	if err != nil {
+		return err
+	}
+	_, err = a.application.CommitRestore(context.Background(), biz.RestoreCommitRequest{Token: preview.Token, Confirmed: true})
+	return err
+}
+
+func (a *App) StageRestoreCommand(request biz.RestoreStageRequest) (biz.RestorePreview, error) {
+	if err := a.ensureReady(); err != nil {
+		return biz.RestorePreview{}, err
+	}
+	return a.application.StageRestore(context.Background(), request)
+}
+
+func (a *App) CommitRestoreCommand(request biz.RestoreCommitRequest) (biz.RestoreCommitResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return biz.RestoreCommitResult{}, err
+	}
+	return a.application.CommitRestore(context.Background(), request)
+}
+
+func (a *App) ActivateRestoredNetwork() error {
+	if err := a.ensureReady(); err != nil {
+		return err
+	}
+	return a.application.ActivateRestoredNetwork(context.Background())
 }
 
 // SaveImportKeyFile 从备份包中取出指定私钥文件并经保存对话框写盘（导入后用户显式另存）。
@@ -539,7 +698,11 @@ func (a *App) StartForward(id int) error {
 	if err := a.ensureReady(); err != nil {
 		return err
 	}
-	return a.runtime.Start(id)
+	errs := a.application.StartForwards(context.Background(), []int{id})
+	if message := errs[id]; message != "" {
+		return errors.New(message)
+	}
+	return nil
 }
 
 // StopForward 停止单条 Forward；手动停止不触发自动重连。
@@ -547,7 +710,7 @@ func (a *App) StopForward(id int) error {
 	if err := a.ensureReady(); err != nil {
 		return err
 	}
-	return a.runtime.Stop(id)
+	return a.application.StopForward(id)
 }
 
 // StartManyForwards 批量启动 Forward；返回启动失败的 id → 错误信息（成功项不出现）。
@@ -555,14 +718,7 @@ func (a *App) StartManyForwards(ids []int) (map[int]string, error) {
 	if err := a.ensureReady(); err != nil {
 		return nil, err
 	}
-	errs := a.runtime.StartMany(ids)
-	out := make(map[int]string, len(errs))
-	for id, err := range errs {
-		if err != nil {
-			out[id] = err.Error()
-		}
-	}
-	return out, nil
+	return a.application.StartForwards(context.Background(), ids), nil
 }
 
 // GetRuntimeSnapshot 返回全部 Forward 的运行时状态快照；读取失败时返回错误（前端据此提示而非静默回退）。
@@ -586,7 +742,18 @@ func (a *App) CheckLocalPortAvailable(host string, port int) error {
 	if err := a.ensureReady(); err != nil {
 		return err
 	}
-	return forward.CheckLocalPortAvailable(host, port)
+	preview := a.application.PreviewLocalListener(context.Background(), application.PreviewLocalListenerCommand{Mode: "local", Host: host, Port: port})
+	if preview.State == "available" || preview.State == "owned_by_self" {
+		return nil
+	}
+	return fmt.Errorf("local listener preview: %s", preview.State)
+}
+
+func (a *App) PreviewLocalListenerCommand(command application.PreviewLocalListenerCommand) (application.LocalListenerPreview, error) {
+	if err := a.ensureReady(); err != nil {
+		return application.LocalListenerPreview{}, err
+	}
+	return a.application.PreviewLocalListener(context.Background(), command), nil
 }
 
 // HostKeyStatusResult 是 SSH 主机指纹核验结果（绑定层单返回值包装）。
