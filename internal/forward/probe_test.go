@@ -32,3 +32,25 @@ func TestCheckLocalPortAvailable(t *testing.T) {
 		t.Fatalf("empty host should default to loopback: %v", err)
 	}
 }
+
+func TestPreviewLocalListenerClassifiesBindResult(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	occupied := PreviewLocalListener("", port)
+	if occupied.State != LocalListenerOccupied || occupied.NormalizedAddress != net.JoinHostPort("127.0.0.1", strconv.Itoa(port)) {
+		t.Fatalf("occupied preview = %+v", occupied)
+	}
+	_ = ln.Close()
+	available := PreviewLocalListener("127.0.0.1", port)
+	if available.State != LocalListenerAvailable || available.Err != nil {
+		t.Fatalf("available preview = %+v", available)
+	}
+	invalid := PreviewLocalListener("127.0.0.1", 0)
+	if invalid.State != LocalListenerInvalid || invalid.Err == nil {
+		t.Fatalf("invalid preview = %+v", invalid)
+	}
+}
