@@ -15,11 +15,14 @@ type fakeRestoreEffects struct {
 	facts              biz.RestoreFacts
 	calls              []string
 	journalPhases      []string
+	journals           []biz.RestoreJournal
 	prepared           model.VaultData
 	failAt             string
 	compensated        *biz.RestoreCompensation
 	suspendDeadline    time.Duration
 	compensateDeadline time.Duration
+	suspendPlan        []int
+	compensateErr      error
 }
 
 func (f *fakeRestoreEffects) Snapshot(context.Context) (biz.RestoreFacts, error) {
@@ -45,6 +48,8 @@ func (f *fakeRestoreEffects) PrepareCandidate(_ context.Context, data model.Vaul
 func (f *fakeRestoreEffects) WriteJournal(_ context.Context, journal biz.RestoreJournal) error {
 	f.calls = append(f.calls, "journal")
 	f.journalPhases = append(f.journalPhases, journal.Phase)
+	journal.RunningForwardIDs = append([]int(nil), journal.RunningForwardIDs...)
+	f.journals = append(f.journals, journal)
 	if f.failAt == "journal" {
 		return errors.New("journal failed")
 	}
@@ -55,7 +60,11 @@ func (f *fakeRestoreEffects) SuspendAll(ctx context.Context) (biz.RestoreSuspend
 	if deadline, ok := ctx.Deadline(); ok {
 		f.suspendDeadline = time.Until(deadline)
 	}
-	plan := biz.RestoreSuspendPlan{RunningForwardIDs: []int{1, 2}}
+	planIDs := f.suspendPlan
+	if planIDs == nil {
+		planIDs = []int{1, 2}
+	}
+	plan := biz.RestoreSuspendPlan{RunningForwardIDs: append([]int(nil), planIDs...)}
 	if f.failAt == "suspend" {
 		return plan, errors.New("suspend failed")
 	}
@@ -95,7 +104,7 @@ func (f *fakeRestoreEffects) Compensate(ctx context.Context, c biz.RestoreCompen
 		f.compensateDeadline = time.Until(deadline)
 	}
 	f.compensated = &c
-	return nil
+	return f.compensateErr
 }
 
 func TestCommitRestoreBoundsSuspendAndCompensationIndependently(t *testing.T) {
@@ -193,12 +202,12 @@ func TestCommitRestoreRunsTransactionInOrderAndClearsMachineLocalCAState(t *test
 	if err != nil {
 		t.Fatalf("CommitRestore: %v", err)
 	}
-	want := []string{"snapshot", "storage", "capture", "journal", "prepare", "journal", "suspend", "journal", "neutralize", "journal", "journal", "replace", "journal", "quarantine", "journal", "complete"}
+	want := []string{"snapshot", "storage", "capture", "journal", "prepare", "journal", "journal", "suspend", "journal", "neutralize", "journal", "journal", "replace", "journal", "quarantine", "journal", "complete"}
 	if !reflect.DeepEqual(effects.calls, want) {
 		t.Fatalf("calls = %v, want %v", effects.calls, want)
 	}
 	wantPhases := []string{
-		biz.RestorePhasePlanned, biz.RestorePhaseCandidatePrepared, biz.RestorePhaseRuntimeSuspended,
+		biz.RestorePhasePlanned, biz.RestorePhaseCandidatePrepared, biz.RestorePhaseRuntimeSuspending, biz.RestorePhaseRuntimeSuspended,
 		biz.RestorePhaseRoutesNeutralized, biz.RestorePhaseReplacingVault, biz.RestorePhaseVaultReplaced,
 		biz.RestorePhaseQuarantined,
 	}
@@ -210,6 +219,54 @@ func TestCommitRestoreRunsTransactionInOrderAndClearsMachineLocalCAState(t *test
 	}
 	if effects.prepared.Prefs.CATrustedSHA256 != "" {
 		t.Fatal("machine-local CA state must not be restored")
+	}
+}
+
+func TestCommitRestoreWritesSuspendIntentAndCheckpointsActualPlan(t *testing.T) {
+	effects := &fakeRestoreEffects{
+		facts:       biz.RestoreFacts{VaultRevision: "v1", RuntimeRevision: "run1", RouteRevision: "route1"},
+		suspendPlan: []int{2},
+	}
+	coordinator := newRestoreCoordinator(t, effects)
+	preview, err := coordinator.StageRestore(context.Background(), biz.RestoreStageRequest{
+		Path: writeBackupFile(t, makeBackup(t)), Password: "pw",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.CommitRestore(context.Background(), biz.RestoreCommitRequest{Token: preview.Token, Confirmed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := effects.journalPhases[2]; got != biz.RestorePhaseRuntimeSuspending {
+		t.Fatalf("phase before SuspendAll = %q, want %q", got, biz.RestorePhaseRuntimeSuspending)
+	}
+	if got := effects.journalPhases[3]; got != biz.RestorePhaseRuntimeSuspended {
+		t.Fatalf("phase after SuspendAll = %q, want %q", got, biz.RestorePhaseRuntimeSuspended)
+	}
+	if got := effects.journals[3].RunningForwardIDs; !reflect.DeepEqual(got, []int{2}) {
+		t.Fatalf("checkpointed running forwards = %v, want [2]", got)
+	}
+}
+
+func TestCommitRestoreReportsPendingJournalWhenCompensationFails(t *testing.T) {
+	effects := &fakeRestoreEffects{
+		facts:         biz.RestoreFacts{VaultRevision: "v1", RuntimeRevision: "run1", RouteRevision: "route1"},
+		failAt:        "neutralize",
+		compensateErr: errors.New("resume failed"),
+	}
+	coordinator := newRestoreCoordinator(t, effects)
+	preview, err := coordinator.StageRestore(context.Background(), biz.RestoreStageRequest{
+		Path: writeBackupFile(t, makeBackup(t)), Password: "pw",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := coordinator.CommitRestore(context.Background(), biz.RestoreCommitRequest{Token: preview.Token, Confirmed: true})
+	if err == nil {
+		t.Fatal("compensation failure must be returned")
+	}
+	if !result.JournalPending || result.TransactionID == "" {
+		t.Fatalf("result = %+v, want pending transaction", result)
 	}
 }
 
@@ -229,7 +286,7 @@ func TestCommitRestoreCompensatesPreReplacementFailure(t *testing.T) {
 	if _, err := coordinator.CommitRestore(context.Background(), biz.RestoreCommitRequest{Token: preview.Token, Confirmed: true}); err == nil {
 		t.Fatal("neutralize failure must be returned")
 	}
-	want := []string{"snapshot", "storage", "capture", "journal", "prepare", "journal", "suspend", "journal", "neutralize", "compensate"}
+	want := []string{"snapshot", "storage", "capture", "journal", "prepare", "journal", "journal", "suspend", "journal", "neutralize", "compensate"}
 	if !reflect.DeepEqual(effects.calls, want) {
 		t.Fatalf("calls = %v, want %v", effects.calls, want)
 	}
@@ -258,7 +315,7 @@ func TestCommitRestoreKeepsJournalPendingAfterVaultReplacement(t *testing.T) {
 	if effects.compensated != nil {
 		t.Fatalf("post-replacement failure must not resurrect old state: %+v", effects.compensated)
 	}
-	want := []string{"snapshot", "storage", "capture", "journal", "prepare", "journal", "suspend", "journal", "neutralize", "journal", "journal", "replace", "journal", "quarantine"}
+	want := []string{"snapshot", "storage", "capture", "journal", "prepare", "journal", "journal", "suspend", "journal", "neutralize", "journal", "journal", "replace", "journal", "quarantine"}
 	if !reflect.DeepEqual(effects.calls, want) {
 		t.Fatalf("calls = %v, want %v", effects.calls, want)
 	}

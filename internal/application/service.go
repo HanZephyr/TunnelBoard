@@ -123,14 +123,18 @@ type Service struct {
 	commands     *recentCommandCache
 	updates      UpdatePort
 	appVersion   string
-	updateMu     sync.Mutex
-	updateFlight *updateCheckFlight
+	updateMu            sync.Mutex
+	updateFlight        *updateCheckFlight
+	startupUpdateDone   bool
+	startupUpdateResult CheckForUpdatesResult
+	startupUpdateErr    error
 }
 
 type updateCheckFlight struct {
-	done   chan struct{}
-	result CheckForUpdatesResult
-	err    error
+	done    chan struct{}
+	trigger UpdateCheckTrigger
+	result  CheckForUpdatesResult
+	err     error
 }
 
 func NewService(deps Dependencies) *Service {
@@ -153,6 +157,46 @@ func (s *Service) CheckForUpdates(ctx context.Context, command CheckForUpdatesCo
 	if s.updates == nil {
 		return CheckForUpdatesResult{}, errors.New("application: updater is unavailable")
 	}
+	for {
+		s.updateMu.Lock()
+		if command.Trigger == UpdateCheckStartup && s.startupUpdateDone {
+			result, err := s.startupUpdateResult, s.startupUpdateErr
+			s.updateMu.Unlock()
+			return result, err
+		}
+		if flight := s.updateFlight; flight != nil {
+			s.updateMu.Unlock()
+			select {
+			case <-ctx.Done():
+				return CheckForUpdatesResult{}, ctx.Err()
+			case <-flight.done:
+				if flight.trigger == command.Trigger {
+					return flight.result, flight.err
+				}
+				continue
+			}
+		}
+		flight := &updateCheckFlight{done: make(chan struct{}), trigger: command.Trigger}
+		s.updateFlight = flight
+		s.updateMu.Unlock()
+
+		flight.result, flight.err = s.checkForUpdatesOnce(ctx, command.Trigger)
+		s.updateMu.Lock()
+		if command.Trigger == UpdateCheckStartup {
+			s.startupUpdateDone = true
+			s.startupUpdateResult = flight.result
+			s.startupUpdateErr = flight.err
+		}
+		close(flight.done)
+		if s.updateFlight == flight {
+			s.updateFlight = nil
+		}
+		s.updateMu.Unlock()
+		return flight.result, flight.err
+	}
+}
+
+func (s *Service) checkForUpdatesOnce(ctx context.Context, trigger UpdateCheckTrigger) (CheckForUpdatesResult, error) {
 	if s.recovery == nil {
 		return CheckForUpdatesResult{}, errors.New("application: recovery state is unavailable")
 	}
@@ -170,7 +214,7 @@ func (s *Service) CheckForUpdates(ctx context.Context, command CheckForUpdatesCo
 	if routePending {
 		return CheckForUpdatesResult{Skipped: true, SkipReason: "route_recovery_pending"}, nil
 	}
-	if command.Trigger == UpdateCheckStartup {
+	if trigger == UpdateCheckStartup {
 		data, err := s.store.Load()
 		if err != nil {
 			return CheckForUpdatesResult{}, err
@@ -180,31 +224,33 @@ func (s *Service) CheckForUpdates(ctx context.Context, command CheckForUpdatesCo
 		}
 	}
 
-	s.updateMu.Lock()
-	if flight := s.updateFlight; flight != nil {
-		s.updateMu.Unlock()
-		select {
-		case <-ctx.Done():
-			return CheckForUpdatesResult{}, ctx.Err()
-		case <-flight.done:
-			return flight.result, flight.err
+	var result updater.Result
+	err = s.NetworkOperation(ctx, func() error {
+		// Re-read the startup preference inside the same gate as HTTP. A Restore
+		// or settings mutation that won the gate cannot leave a stale true behind.
+		if trigger == UpdateCheckStartup {
+			data, loadErr := s.store.Load()
+			if loadErr != nil {
+				return loadErr
+			}
+			if !data.Prefs.UpdateCheckEnabled {
+				return errUpdatePreferenceDisabled
+			}
 		}
+		var checkErr error
+		result, checkErr = s.updates.Check(ctx, s.appVersion)
+		return checkErr
+	})
+	if errors.Is(err, ErrRecoveryNetworkBlocked) || errors.Is(err, ErrMaintenance) {
+		return CheckForUpdatesResult{Skipped: true, SkipReason: "recovery_isolation"}, nil
 	}
-	flight := &updateCheckFlight{done: make(chan struct{})}
-	s.updateFlight = flight
-	s.updateMu.Unlock()
-
-	result, checkErr := s.updates.Check(ctx, s.appVersion)
-	flight.result = CheckForUpdatesResult{Result: result}
-	flight.err = checkErr
-	close(flight.done)
-	s.updateMu.Lock()
-	if s.updateFlight == flight {
-		s.updateFlight = nil
+	if errors.Is(err, errUpdatePreferenceDisabled) {
+		return CheckForUpdatesResult{Skipped: true, SkipReason: "preference_disabled"}, nil
 	}
-	s.updateMu.Unlock()
-	return flight.result, flight.err
+	return CheckForUpdatesResult{Result: result}, err
 }
+
+var errUpdatePreferenceDisabled = errors.New("application: update preference disabled")
 
 // LegacyMutation 仅供 app.go 迁移期兼容绑定使用，使旧调用也服从 maintenance gate。
 // 新用例必须新增有类型的 Service 方法，不向 WebView 暴露此函数接缝。
@@ -219,6 +265,9 @@ func (s *Service) LegacyMutation(ctx context.Context, mutate func() error) error
 	defer s.mutation.Unlock()
 	if s.maintenance.Load() {
 		return ErrMaintenance
+	}
+	if err := s.ensureRestoreNetworkAllowedLocked(); err != nil {
+		return err
 	}
 	if err := mutate(); err != nil {
 		return err
@@ -428,7 +477,7 @@ func (s *Service) GetSnapshot(ctx context.Context) (AppSnapshot, error) {
 		Catalog:   catalogView(data), Runtime: runtimeView, Routes: routes, RouteApplied: applied,
 		Preferences:     PreferencesView{AutoRun: data.Prefs.AutoRun, UpdateCheckEnabled: data.Prefs.UpdateCheckEnabled, UILocale: data.Prefs.UILocale},
 		Recovery:        RecoveryView{Quarantined: quarantined, JournalPending: pending, Maintenance: s.maintenance.Load()},
-		Capabilities:    CapabilityView{MutationAllowed: !s.maintenance.Load()},
+		Capabilities:    CapabilityView{MutationAllowed: !s.maintenance.Load() && !quarantined && !pending},
 		SSHHostDefaults: SSHHostView{Port: 22, AuthType: "ssh_key", KeepAliveIntervalMs: 5000, TimeoutMs: 5000},
 	}, nil
 }
@@ -498,6 +547,9 @@ func (s *Service) CommitSSHHostChange(ctx context.Context, command CommitSSHHost
 	defer s.mutation.Unlock()
 	if s.maintenance.Load() {
 		return CommitSSHHostChangeResult{}, ErrMaintenance
+	}
+	if err := s.ensureNetworkAllowedLocked(); err != nil {
+		return CommitSSHHostChangeResult{}, err
 	}
 	cached, digest, ok, err := lookupCommandResult[CommitSSHHostChangeResult](s.commands, command.Meta.CommandID, "commit_ssh_host_change", command)
 	if err != nil {
@@ -793,6 +845,9 @@ func (s *Service) CommitRouteChange(ctx context.Context, command CommitRouteChan
 	defer s.mutation.Unlock()
 	if s.maintenance.Load() {
 		return RouteCommandResult{}, ErrMaintenance
+	}
+	if err := s.ensureRestoreNetworkAllowedLocked(); err != nil {
+		return RouteCommandResult{}, err
 	}
 	cached, digest, ok, err := lookupCommandResult[RouteCommandResult](s.commands, command.Meta.CommandID, "commit_route_change", command)
 	if err != nil {
