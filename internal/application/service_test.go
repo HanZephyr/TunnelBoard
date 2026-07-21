@@ -31,12 +31,16 @@ func (m *memStore) Update(fn func(*model.VaultData) error) (model.VaultData, err
 }
 
 type fakeRuntime struct {
-	affected  []biz.AffectedForward
-	suspended []int
-	retired   int
-	resumed   int
-	starts    int
-	stops     int
+	affected     []biz.AffectedForward
+	preflight    map[int]string
+	operations   []string
+	suspendErr   error
+	resumeErrors map[int]string
+	suspended    []int
+	retired      int
+	resumed      int
+	starts       int
+	stops        int
 }
 
 func (f *fakeRuntime) Snapshot() ([]biz.RuntimeStatus, error) {
@@ -46,23 +50,40 @@ func (f *fakeRuntime) Start(int) error                        { f.starts++; retu
 func (f *fakeRuntime) Stop(int) error                         { f.stops++; return nil }
 func (f *fakeRuntime) StartAutoStart() (map[int]error, error) { return nil, nil }
 func (f *fakeRuntime) Suspend(_ context.Context, ids []int) (biz.RuntimeSuspendPlan, error) {
+	f.operations = append(f.operations, "suspend")
 	f.suspended = append([]int(nil), ids...)
 	p := biz.RuntimeSuspendPlan{}
 	for _, id := range ids {
 		p.Entries = append(p.Entries, biz.SuspendedForward{ForwardID: id})
 	}
-	return p, nil
+	return p, f.suspendErr
 }
 func (f *fakeRuntime) SuspendAll(context.Context) (biz.RuntimeSuspendPlan, error) {
 	return biz.RuntimeSuspendPlan{}, nil
 }
 func (f *fakeRuntime) Resume(_ context.Context, p biz.RuntimeSuspendPlan) biz.RuntimeResumeResult {
+	f.operations = append(f.operations, "resume")
 	f.resumed += len(p.Entries)
-	return biz.RuntimeResumeResult{Errors: map[int]string{}}
+	result := biz.RuntimeResumeResult{Errors: map[int]string{}}
+	for _, entry := range p.Entries {
+		if message := f.resumeErrors[entry.ForwardID]; message != "" {
+			result.Errors[entry.ForwardID] = message
+		} else {
+			result.Started = append(result.Started, entry.ForwardID)
+		}
+	}
+	return result
 }
 func (f *fakeRuntime) AffectedForHost(int) []biz.AffectedForward  { return f.affected }
 func (f *fakeRuntime) LocalListenerOwner(string, int) (int, bool) { return 1, true }
-func (f *fakeRuntime) RetireHost(id int)                          { f.retired = id }
+func (f *fakeRuntime) RetireHost(id int) {
+	f.operations = append(f.operations, "retire")
+	f.retired = id
+}
+func (f *fakeRuntime) PreflightHostChange(_ context.Context, _ model.SSHHost, _ []biz.AffectedForward) map[int]string {
+	f.operations = append(f.operations, "preflight")
+	return f.preflight
+}
 
 type fakeRoutes struct{}
 
@@ -135,6 +156,7 @@ func TestSaveSSHHostRequiresRestartBeforeChangingRunningConnection(t *testing.T)
 	}
 
 	cmd.ConfirmRestart = true
+	cmd.PreviewToken = preview.PreviewToken
 	result, err := service.SaveSSHHost(context.Background(), cmd)
 	if err != nil {
 		t.Fatal(err)
@@ -188,8 +210,8 @@ func TestSaveSSHHostCommandIDReturnsCachedResultWithoutRepeatingMutation(t *test
 func TestCommandResultCacheExpiresAndEvictsOldestEntry(t *testing.T) {
 	newCachedService := func(options application.CommandCacheOptions) (*application.Service, *memStore) {
 		store := &memStore{data: model.VaultData{Version: 1, SSHHosts: []model.SSHHost{
-			{ID: 1, Name: "one", Host: "10.0.0.1", Port: 22, User: "ops", AuthType: "password", Password: "secret"},
-			{ID: 2, Name: "two", Host: "10.0.0.2", Port: 22, User: "ops", AuthType: "password", Password: "secret"},
+			{ID: 1, Name: "one", Host: "10.0.0.1", Port: 22, User: "ops", AuthType: "password", Password: "secret", TimeoutMs: 5000},
+			{ID: 2, Name: "two", Host: "10.0.0.2", Port: 22, User: "ops", AuthType: "password", Password: "secret", TimeoutMs: 5000},
 		}}}
 		service := application.NewService(application.Dependencies{
 			Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}, CommandCache: options,
@@ -295,6 +317,121 @@ func TestMoveForwardsAllUnchangedDoesNotWriteOrEmitMutation(t *testing.T) {
 	}
 	if store.updates != 0 || result.EventSequence != before.EventSequence || result.AcceptedRevision != before.Revisions.Vault {
 		t.Fatalf("no-op produced mutation: updates=%d result=%+v before=%+v", store.updates, result, before)
+	}
+}
+
+func TestCommitSSHHostChangePreflightFailureHasZeroSideEffectsAndConsumesToken(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1, SSHHosts: []model.SSHHost{{ID: 1, Name: "h", Host: "old", Port: 22, User: "u", AuthType: "password", Password: "old-secret", CredentialRevision: 1}}}}
+	runtime := &fakeRuntime{affected: []biz.AffectedForward{{ForwardID: 7, RunningGeneration: 3}}, preflight: map[int]string{7: "authentication failed for new-secret"}}
+	service := newService(store, runtime)
+	preview, err := service.PreviewSSHHostChange(context.Background(), application.SaveSSHHostCommand{
+		Host:         application.SSHHostInput{ID: 1, Name: "h", Host: "new", Port: 22, User: "u", AuthType: "password"},
+		SecretAction: biz.SecretReplace, SecretInput: "new-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Token == "" || preview.ExpiresAt.IsZero() || len(preview.AffectedForwards) != 1 || preview.AffectedForwards[0].RunningGeneration != 3 {
+		t.Fatalf("preview = %+v", preview)
+	}
+	raw, _ := json.Marshal(preview)
+	if strings.Contains(string(raw), "new-secret") || strings.Contains(preview.Token, "new-secret") {
+		t.Fatalf("preview leaked secret: %s", raw)
+	}
+	result, err := service.CommitSSHHostChange(context.Background(), application.CommitSSHHostChangeCommand{Token: preview.Token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Committed || result.FailureStage != "preflight" || result.PreflightErrors[7] == "" {
+		t.Fatalf("result = %+v", result)
+	}
+	raw, _ = json.Marshal(result)
+	if strings.Contains(string(raw), "new-secret") {
+		t.Fatalf("commit result leaked secret: %s", raw)
+	}
+	if store.data.SSHHosts[0].Host != "old" || runtime.retired != 0 || len(runtime.suspended) != 0 || strings.Join(runtime.operations, ",") != "preflight" {
+		t.Fatalf("preflight failure caused side effects: store=%+v runtime=%+v", store.data.SSHHosts[0], runtime)
+	}
+	_, err = service.CommitSSHHostChange(context.Background(), application.CommitSSHHostChangeCommand{Token: preview.Token})
+	if !errors.Is(err, application.ErrSSHHostChangeToken) {
+		t.Fatalf("second commit err = %v", err)
+	}
+}
+
+func TestCommitSSHHostChangeRejectsStaleRuntimeGenerationBeforePreflight(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1, SSHHosts: []model.SSHHost{{ID: 1, Name: "h", Host: "old", Port: 22, User: "u", AuthType: "password", Password: "old-secret", CredentialRevision: 1}}}}
+	runtime := &fakeRuntime{affected: []biz.AffectedForward{{ForwardID: 7, RunningGeneration: 3}}}
+	service := newService(store, runtime)
+	preview, err := service.PreviewSSHHostChange(context.Background(), application.SaveSSHHostCommand{
+		Host:         application.SSHHostInput{ID: 1, Name: "h", Host: "new", Port: 22, User: "u", AuthType: "password"},
+		SecretAction: biz.SecretReplace, SecretInput: "new-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime.affected[0].RunningGeneration = 4
+	_, err = service.CommitSSHHostChange(context.Background(), application.CommitSSHHostChangeCommand{Token: preview.Token})
+	if !errors.Is(err, application.ErrSSHHostChangeStale) {
+		t.Fatalf("commit err = %v", err)
+	}
+	if len(runtime.operations) != 0 || store.data.SSHHosts[0].Host != "old" {
+		t.Fatalf("stale commit caused side effects: operations=%v host=%s", runtime.operations, store.data.SSHHosts[0].Host)
+	}
+}
+
+func TestCommitSSHHostChangePreflightsBeforeSuspendAndRestartsCapturedSet(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1, SSHHosts: []model.SSHHost{{ID: 1, Name: "h", Host: "old", Port: 22, User: "u", AuthType: "password", Password: "old-secret", CredentialRevision: 1}}}}
+	runtime := &fakeRuntime{affected: []biz.AffectedForward{{ForwardID: 7, RunningGeneration: 3}}}
+	service := newService(store, runtime)
+	preview, err := service.PreviewSSHHostChange(context.Background(), application.SaveSSHHostCommand{
+		Host:         application.SSHHostInput{ID: 1, Name: "h", Host: "new", Port: 22, User: "u", AuthType: "password"},
+		SecretAction: biz.SecretReplace, SecretInput: "new-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.CommitSSHHostChange(context.Background(), application.CommitSSHHostChangeCommand{Token: preview.Token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Committed || store.data.SSHHosts[0].Host != "new" || store.data.SSHHosts[0].Password != "new-secret" {
+		t.Fatalf("result=%+v host=%+v", result, store.data.SSHHosts[0])
+	}
+	if got := strings.Join(runtime.operations, ","); got != "preflight,suspend,retire,resume" {
+		t.Fatalf("operation order = %s", got)
+	}
+	if len(result.ForwardResults) != 1 || result.ForwardResults[0].ForwardID != 7 || result.ForwardResults[0].Status != "restarted" || result.ForwardResults[0].PreviousGeneration != 3 {
+		t.Fatalf("forward results = %+v", result.ForwardResults)
+	}
+}
+
+func TestCommitSSHHostChangeReturnsPerForwardCompensationFailure(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1, SSHHosts: []model.SSHHost{{ID: 1, Name: "h", Host: "old", Port: 22, User: "u", AuthType: "password", Password: "old-secret", CredentialRevision: 1}}}}
+	runtime := &fakeRuntime{
+		affected:     []biz.AffectedForward{{ForwardID: 7, RunningGeneration: 3}},
+		suspendErr:   errors.New("stop deadline exceeded"),
+		resumeErrors: map[int]string{7: "old generation could not be restored"},
+	}
+	service := newService(store, runtime)
+	preview, err := service.PreviewSSHHostChange(context.Background(), application.SaveSSHHostCommand{
+		Host:         application.SSHHostInput{ID: 1, Name: "h", Host: "new", Port: 22, User: "u", AuthType: "password"},
+		SecretAction: biz.SecretReplace, SecretInput: "new-secret",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.CommitSSHHostChange(context.Background(), application.CommitSSHHostChangeCommand{Token: preview.Token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Committed || result.FailureStage != "stop" || !strings.Contains(result.OperationError, "deadline") {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(result.ForwardResults) != 1 || result.ForwardResults[0].Status != "compensation_failed" || result.ForwardResults[0].CompensationError == "" {
+		t.Fatalf("forward result = %+v", result.ForwardResults)
+	}
+	if store.data.SSHHosts[0].Host != "old" || runtime.retired != 0 {
+		t.Fatalf("failed stop mutated host: %+v runtime=%+v", store.data.SSHHosts[0], runtime)
 	}
 }
 

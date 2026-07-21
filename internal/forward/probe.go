@@ -92,6 +92,29 @@ func TestSSHHostConnection(host model.SSHHost, verifier HostKeyVerifier) error {
 	return client.Close()
 }
 
+// TestSSHChainConnection 对完整跳板链执行真实 SSH 握手、认证和逐跳主机指纹核验。
+// ctx 提前结束时立即返回；底层拨号仍受各 Host.TimeoutMs 限制，并在稍后返回时
+// 由清理 goroutine 关闭整条链，不把预检连接交给运行连接池。
+func TestSSHChainConnection(ctx context.Context, hosts []model.SSHHost, verifier HostKeyVerifier) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, closeChain, err := dialChain(hosts, verifier)
+		if closeChain != nil {
+			closeChain()
+		}
+		result <- err
+	}()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case err := <-result:
+		return err
+	}
+}
+
 // TestForwardConnection verifies forward prerequisites and target reachability.
 // Currently it supports "local", "remote" and "dynamic" modes only.
 func TestForwardConnection(fw model.Forward, hosts []model.SSHHost, verifier HostKeyVerifier) (time.Duration, error) {

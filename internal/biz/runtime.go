@@ -92,10 +92,11 @@ type runEntry struct {
 // 跟踪断线重连状态机，不承载目录 CRUD（复用 CatalogBiz）。
 // pool 按首跳复用 SSH 连接：引用同一 SSH 主机的多条 Forward 共享一条首跳连接。
 type RuntimeBiz struct {
-	store   VaultStore
-	catalog *CatalogBiz
-	pool    *forward.SSHConnPool
-	newRun  func(fw model.Forward, hosts []model.SSHHost, verifier forward.HostKeyVerifier) runHandle
+	store          VaultStore
+	catalog        *CatalogBiz
+	pool           *forward.SSHConnPool
+	newRun         func(fw model.Forward, hosts []model.SSHHost, verifier forward.HostKeyVerifier) runHandle
+	preflightChain func(context.Context, []model.SSHHost, forward.HostKeyVerifier) error
 
 	mu             sync.Mutex
 	runs           map[int]*runEntry
@@ -116,6 +117,7 @@ func NewRuntimeBiz(store VaultStore) *RuntimeBiz {
 	b.newRun = func(fw model.Forward, hosts []model.SSHHost, verifier forward.HostKeyVerifier) runHandle {
 		return forward.NewLocalForward(fw, hosts, verifier, b.pool.LeaseChain)
 	}
+	b.preflightChain = forward.TestSSHChainConnection
 	return b
 }
 
@@ -489,6 +491,66 @@ func (b *RuntimeBiz) PoolStats() []forward.PoolStat {
 
 func (b *RuntimeBiz) RetireHost(hostID int) {
 	b.pool.RetireHost(hostID)
+}
+
+// PreflightHostChange 使用候选 Host 替换每条受影响 Forward 链中的同 ID 节点，
+// 通过独占短连接验证完整 SSH 握手、认证和逐跳指纹。它不停止 Runtime、不写
+// Vault，也不把候选连接放入连接池；key 0 表示无 Forward 引用时的直接 Host 预检。
+func (b *RuntimeBiz) PreflightHostChange(ctx context.Context, proposed model.SSHHost, affected []AffectedForward) map[int]string {
+	data, err := b.store.Load()
+	if err != nil {
+		return map[int]string{0: err.Error()}
+	}
+	if len(affected) == 0 {
+		if err := b.preflightChain(ctx, []model.SSHHost{proposed}, b.hostKeyVerifier()); err != nil {
+			return map[int]string{0: err.Error()}
+		}
+		return nil
+	}
+	hostsByID := make(map[int]model.SSHHost, len(data.SSHHosts))
+	for _, host := range data.SSHHosts {
+		hostsByID[host.ID] = host
+	}
+	forwardsByID := make(map[int]model.Forward, len(data.Forwards))
+	for _, fw := range data.Forwards {
+		forwardsByID[fw.ID] = fw
+	}
+	result := map[int]string{}
+	for _, item := range affected {
+		if err := ctx.Err(); err != nil {
+			result[item.ForwardID] = err.Error()
+			continue
+		}
+		fw, ok := forwardsByID[item.ForwardID]
+		if !ok {
+			result[item.ForwardID] = fmt.Sprintf("forward %d not found", item.ForwardID)
+			continue
+		}
+		chain := make([]model.SSHHost, 0, len(fw.ChainHostIDs))
+		valid := true
+		for _, hostID := range fw.ChainHostIDs {
+			host, exists := hostsByID[hostID]
+			if !exists {
+				result[item.ForwardID] = fmt.Sprintf("ssh host %d not found", hostID)
+				valid = false
+				break
+			}
+			if hostID == proposed.ID {
+				host = proposed
+			}
+			chain = append(chain, host)
+		}
+		if !valid {
+			continue
+		}
+		if err := b.preflightChain(ctx, chain, b.hostKeyVerifier()); err != nil {
+			result[item.ForwardID] = err.Error()
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 // Status 返回单条 Forward 的运行时状态；从未启动过返回 false。

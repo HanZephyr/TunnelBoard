@@ -330,6 +330,22 @@ func (a *App) SaveSSHHostCommand(command application.SaveSSHHostCommand) (applic
 	return a.application.SaveSSHHost(context.Background(), command)
 }
 
+// PreviewSSHHostChange 为连接身份变更生成一次性短期确认 token；响应不包含认证秘密。
+func (a *App) PreviewSSHHostChange(command application.SaveSSHHostCommand) (application.SSHHostChangePreview, error) {
+	if err := a.ensureReady(); err != nil {
+		return application.SSHHostChangePreview{}, err
+	}
+	return a.application.PreviewSSHHostChange(context.Background(), command)
+}
+
+// CommitSSHHostChange 消费 Preview token，先预检新 SSH 链，再编排旧运行集的有界重启。
+func (a *App) CommitSSHHostChange(command application.CommitSSHHostChangeCommand) (application.CommitSSHHostChangeResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return application.CommitSSHHostChangeResult{}, err
+	}
+	return a.application.CommitSSHHostChange(context.Background(), command)
+}
+
 // SaveForward 新建（ID 为 0）或更新 Forward；运行中的 Forward 必须先停止再编辑。
 func (a *App) SaveForward(forward model.Forward) (model.Forward, error) {
 	if err := a.ensureReady(); err != nil {

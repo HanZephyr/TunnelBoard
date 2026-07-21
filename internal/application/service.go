@@ -22,10 +22,14 @@ import (
 )
 
 var (
-	ErrMaintenance       = errors.New("application: maintenance in progress")
-	ErrRevisionConflict  = errors.New("application: revision conflict")
-	ErrCommandIDConflict = errors.New("application: command id conflict")
+	ErrMaintenance        = errors.New("application: maintenance in progress")
+	ErrRevisionConflict   = errors.New("application: revision conflict")
+	ErrCommandIDConflict  = errors.New("application: command id conflict")
+	ErrSSHHostChangeToken = errors.New("application: invalid or expired ssh host change token")
+	ErrSSHHostChangeStale = errors.New("application: ssh host change preview is stale")
 )
+
+const sshHostChangeTTL = 2 * time.Minute
 
 type CommandIDConflictError struct {
 	CommandID          string
@@ -48,6 +52,7 @@ type RuntimePort interface {
 	SuspendAll(context.Context) (biz.RuntimeSuspendPlan, error)
 	Resume(context.Context, biz.RuntimeSuspendPlan) biz.RuntimeResumeResult
 	AffectedForHost(int) []biz.AffectedForward
+	PreflightHostChange(context.Context, model.SSHHost, []biz.AffectedForward) map[int]string
 	LocalListenerOwner(string, int) (int, bool)
 	RetireHost(int)
 }
@@ -82,24 +87,26 @@ type Dependencies struct {
 }
 
 type Service struct {
-	store       biz.VaultStore
-	catalog     *biz.CatalogBiz
-	runtime     RuntimePort
-	routes      RoutePort
-	restore     RestorePort
-	recovery    RecoveryPort
-	backup      *biz.BackupBiz
-	packages    biz.BackupPackage
-	mutation    sync.Mutex
-	importMu    sync.Mutex
-	importStage *stagedImport
-	maintenance atomic.Bool
-	sequence    atomic.Uint64
-	commands    *recentCommandCache
+	store        biz.VaultStore
+	catalog      *biz.CatalogBiz
+	runtime      RuntimePort
+	routes       RoutePort
+	restore      RestorePort
+	recovery     RecoveryPort
+	backup       *biz.BackupBiz
+	packages     biz.BackupPackage
+	mutation     sync.Mutex
+	importMu     sync.Mutex
+	importStage  *stagedImport
+	hostChangeMu sync.Mutex
+	hostChanges  map[string]stagedSSHHostChange
+	maintenance  atomic.Bool
+	sequence     atomic.Uint64
+	commands     *recentCommandCache
 }
 
 func NewService(deps Dependencies) *Service {
-	return &Service{store: deps.Store, catalog: deps.Catalog, runtime: deps.Runtime, routes: deps.Routes, restore: deps.Restore, recovery: deps.Recovery, backup: deps.Backup, packages: deps.Packages, commands: newRecentCommandCache(deps.CommandCache)}
+	return &Service{store: deps.Store, catalog: deps.Catalog, runtime: deps.Runtime, routes: deps.Routes, restore: deps.Restore, recovery: deps.Recovery, backup: deps.Backup, packages: deps.Packages, hostChanges: make(map[string]stagedSSHHostChange), commands: newRecentCommandCache(deps.CommandCache)}
 }
 
 // LegacyMutation 仅供 app.go 迁移期兼容绑定使用，使旧调用也服从 maintenance gate。
@@ -156,6 +163,15 @@ type stagedImport struct {
 	committed     bool
 }
 
+type stagedSSHHostChange struct {
+	expiresAt     time.Time
+	vaultRevision string
+	oldIdentity   forward.ConnectionIdentity
+	affected      []biz.AffectedForward
+	request       biz.SaveSSHHostRequest
+	proposed      model.SSHHost
+}
+
 func (s *Service) GetSnapshot(ctx context.Context) (AppSnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return AppSnapshot{}, err
@@ -192,7 +208,198 @@ func (s *Service) GetSnapshot(ctx context.Context) (AppSnapshot, error) {
 	}, nil
 }
 
+func (s *Service) PreviewSSHHostChange(ctx context.Context, command SaveSSHHostCommand) (SSHHostChangePreview, error) {
+	if err := ctx.Err(); err != nil {
+		return SSHHostChangePreview{}, err
+	}
+	if s.maintenance.Load() {
+		return SSHHostChangePreview{}, ErrMaintenance
+	}
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
+	if s.maintenance.Load() {
+		return SSHHostChangePreview{}, ErrMaintenance
+	}
+	data, err := s.store.Load()
+	if err != nil {
+		return SSHHostChangePreview{}, err
+	}
+	currentRevision := revisionOfCatalog(data)
+	if command.Meta.ExpectedRevision != "" && command.Meta.ExpectedRevision != currentRevision {
+		return SSHHostChangePreview{}, fmt.Errorf("%w: current=%s", ErrRevisionConflict, currentRevision)
+	}
+	request := biz.SaveSSHHostRequest{Host: command.Host.model(), SecretAction: command.SecretAction, SecretInput: command.SecretInput}
+	preview, changed, err := s.catalog.PreviewSSHHostSecure(request)
+	if err != nil {
+		return SSHHostChangePreview{}, err
+	}
+	affected := s.runtime.AffectedForHost(preview.ID)
+	result := SSHHostChangePreview{Host: sshHostView(preview), ConnectionChanged: changed, RequiresCommit: changed, AffectedForwards: cloneAffectedForwards(affected), AcceptedRevision: currentRevision}
+	if !changed {
+		return result, nil
+	}
+	old, ok := findSSHHost(data.SSHHosts, preview.ID)
+	if !ok {
+		return SSHHostChangePreview{}, fmt.Errorf("%w: ssh host %d disappeared", ErrSSHHostChangeStale, preview.ID)
+	}
+	token, err := randomSSHHostChangeToken()
+	if err != nil {
+		return SSHHostChangePreview{}, err
+	}
+	result.Token = token
+	result.ExpiresAt = time.Now().UTC().Add(sshHostChangeTTL)
+	s.hostChangeMu.Lock()
+	for stagedToken, stage := range s.hostChanges {
+		if !stage.expiresAt.After(time.Now().UTC()) {
+			delete(s.hostChanges, stagedToken)
+		}
+	}
+	s.hostChanges[token] = stagedSSHHostChange{expiresAt: result.ExpiresAt, vaultRevision: currentRevision, oldIdentity: forward.SSHConnectionIdentity(old), affected: cloneAffectedForwards(affected), request: request, proposed: preview}
+	s.hostChangeMu.Unlock()
+	return result, nil
+}
+
+func (s *Service) CommitSSHHostChange(ctx context.Context, command CommitSSHHostChangeCommand) (CommitSSHHostChangeResult, error) {
+	cached, digest, ok, err := lookupCommandResult[CommitSSHHostChangeResult](s.commands, command.Meta.CommandID, "commit_ssh_host_change", command)
+	if err != nil {
+		return CommitSSHHostChangeResult{}, err
+	}
+	if ok {
+		return cached, nil
+	}
+	result, err := s.commitSSHHostChangeOnce(ctx, command.Token)
+	if err == nil {
+		if cacheErr := storeCommandResult(s.commands, command.Meta.CommandID, "commit_ssh_host_change", digest, result); cacheErr != nil {
+			return CommitSSHHostChangeResult{}, cacheErr
+		}
+	}
+	return result, err
+}
+
+func (s *Service) commitSSHHostChangeOnce(ctx context.Context, token string) (CommitSSHHostChangeResult, error) {
+	if err := ctx.Err(); err != nil {
+		return CommitSSHHostChangeResult{}, err
+	}
+	s.hostChangeMu.Lock()
+	stage, ok := s.hostChanges[token]
+	delete(s.hostChanges, token)
+	s.hostChangeMu.Unlock()
+	if !ok || token == "" || !stage.expiresAt.After(time.Now().UTC()) {
+		return CommitSSHHostChangeResult{}, ErrSSHHostChangeToken
+	}
+	if s.maintenance.Load() {
+		return CommitSSHHostChangeResult{}, ErrMaintenance
+	}
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
+	if s.maintenance.Load() {
+		return CommitSSHHostChangeResult{}, ErrMaintenance
+	}
+	data, err := s.store.Load()
+	if err != nil {
+		return CommitSSHHostChangeResult{}, err
+	}
+	currentRevision := revisionOfCatalog(data)
+	currentHost, exists := findSSHHost(data.SSHHosts, stage.request.Host.ID)
+	if currentRevision != stage.vaultRevision || !exists || forward.SSHConnectionIdentity(currentHost) != stage.oldIdentity {
+		return CommitSSHHostChangeResult{}, fmt.Errorf("%w: current=%s", ErrSSHHostChangeStale, currentRevision)
+	}
+	currentAffected := s.runtime.AffectedForHost(stage.request.Host.ID)
+	if !sameAffectedForwards(currentAffected, stage.affected) {
+		return CommitSSHHostChangeResult{}, ErrSSHHostChangeStale
+	}
+
+	result := CommitSSHHostChangeResult{Host: sshHostView(stage.proposed), ForwardResults: initialHostChangeForwardResults(stage.affected)}
+	preflightCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	result.PreflightErrors = s.runtime.PreflightHostChange(preflightCtx, stage.proposed, stage.affected)
+	cancel()
+	if len(result.PreflightErrors) != 0 {
+		result.FailureStage = "preflight"
+		sanitizeSSHHostChangeResult(&result, stage.proposed.Password)
+		return result, nil
+	}
+
+	runningIDs := runningAffectedIDs(stage.affected)
+	var plan biz.RuntimeSuspendPlan
+	if len(runningIDs) != 0 {
+		stopCtx, stopCancel := context.WithTimeout(ctx, 5*time.Second)
+		plan, err = s.runtime.Suspend(stopCtx, runningIDs)
+		stopCancel()
+		if err != nil {
+			result.FailureStage, result.OperationError = "stop", err.Error()
+			compensateHostChange(s.runtime, plan, result.ForwardResults)
+			sanitizeSSHHostChangeResult(&result, stage.proposed.Password)
+			return result, nil
+		}
+	}
+	saved, changed, err := s.catalog.SaveSSHHostSecure(stage.request)
+	if err != nil {
+		result.FailureStage, result.OperationError = "save", err.Error()
+		compensateHostChange(s.runtime, plan, result.ForwardResults)
+		sanitizeSSHHostChangeResult(&result, stage.proposed.Password)
+		return result, nil
+	}
+	if !changed {
+		result.FailureStage = "save"
+		result.OperationError = ErrSSHHostChangeStale.Error()
+		compensateHostChange(s.runtime, plan, result.ForwardResults)
+		sanitizeSSHHostChangeResult(&result, stage.proposed.Password)
+		return result, nil
+	}
+	s.runtime.RetireHost(saved.ID)
+	if len(plan.Entries) != 0 {
+		restartCtx, restartCancel := context.WithTimeout(ctx, 5*time.Second)
+		resume := s.runtime.Resume(restartCtx, plan)
+		restartCancel()
+		applyResumeResult(result.ForwardResults, resume, "restarted", "restart_failed", false)
+		if len(resume.Errors) != 0 {
+			result.FailureStage = "restart"
+		}
+	}
+	data, err = s.store.Load()
+	if err != nil {
+		return CommitSSHHostChangeResult{}, err
+	}
+	result.Committed = true
+	result.Host = sshHostView(saved)
+	result.AcceptedRevision = revisionOfCatalog(data)
+	result.EventSequence = s.sequence.Add(1)
+	sanitizeSSHHostChangeResult(&result, stage.proposed.Password)
+	return result, nil
+}
+
+// SaveSSHHost 保留旧绑定的兼容形状；连接身份变化必须携带 Preview 返回的 token，
+// 单独的 ConfirmRestart 布尔值不再被视为事实绑定的授权。
 func (s *Service) SaveSSHHost(ctx context.Context, command SaveSSHHostCommand) (SaveSSHHostResult, error) {
+	if command.ConfirmRestart && command.PreviewToken != "" {
+		committed, err := s.CommitSSHHostChange(ctx, CommitSSHHostChangeCommand{Meta: command.Meta, Token: command.PreviewToken})
+		legacy := saveSSHHostResultFromCommit(committed)
+		if err != nil {
+			return legacy, err
+		}
+		if !committed.Committed {
+			return legacy, fmt.Errorf("application: ssh host change failed during %s: %s", committed.FailureStage, committed.OperationError)
+		}
+		return legacy, nil
+	}
+	preview, err := s.PreviewSSHHostChange(ctx, command)
+	if err != nil {
+		return SaveSSHHostResult{}, err
+	}
+	if preview.RequiresCommit {
+		result := SaveSSHHostResult{Host: preview.Host, ConnectionChanged: true, RequiresRestart: true, PreviewToken: preview.Token, PreviewExpiresAt: preview.ExpiresAt, AcceptedRevision: preview.AcceptedRevision}
+		for _, item := range preview.AffectedForwards {
+			result.AffectedForwardIDs = append(result.AffectedForwardIDs, item.ForwardID)
+			if item.RunningGeneration != 0 {
+				result.RunningForwardIDs = append(result.RunningForwardIDs, item.ForwardID)
+			}
+		}
+		return result, nil
+	}
+	return s.saveSSHHostWithoutIdentityChange(ctx, command, preview.AcceptedRevision)
+}
+
+func (s *Service) saveSSHHostWithoutIdentityChange(ctx context.Context, command SaveSSHHostCommand, expectedRevision string) (SaveSSHHostResult, error) {
 	if err := ctx.Err(); err != nil {
 		return SaveSSHHostResult{}, err
 	}
@@ -215,68 +422,155 @@ func (s *Service) SaveSSHHost(ctx context.Context, command SaveSSHHostCommand) (
 	if err != nil {
 		return SaveSSHHostResult{}, err
 	}
-	currentRevision := revisionOfCatalog(data)
-	if command.Meta.ExpectedRevision != "" && command.Meta.ExpectedRevision != currentRevision {
-		return SaveSSHHostResult{}, fmt.Errorf("%w: current=%s", ErrRevisionConflict, currentRevision)
+	current := revisionOfCatalog(data)
+	if current != expectedRevision {
+		return SaveSSHHostResult{}, fmt.Errorf("%w: current=%s", ErrRevisionConflict, current)
 	}
 	request := biz.SaveSSHHostRequest{Host: command.Host.model(), SecretAction: command.SecretAction, SecretInput: command.SecretInput}
-	preview, changed, err := s.catalog.PreviewSSHHostSecure(request)
+	saved, changed, err := s.catalog.SaveSSHHostSecure(request)
 	if err != nil {
 		return SaveSSHHostResult{}, err
 	}
-	affected := s.runtime.AffectedForHost(preview.ID)
-	result := SaveSSHHostResult{Host: sshHostView(preview), ConnectionChanged: changed}
-	for _, item := range affected {
-		result.AffectedForwardIDs = append(result.AffectedForwardIDs, item.ForwardID)
-		if item.RunningGeneration != 0 {
-			result.RunningForwardIDs = append(result.RunningForwardIDs, item.ForwardID)
-		}
-	}
-	if changed && len(result.RunningForwardIDs) != 0 && !command.ConfirmRestart {
-		result.RequiresRestart = true
-		result.AcceptedRevision = currentRevision
-		if err := storeCommandResult(s.commands, command.Meta.CommandID, "save_ssh_host", digest, result); err != nil {
-			return SaveSSHHostResult{}, err
-		}
-		return result, nil
-	}
-
-	var plan biz.RuntimeSuspendPlan
-	if changed && len(result.RunningForwardIDs) != 0 {
-		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		plan, err = s.runtime.Suspend(stopCtx, result.RunningForwardIDs)
-		cancel()
-		if err != nil {
-			_ = s.runtime.Resume(context.Background(), plan)
-			return SaveSSHHostResult{}, err
-		}
-	}
-	saved, changedAtCommit, err := s.catalog.SaveSSHHostSecure(request)
-	if err != nil {
-		if len(plan.Entries) != 0 {
-			_ = s.runtime.Resume(context.Background(), plan)
-		}
-		return SaveSSHHostResult{}, err
-	}
-	if changedAtCommit {
-		s.runtime.RetireHost(saved.ID)
-	}
-	if len(plan.Entries) != 0 {
-		resume := s.runtime.Resume(ctx, plan)
-		result.RestartErrors = resume.Errors
+	if changed {
+		return SaveSSHHostResult{}, ErrSSHHostChangeStale
 	}
 	data, err = s.store.Load()
 	if err != nil {
 		return SaveSSHHostResult{}, err
 	}
-	result.Host = sshHostView(saved)
-	result.ConnectionChanged = changedAtCommit
-	result.AcceptedRevision = revisionOfCatalog(data)
-	result.EventSequence = s.sequence.Add(1)
+	result := SaveSSHHostResult{Host: sshHostView(saved), AcceptedRevision: revisionOfCatalog(data), EventSequence: s.sequence.Add(1)}
 	if err := storeCommandResult(s.commands, command.Meta.CommandID, "save_ssh_host", digest, result); err != nil {
 		return SaveSSHHostResult{}, err
 	}
 	return result, nil
+}
+
+func randomSSHHostChangeToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("application: create ssh host change token: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func findSSHHost(hosts []model.SSHHost, id int) (model.SSHHost, bool) {
+	for _, host := range hosts {
+		if host.ID == id {
+			return host, true
+		}
+	}
+	return model.SSHHost{}, false
+}
+
+func cloneAffectedForwards(items []biz.AffectedForward) []biz.AffectedForward {
+	cloned := append([]biz.AffectedForward(nil), items...)
+	sort.Slice(cloned, func(i, j int) bool { return cloned[i].ForwardID < cloned[j].ForwardID })
+	return cloned
+}
+
+func sameAffectedForwards(a, b []biz.AffectedForward) bool {
+	a, b = cloneAffectedForwards(a), cloneAffectedForwards(b)
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func runningAffectedIDs(items []biz.AffectedForward) []int {
+	ids := make([]int, 0, len(items))
+	for _, item := range items {
+		if item.RunningGeneration != 0 {
+			ids = append(ids, item.ForwardID)
+		}
+	}
+	sort.Ints(ids)
+	return ids
+}
+
+func initialHostChangeForwardResults(items []biz.AffectedForward) []SSHHostChangeForwardResult {
+	result := make([]SSHHostChangeForwardResult, 0, len(items))
+	for _, item := range cloneAffectedForwards(items) {
+		status := "not_running"
+		if item.RunningGeneration != 0 {
+			status = "pending"
+		}
+		result = append(result, SSHHostChangeForwardResult{ForwardID: item.ForwardID, PreviousGeneration: item.RunningGeneration, Status: status})
+	}
+	return result
+}
+
+func applyResumeResult(results []SSHHostChangeForwardResult, resume biz.RuntimeResumeResult, successStatus, failureStatus string, compensation bool) {
+	started := make(map[int]struct{}, len(resume.Started))
+	for _, id := range resume.Started {
+		started[id] = struct{}{}
+	}
+	for i := range results {
+		if results[i].PreviousGeneration == 0 {
+			continue
+		}
+		if message, failed := resume.Errors[results[i].ForwardID]; failed {
+			results[i].Status = failureStatus
+			if compensation {
+				results[i].CompensationError = message
+			} else {
+				results[i].Error = message
+			}
+			continue
+		}
+		if _, ok := started[results[i].ForwardID]; ok {
+			results[i].Status = successStatus
+		}
+	}
+}
+
+func compensateHostChange(runtime RuntimePort, plan biz.RuntimeSuspendPlan, results []SSHHostChangeForwardResult) {
+	if len(plan.Entries) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	resume := runtime.Resume(ctx, plan)
+	cancel()
+	applyResumeResult(results, resume, "compensated", "compensation_failed", true)
+}
+
+func saveSSHHostResultFromCommit(committed CommitSSHHostChangeResult) SaveSSHHostResult {
+	result := SaveSSHHostResult{Host: committed.Host, ConnectionChanged: true, AcceptedRevision: committed.AcceptedRevision, EventSequence: committed.EventSequence, RestartErrors: map[int]string{}}
+	for _, item := range committed.ForwardResults {
+		result.AffectedForwardIDs = append(result.AffectedForwardIDs, item.ForwardID)
+		if item.PreviousGeneration != 0 {
+			result.RunningForwardIDs = append(result.RunningForwardIDs, item.ForwardID)
+		}
+		if item.Error != "" {
+			result.RestartErrors[item.ForwardID] = item.Error
+		}
+		if item.CompensationError != "" {
+			result.RestartErrors[item.ForwardID] = item.CompensationError
+		}
+	}
+	if len(result.RestartErrors) == 0 {
+		result.RestartErrors = nil
+	}
+	return result
+}
+
+func sanitizeSSHHostChangeResult(result *CommitSSHHostChangeResult, secret string) {
+	if result == nil || secret == "" {
+		return
+	}
+	redact := func(message string) string { return strings.ReplaceAll(message, secret, "[REDACTED]") }
+	result.OperationError = redact(result.OperationError)
+	for id, message := range result.PreflightErrors {
+		result.PreflightErrors[id] = redact(message)
+	}
+	for i := range result.ForwardResults {
+		result.ForwardResults[i].Error = redact(result.ForwardResults[i].Error)
+		result.ForwardResults[i].CompensationError = redact(result.ForwardResults[i].CompensationError)
+	}
 }
 
 func (s *Service) MoveForwards(ctx context.Context, command MoveForwardsCommand) (MoveForwardsResult, error) {

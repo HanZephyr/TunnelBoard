@@ -95,6 +95,7 @@ type SaveSSHHostCommand struct {
 	SecretAction   biz.SecretAction `json:"secretAction"`
 	SecretInput    string           `json:"secretInput,omitempty"`
 	ConfirmRestart bool             `json:"confirmRestart"`
+	PreviewToken   string           `json:"previewToken,omitempty"`
 }
 
 type SaveSSHHostResult struct {
@@ -103,9 +104,45 @@ type SaveSSHHostResult struct {
 	AffectedForwardIDs []int          `json:"affectedForwardIds,omitempty"`
 	RunningForwardIDs  []int          `json:"runningForwardIds,omitempty"`
 	RequiresRestart    bool           `json:"requiresRestart"`
+	PreviewToken       string         `json:"previewToken,omitempty"`
+	PreviewExpiresAt   time.Time      `json:"previewExpiresAt,omitempty"`
 	RestartErrors      map[int]string `json:"restartErrors,omitempty"`
 	AcceptedRevision   string         `json:"acceptedRevision"`
 	EventSequence      uint64         `json:"eventSequence"`
+}
+
+type SSHHostChangePreview struct {
+	Token             string                `json:"token"`
+	ExpiresAt         time.Time             `json:"expiresAt"`
+	Host              SSHHostView           `json:"host"`
+	ConnectionChanged bool                  `json:"connectionChanged"`
+	RequiresCommit    bool                  `json:"requiresCommit"`
+	AffectedForwards  []biz.AffectedForward `json:"affectedForwards,omitempty"`
+	AcceptedRevision  string                `json:"acceptedRevision"`
+}
+
+type CommitSSHHostChangeCommand struct {
+	Meta  CommandMeta `json:"meta"`
+	Token string      `json:"token"`
+}
+
+type SSHHostChangeForwardResult struct {
+	ForwardID          int    `json:"forwardId"`
+	PreviousGeneration uint64 `json:"previousGeneration,omitempty"`
+	Status             string `json:"status"`
+	Error              string `json:"error,omitempty"`
+	CompensationError  string `json:"compensationError,omitempty"`
+}
+
+type CommitSSHHostChangeResult struct {
+	Committed        bool                         `json:"committed"`
+	Host             SSHHostView                  `json:"host"`
+	FailureStage     string                       `json:"failureStage,omitempty"`
+	OperationError   string                       `json:"operationError,omitempty"`
+	PreflightErrors  map[int]string               `json:"preflightErrors,omitempty"`
+	ForwardResults   []SSHHostChangeForwardResult `json:"forwardResults,omitempty"`
+	AcceptedRevision string                       `json:"acceptedRevision,omitempty"`
+	EventSequence    uint64                       `json:"eventSequence,omitempty"`
 }
 
 type MoveForwardsCommand struct {
