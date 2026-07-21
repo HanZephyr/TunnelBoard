@@ -314,6 +314,8 @@ onBeforeUnmount(() => {
           ref="routesPageRef"
           :forwards="forwards"
           :web-routes="webRoutes"
+          :route-statuses="routeStatuses"
+          :vault-revision="vaultRevision"
           :configuration-locked="snapshotPhase !== 'ready'"
           @vault-changed="loadVault"
           @notify="notify"
