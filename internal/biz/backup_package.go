@@ -70,6 +70,12 @@ type StagedBackup struct {
 	FileDigest string
 }
 
+func (s *StagedBackup) Destroy() {
+	clearKeyFiles(s.KeyFiles)
+	s.Vault = model.VaultData{}
+	s.FileDigest = ""
+}
+
 type BackupPackage interface {
 	Stage(context.Context, StageRequest) (StagePreview, error)
 	Take(context.Context, TakeStageRequest) (StagedBackup, error)

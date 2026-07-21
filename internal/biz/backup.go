@@ -66,9 +66,18 @@ func (b *BackupBiz) CreateBackup(password string, includeKeyFiles bool) ([]byte,
 
 // HostConflict 是导入主机与现有主机的冲突项（同 endpoint：host+port+user）。
 type HostConflict struct {
-	Imported   model.SSHHost `json:"imported"`
-	ExistingID int           `json:"existingId"`
-	Reason     string        `json:"reason"`
+	Imported   ImportSSHHostView `json:"imported"`
+	ExistingID int               `json:"existingId"`
+	Reason     string            `json:"reason"`
+}
+
+type ImportSSHHostView struct {
+	Name      string `json:"name"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	User      string `json:"user"`
+	AuthType  string `json:"authType"`
+	HasSecret bool   `json:"hasSecret"`
 }
 
 // ImportPreview 是导入前预览：实体计数、建议的新顶层文件夹名、冲突清单与私钥文件清单。
@@ -85,6 +94,14 @@ func (b *BackupBiz) PreviewImport(raw []byte, password string) (ImportPreview, e
 	if err != nil {
 		return ImportPreview{}, err
 	}
+	staged := StagedBackup{Vault: imported, KeyFiles: keyFiles}
+	defer staged.Destroy()
+	return b.PreviewStagedImport(staged)
+}
+
+// PreviewStagedImport 只消费已由 BackupPackage 有界解密的数据，不再读取路径或口令。
+func (b *BackupBiz) PreviewStagedImport(staged StagedBackup) (ImportPreview, error) {
+	imported, keyFiles := staged.Vault, staged.KeyFiles
 	current, err := b.store.Load()
 	if err != nil {
 		return ImportPreview{}, err
@@ -105,7 +122,7 @@ func (b *BackupBiz) PreviewImport(raw []byte, password string) (ImportPreview, e
 		for _, eh := range current.SSHHosts {
 			if sameEndpoint(ih, eh) {
 				preview.HostConflicts = append(preview.HostConflicts, HostConflict{
-					Imported: ih, ExistingID: eh.ID, Reason: "相同地址/端口/用户的主机已存在",
+					Imported: importSSHHostView(ih), ExistingID: eh.ID, Reason: "相同地址/端口/用户的主机已存在",
 				})
 				break
 			}
@@ -146,6 +163,12 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 	if err != nil {
 		return ImportSummary{}, err
 	}
+	return b.ApplyStagedImport(StagedBackup{Vault: imported, KeyFiles: keyFiles}, plan)
+}
+
+// ApplyStagedImport 在单次 Vault Update 中消费 staged 数据；调用方负责 token 生命周期。
+func (b *BackupBiz) ApplyStagedImport(staged StagedBackup, plan ImportPlan) (ImportSummary, error) {
+	imported, keyFiles := staged.Vault, staged.KeyFiles
 	folderName := strings.TrimSpace(plan.FolderName)
 	if folderName == "" {
 		return ImportSummary{}, fmt.Errorf("folder name is required")
@@ -167,7 +190,7 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 		summary.KeyFilePaths = append(summary.KeyFilePaths, path)
 	}
 
-	_, err = b.store.Update(func(d *model.VaultData) error {
+	_, err := b.store.Update(func(d *model.VaultData) error {
 		// 每类 ID 只扫描一次既有数据，随后单调分配；导入复杂度与实体数线性相关。
 		folderIDs := newImportIDSequence(len(d.Folders), func(i int) int { return d.Folders[i].ID })
 		hostIDs := newImportIDSequence(len(d.SSHHosts), func(i int) int { return d.SSHHosts[i].ID })
@@ -296,6 +319,10 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 		"routes_deactivated", summary.RoutesDeactivated,
 		"imported", summary.Imported)
 	return summary, nil
+}
+
+func importSSHHostView(host model.SSHHost) ImportSSHHostView {
+	return ImportSSHHostView{Name: host.Name, Host: host.Host, Port: host.Port, User: host.User, AuthType: host.AuthType, HasSecret: host.Password != ""}
 }
 
 type importIDSequence struct{ next int }
