@@ -126,8 +126,12 @@ func SSHConnectionIdentity(host model.SSHHost) ConnectionIdentity {
 // 跨代 release（重拨后归还旧代）只减引用，不动新一代连接。
 func (e *poolEntry) release(client sshClient) {
 	e.mu.Lock()
+	if e.client != client {
+		e.mu.Unlock()
+		return
+	}
 	e.refs--
-	if e.refs != 0 || e.client != client {
+	if e.refs != 0 {
 		e.mu.Unlock()
 		return
 	}
@@ -211,6 +215,9 @@ func (p *SSHConnPool) acquire(host model.SSHHost, verifier HostKeyVerifier) (*po
 		entry.client = client
 		entry.closeAll = closeAll
 		entry.dead = false
+		// 引用计数只属于当前 generation。旧代已经关闭，其迟到 release
+		// 通过 client 同一性检查被忽略，不能占用或扣减新代引用。
+		entry.refs = 0
 		p.mu.Lock()
 		p.nextGeneration++
 		generation := p.nextGeneration

@@ -122,6 +122,33 @@ func TestSSHConnPool_ConnectionIdentityChangeCreatesNewGeneration(t *testing.T) 
 	releaseB()
 }
 
+func TestSSHConnPool_OldGenerationReleaseCannotLeakReplacement(t *testing.T) {
+	dialer := &fakePoolDialer{}
+	pool := newSSHConnPoolWithDial(dialer.dial)
+	hosts := poolTestHosts()
+	_, releaseOld, _, err := pool.dialChain(hosts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialer.client(0).kill(errors.New("connection reset"))
+	waitForPoolCond(t, func() bool {
+		dead, _, _ := pool.entryState(7)
+		return dead
+	}, "old generation should become dead")
+	_, releaseNew, _, err := pool.dialChain(hosts, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseNew()
+	releaseOld()
+	if !dialer.client(1).isClosed() {
+		t.Fatal("replacement generation remained alive with zero current leases")
+	}
+	if _, refs, _ := pool.entryState(7); refs != 0 {
+		t.Fatalf("refs = %d, want 0", refs)
+	}
+}
+
 func TestSSHConnPool_OldGenerationAbortDoesNotCloseNewGeneration(t *testing.T) {
 	dialer := &fakePoolDialer{}
 	pool := newSSHConnPoolWithDial(dialer.dial)
@@ -410,8 +437,8 @@ func TestSSHConnPool_WatcherDeathSingleflightRedial(t *testing.T) {
 	if dead {
 		t.Fatalf("entry should be alive after redial")
 	}
-	if refs != n+1 {
-		t.Fatalf("refs = %d, want %d (initial lease + %d acquires)", refs, n+1, n)
+	if refs != n {
+		t.Fatalf("refs = %d, want %d current-generation acquires", refs, n)
 	}
 }
 
