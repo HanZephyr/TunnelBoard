@@ -32,9 +32,9 @@ LOCK_PATH = ROOT / "scripts" / "caddy-lock.json"
 RELEASE_ROOT = ROOT / "build" / "release"
 MAX_ARTIFACT_BYTES = 1_000_000_000
 RELEASE_TARGETS = {
-    "windows-amd64": {"os": "windows", "arch": "amd64"},
-    "darwin-universal": {"os": "darwin", "arch": "universal"},
-    "linux-amd64": {"os": "linux", "arch": "amd64"},
+    "windows-amd64": {"os": "windows", "arch": "amd64", "minimum_system": "Windows 10 1809"},
+    "darwin-universal": {"os": "darwin", "arch": "universal", "minimum_system": "macOS 10.15"},
+    "linux-amd64": {"os": "linux", "arch": "amd64", "minimum_system": "not-delivered"},
 }
 
 
@@ -168,14 +168,17 @@ def extract_artifact(artifact: Path, destination: Path) -> Path:
             target.parent.mkdir(parents=True, exist_ok=True)
             with archive.open(info) as source, target.open("wb") as output:
                 shutil.copyfileobj(source, output)
-    return destination
+    top_level = list(destination.iterdir())
+    if len(top_level) != 1 or not top_level[0].is_dir():
+        raise ReleaseError("artifact must contain a single top-level bundle directory")
+    return top_level[0]
 
 
 def locate_manifest(root: Path) -> Path:
-    matches = [p for p in root.rglob("manifest.json") if p.is_file()]
-    if len(matches) != 1:
-        raise ReleaseError(f"artifact must contain exactly one manifest.json, found {len(matches)}")
-    return matches[0]
+    manifest = root / "manifest.json"
+    if not manifest.is_file():
+        raise ReleaseError("artifact bundle root must contain manifest.json")
+    return manifest
 
 
 def validate_manifest_shape(manifest: dict[str, Any], lock: dict[str, Any]) -> None:
@@ -184,6 +187,10 @@ def validate_manifest_shape(manifest: dict[str, Any], lock: dict[str, Any]) -> N
     target = manifest.get("target", {})
     if target.get("name") not in RELEASE_TARGETS:
         raise ReleaseError(f"unsupported manifest target: {target.get('name')}")
+    expected_target = RELEASE_TARGETS[target["name"]]
+    for field in ("os", "arch", "minimum_system"):
+        if target.get(field) != expected_target[field]:
+            raise ReleaseError(f"manifest target {field} mismatch for {target['name']}")
     files = manifest.get("files")
     if not isinstance(files, list) or not files:
         raise ReleaseError("manifest files must be a non-empty list")
@@ -203,6 +210,7 @@ def verify_bundle_root(
     roles: set[str] = set()
     caddy_path: Path | None = None
     helper_path: Path | None = None
+    app_path: Path | None = None
     for record in manifest["files"]:
         rel = safe_relative(str(record.get("path", ""))).as_posix()
         if rel in declared:
@@ -224,6 +232,8 @@ def verify_bundle_root(
             caddy_path = path
         if record.get("role") == "privileged_helper":
             helper_path = path
+        if record.get("role") == "application":
+            app_path = path
 
     actual = {
         p.relative_to(bundle_root).as_posix()
@@ -246,6 +256,11 @@ def verify_bundle_root(
         raise ReleaseError(f"manifest missing required roles: {', '.join(absent_roles)}")
     if caddy_path is None:
         raise ReleaseError("manifest missing Caddy")
+    if os_name == "windows":
+        for executable in (app_path, helper_path, caddy_path):
+            if executable is None:
+                raise ReleaseError("Windows artifact is missing a required executable")
+            verify_windows_pe_machine(executable, 0x8664)
     caddy_record = manifest.get("caddy", {})
     result_digest = sha256_file(caddy_path)
     if result_digest != caddy_record.get("result_binary_sha256"):
@@ -269,7 +284,36 @@ def verify_bundle_root(
             observed_helper = validate_windows_helper(helper_path)
             if observed_helper != manifest.get("helper"):
                 raise ReleaseError("Helper self-check metadata disagrees with artifact manifest")
+            signing = manifest.get("signing", {})
+            if signing.get("required") is True:
+                observed_app_sign = signing_status(app_path, True)
+                observed_helper_sign = signing_status(helper_path, True)
+                expected_app_sign = signing.get("application", {})
+                expected_helper_sign = signing.get("helper", {})
+                if observed_app_sign.get("publisher") != expected_app_sign.get("publisher"):
+                    raise ReleaseError("application Authenticode publisher disagrees with manifest")
+                if observed_helper_sign.get("publisher") != expected_helper_sign.get("publisher"):
+                    raise ReleaseError("Helper Authenticode publisher disagrees with manifest")
+                if observed_app_sign.get("publisher") != observed_helper_sign.get("publisher"):
+                    raise ReleaseError("application and Helper Authenticode publishers differ")
     return manifest
+
+
+def verify_windows_pe_machine(path: Path, expected: int) -> None:
+    with path.open("rb") as stream:
+        header = stream.read(64)
+        if len(header) < 64 or header[:2] != b"MZ":
+            raise ReleaseError(f"Windows executable is not PE: {path.name}")
+        pe_offset = int.from_bytes(header[0x3C:0x40], "little")
+        if pe_offset < 64 or pe_offset > 16 * 1024 * 1024:
+            raise ReleaseError(f"Windows executable has invalid PE offset: {path.name}")
+        stream.seek(pe_offset)
+        signature = stream.read(6)
+    if len(signature) != 6 or signature[:4] != b"PE\0\0":
+        raise ReleaseError(f"Windows executable has invalid PE signature: {path.name}")
+    machine = int.from_bytes(signature[4:6], "little")
+    if machine != expected:
+        raise ReleaseError(f"Windows executable architecture mismatch for {path.name}: 0x{machine:04x}")
 
 
 def service_exists() -> bool:
@@ -722,7 +766,7 @@ def write_manifest(
             "workflow": os.environ.get("GITHUB_WORKFLOW", "local-reproduction"),
             "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
         },
-        "target": {"name": target_name, "os": target["os"], "arch": target["arch"]},
+        "target": {"name": target_name, "os": target["os"], "arch": target["arch"], "minimum_system": target["minimum_system"]},
         "files": files,
         "embedded_assets": embedded_assets,
         "caddy": {

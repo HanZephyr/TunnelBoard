@@ -11,9 +11,34 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const maxCAKeyFileBytes = 1 << 20
+
+func legacyAuthorityPaths(appData string) ([]string, error) {
+	implicit := filepath.Join(appData, "TunnelBoard")
+	authority := func(root string) string {
+		return filepath.Join(root, "caddy", "pki", "authorities", "local", "root.crt")
+	}
+	paths := []string{authority(implicit)}
+	raw, err := os.ReadFile(filepath.Join(implicit, "config.root"))
+	if errors.Is(err, os.ErrNotExist) {
+		return paths, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("helper: read legacy config.root: %w", err)
+	}
+	line := strings.TrimSpace(strings.Split(string(raw), "\n")[0])
+	if line == "" || !filepath.IsAbs(line) {
+		return nil, errors.New("helper: legacy config.root must contain an absolute path")
+	}
+	redirected := authority(filepath.Clean(line))
+	if !strings.EqualFold(filepath.Clean(redirected), filepath.Clean(paths[0])) {
+		paths = append(paths, redirected)
+	}
+	return paths, nil
+}
 
 // removeCAAuthorityAndKeys 撤销 authority 文件中精确 DER 对应的根证书，
 // 只有证书存储操作成功后才删除同一 Caddy PKI 目录中的私钥材料。

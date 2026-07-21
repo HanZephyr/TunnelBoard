@@ -253,12 +253,12 @@ func TestApplyRouteCaddyTrustFlow(t *testing.T) {
 	fx := newRouterFixture(t)
 	fw := fx.seedForward(t, "local", 8080)
 	fx.caddy.rootCA = []byte("fake-der")
-	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
+	_, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	result, err := fx.router.ApplyRoute(rt.ID, nil)
+	result, err := fx.router.ReconcileRoutesWithCATrust(fx.caTrust.identity.SHA256)
 	if err != nil {
 		t.Fatalf("ApplyRoute: %v", err)
 	}
@@ -277,9 +277,27 @@ func TestApplyRouteCaddyTrustFlow(t *testing.T) {
 	}
 }
 
+func TestReconcileRoutesRequiresExplicitCAFingerprintBeforeEffects(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	if _, err := fx.catalog.SaveWebRoute(model.WebRoute{
+		ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := fx.router.ReconcileRoutes(); !errors.Is(err, biz.ErrCAConfirmationRequired) {
+		t.Fatalf("ReconcileRoutes error = %v, want ErrCAConfirmationRequired", err)
+	}
+	if fx.caTrust.ensureCalls != 0 || len(fx.caddy.reloads) != 0 || len(fx.helper.calls) != 0 {
+		t.Fatalf("unconfirmed reconciliation caused effects: ca=%d caddy=%d helper=%d", fx.caTrust.ensureCalls, len(fx.caddy.reloads), len(fx.helper.calls))
+	}
+}
+
 // 443 冲突：Caddy 不启动但 hosts 照常生效，结果携带冲突说明且无错误。
 func TestApplyRoutePortConflictKeepsHosts(t *testing.T) {
 	fx := newRouterFixture(t)
+	fx.caTrust.state = helper.CATrusted
 	fw := fx.seedForward(t, "local", 8080)
 	fx.caddy.diagnoseErr = errors.New("caddy: 127.0.0.1:443 unavailable: bind: address in use")
 	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
@@ -302,6 +320,7 @@ func TestApplyRoutePortConflictKeepsHosts(t *testing.T) {
 // Caddy 重载失败时 hosts 回滚到应用前的区块内容。
 func TestApplyRouteRollbackOnCaddyFailure(t *testing.T) {
 	fx := newRouterFixture(t)
+	fx.caTrust.state = helper.CATrusted
 	fw := fx.seedForward(t, "local", 8080)
 	fx.caddy.reloadErr = errors.New("bad config")
 	prev := helper.BlockBegin + "\r\n127.0.0.1 old.test\r\n" + helper.BlockEnd + "\r\n"
@@ -545,6 +564,7 @@ func selfSignedTestCA(t *testing.T) []byte {
 // 不报端口冲突、不重启 Caddy、不重复信任 CA。回归 issue：多路由只能有一条经 Caddy 接管。
 func TestApplyRouteCaddyAlreadyRunningReloads(t *testing.T) {
 	fx := newRouterFixture(t)
+	fx.caTrust.state = helper.CATrusted
 	fw := fx.seedForward(t, "local", 8080)
 	// 模拟"第一条路由已让 Caddy 跑起来、CA 已信任"的稳态。
 	fx.caddy.running = true
@@ -588,6 +608,7 @@ func TestApplyRouteCaddyAlreadyRunningReloads(t *testing.T) {
 // 回归重复应用同一条路由、用户反复点"应用"等无效 reload 场景。
 func TestApplyRouteSkipsReloadWhenConfigUnchanged(t *testing.T) {
 	fx := newRouterFixture(t)
+	fx.caTrust.state = helper.CATrusted
 	fw := fx.seedForward(t, "local", 8080)
 	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
 	if err != nil {
@@ -737,6 +758,7 @@ func TestNeutralizeRoutesRemovesAllAppliedEffectsAndPersistsQuarantine(t *testin
 
 func TestRouteCoordinatorSerializesAndPersistsAppliedState(t *testing.T) {
 	fx := newRouterFixture(t)
+	fx.caTrust.state = helper.CATrusted
 	fw := fx.seedForward(t, "local", 8080)
 	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
 	if err != nil {

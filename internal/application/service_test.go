@@ -130,6 +130,7 @@ type fakeRoutes struct {
 	recoveryPending bool
 	caFingerprint   string
 	caTrusted       bool
+	confirmedCA     string
 }
 
 func (*fakeRoutes) RouteStatus() ([]biz.RouteStatusItem, error) { return nil, nil }
@@ -160,6 +161,10 @@ func (*fakeRoutes) NeutralizeRoutes(context.Context) error { return nil }
 func (f *fakeRoutes) ReconcileRoutes() (biz.RouteApplyResult, error) {
 	f.reconciles++
 	return f.result, f.err
+}
+func (f *fakeRoutes) ReconcileRoutesWithCATrust(fingerprint string) (biz.RouteApplyResult, error) {
+	f.confirmedCA = fingerprint
+	return f.ReconcileRoutes()
 }
 func (f *fakeRoutes) ResumeCaddy() error             { f.resumes++; return f.err }
 func (f *fakeRoutes) RecoveryPending() (bool, error) { return f.recoveryPending, f.err }
@@ -374,11 +379,39 @@ func TestActivateRestoredNetworkRejectsPendingJournal(t *testing.T) {
 		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: routes,
 		Restore: fakeRestore{}, Recovery: fakeRecovery{quarantined: true, pending: true},
 	})
-	if err := service.ActivateRestoredNetwork(context.Background()); !errors.Is(err, application.ErrRecoveryNetworkBlocked) {
+	if err := service.ActivateRestoredNetwork(context.Background(), application.ActivateRestoredNetworkCommand{}); !errors.Is(err, application.ErrRecoveryNetworkBlocked) {
 		t.Fatalf("ActivateRestoredNetwork error = %v", err)
 	}
 	if runtime.autoStarts != 0 || routes.reconciles != 0 {
 		t.Fatalf("pending journal activated network: runtime=%+v routes=%+v", runtime, routes)
+	}
+}
+
+func TestActivateRestoredNetworkRequiresPreviewedCAFingerprint(t *testing.T) {
+	runtime := &fakeRuntime{}
+	fingerprint := strings.Repeat("b", 64)
+	routes := &fakeRoutes{caFingerprint: fingerprint}
+	store := &memStore{data: model.VaultData{Version: 1, WebRoutes: []model.WebRoute{{ID: 1, CaddyEnabled: true}}}}
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: routes,
+		Restore: fakeRestore{}, Recovery: fakeRecovery{quarantined: true},
+	})
+
+	preview, err := service.PreviewRestoredNetworkActivation(context.Background())
+	if err != nil || !preview.CATrustNeeded || preview.CAFingerprint != fingerprint {
+		t.Fatalf("preview = %+v, err=%v", preview, err)
+	}
+	if err := service.ActivateRestoredNetwork(context.Background(), application.ActivateRestoredNetworkCommand{}); !errors.Is(err, biz.ErrCAConfirmationRequired) {
+		t.Fatalf("unconfirmed activation error = %v", err)
+	}
+	if routes.reconciles != 0 || runtime.autoStarts != 0 {
+		t.Fatalf("unconfirmed activation caused effects: routes=%d runtime=%d", routes.reconciles, runtime.autoStarts)
+	}
+	if err := service.ActivateRestoredNetwork(context.Background(), application.ActivateRestoredNetworkCommand{ConfirmedCAFingerprint: fingerprint}); err != nil {
+		t.Fatalf("confirmed activation: %v", err)
+	}
+	if routes.confirmedCA != fingerprint || routes.reconciles != 1 || runtime.autoStarts != 1 {
+		t.Fatalf("confirmed activation was not bound to fingerprint: routes=%+v runtime=%+v", routes, runtime)
 	}
 }
 

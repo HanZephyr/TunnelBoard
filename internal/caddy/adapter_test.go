@@ -38,6 +38,19 @@ func TestLocatePrefersEnvOverride(t *testing.T) {
 	}
 }
 
+func TestLocateEnvOverrideCannotBypassExpectedSHA(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "caddy.exe")
+	if err := os.WriteFile(bin, []byte("untrusted-caddy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(caddy.EnvPathOverride, bin)
+	a := caddy.New(t.TempDir())
+	a.ExpectedSHA256 = strings.Repeat("0", 64)
+	if _, err := a.Locate(); err == nil || !strings.Contains(err.Error(), "integrity mismatch") {
+		t.Fatalf("Locate error = %v, want integrity mismatch", err)
+	}
+}
+
 func TestLocateScansCandidates(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "caddy.exe")
 	if err := os.WriteFile(bin, []byte("fake"), 0o755); err != nil {

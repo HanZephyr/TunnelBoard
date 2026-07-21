@@ -169,6 +169,9 @@ func (a *Adapter) Locate() (string, error) {
 		if _, err := os.Stat(p); err != nil {
 			return "", fmt.Errorf("%w: %s=%s unusable: %v", ErrNotFound, EnvPathOverride, p, err)
 		}
+		if err := a.VerifySHA256(p); err != nil {
+			return "", err
+		}
 		return p, nil
 	}
 	for _, candidate := range a.Candidates {

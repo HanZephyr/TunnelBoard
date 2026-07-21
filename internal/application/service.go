@@ -65,6 +65,7 @@ type RoutePort interface {
 	PreviewDesired(model.VaultData, int) (biz.RoutePreview, error)
 	NeutralizeRoutes(context.Context) error
 	ReconcileRoutes() (biz.RouteApplyResult, error)
+	ReconcileRoutesWithCATrust(string) (biz.RouteApplyResult, error)
 	ResumeCaddy() error
 	RecoveryPending() (bool, error)
 }
@@ -921,7 +922,11 @@ func (s *Service) CommitRouteChange(ctx context.Context, command CommitRouteChan
 	}
 	s.deleteRouteStage(command.Token)
 	acceptedRevision := revisionOfCatalog(updated)
-	applyResult, reconcileErr := s.routes.ReconcileRoutes()
+	confirmedCAFingerprint := ""
+	if stage.caTrustNeeded && command.ConfirmCATrust {
+		confirmedCAFingerprint = stage.caFingerprint
+	}
+	applyResult, reconcileErr := s.routes.ReconcileRoutesWithCATrust(confirmedCAFingerprint)
 	applied, appliedErr := s.routes.AppliedState()
 	result := RouteCommandResult{
 		DesiredSaved: true, AcceptedRevision: acceptedRevision, Route: savedRoute,
@@ -1484,7 +1489,29 @@ func (s *Service) CommitRestore(ctx context.Context, request biz.RestoreCommitRe
 }
 
 // ActivateRestoredNetwork 是解除恢复隔离的唯一入口；任一步失败都重新收敛到中性态。
-func (s *Service) ActivateRestoredNetwork(ctx context.Context) error {
+func (s *Service) PreviewRestoredNetworkActivation(ctx context.Context) (RestoreActivationPreview, error) {
+	if err := ctx.Err(); err != nil {
+		return RestoreActivationPreview{}, err
+	}
+	quarantined, pending, err := s.recovery.State()
+	if err != nil || !quarantined {
+		return RestoreActivationPreview{}, err
+	}
+	if pending {
+		return RestoreActivationPreview{}, ErrRecoveryNetworkBlocked
+	}
+	data, err := s.store.Load()
+	if err != nil {
+		return RestoreActivationPreview{}, err
+	}
+	preview, err := s.routes.PreviewDesired(data, 0)
+	if err != nil {
+		return RestoreActivationPreview{}, err
+	}
+	return RestoreActivationPreview{CATrustNeeded: preview.CATrustNeeded, CAFingerprint: preview.CAFingerprint}, nil
+}
+
+func (s *Service) ActivateRestoredNetwork(ctx context.Context, command ActivateRestoredNetworkCommand) error {
 	if s.maintenance.Load() {
 		return ErrMaintenance
 	}
@@ -1497,7 +1524,19 @@ func (s *Service) ActivateRestoredNetwork(ctx context.Context) error {
 	if pending {
 		return ErrRecoveryNetworkBlocked
 	}
-	if _, err := s.routes.ReconcileRoutes(); err != nil {
+	data, err := s.store.Load()
+	if err != nil {
+		return err
+	}
+	preview, err := s.routes.PreviewDesired(data, 0)
+	if err != nil {
+		return err
+	}
+	confirmedFingerprint := strings.TrimSpace(command.ConfirmedCAFingerprint)
+	if preview.CATrustNeeded && !strings.EqualFold(confirmedFingerprint, preview.CAFingerprint) {
+		return fmt.Errorf("%w: %s", biz.ErrCAConfirmationRequired, preview.CAFingerprint)
+	}
+	if _, err := s.routes.ReconcileRoutesWithCATrust(confirmedFingerprint); err != nil {
 		_ = s.routes.NeutralizeRoutes(ctx)
 		return err
 	}

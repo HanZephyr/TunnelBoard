@@ -17,6 +17,16 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def fake_pe(payload: bytes, machine: int = 0x8664) -> bytes:
+    data = bytearray(70 + len(payload))
+    data[:2] = b"MZ"
+    data[0x3C:0x40] = (64).to_bytes(4, "little")
+    data[64:68] = b"PE\0\0"
+    data[68:70] = machine.to_bytes(2, "little")
+    data[70:] = payload
+    return bytes(data)
+
+
 class ReleaseVerifierCLITest(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -24,9 +34,9 @@ class ReleaseVerifierCLITest(unittest.TestCase):
         (self.root / "caddy").mkdir(parents=True)
         (self.root / "LICENSES").mkdir()
         files = {
-            "TunnelBoard.exe": (b"app", "application", True),
-            "tunnelboard-helper.exe": (b"helper", "privileged_helper", True),
-            "caddy/caddy.exe": (b"caddy", "caddy", True),
+            "TunnelBoard.exe": (fake_pe(b"app"), "application", True),
+            "tunnelboard-helper.exe": (fake_pe(b"helper"), "privileged_helper", True),
+            "caddy/caddy.exe": (fake_pe(b"caddy"), "caddy", True),
             "LICENSES/TunnelBoard.txt": (b"license", "license", False),
         }
         manifest_files = []
@@ -48,13 +58,13 @@ class ReleaseVerifierCLITest(unittest.TestCase):
             "version": "1.2.3",
             "git_commit": "a" * 40,
             "build": {"workflow": "test", "run_id": "1"},
-            "target": {"name": "windows-amd64", "os": "windows", "arch": "amd64"},
+            "target": {"name": "windows-amd64", "os": "windows", "arch": "amd64", "minimum_system": "Windows 10 1809"},
             "files": manifest_files,
             "embedded_assets": [],
             "caddy": {
                 "version": "2.11.4",
-                "result_binary_sha256": digest(b"caddy"),
-                "inputs": [{"target": "windows-amd64", "binary_sha256": digest(b"caddy")}],
+                "result_binary_sha256": digest(fake_pe(b"caddy")),
+                "inputs": [{"target": "windows-amd64", "binary_sha256": digest(fake_pe(b"caddy"))}],
             },
             "tools": {},
             "signing": {"required": False, "status": "unsigned-ci"},
@@ -71,7 +81,7 @@ class ReleaseVerifierCLITest(unittest.TestCase):
                         "windows-amd64": {
                             "os": "windows",
                             "arch": "amd64",
-                            "binary_sha256": digest(b"caddy"),
+                            "binary_sha256": digest(fake_pe(b"caddy")),
                         }
                     },
                 }
@@ -119,16 +129,41 @@ class ReleaseVerifierCLITest(unittest.TestCase):
         self.assertIn("missing", result.stderr.lower())
 
     def test_tampered_file_fails(self) -> None:
-        (self.root / "caddy" / "caddy.exe").write_bytes(b"xxxxx")
+        caddy = self.root / "caddy" / "caddy.exe"
+        tampered = bytearray(caddy.read_bytes())
+        tampered[-1] ^= 0xFF
+        caddy.write_bytes(tampered)
         result = self.run_verify(self.archive())
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("sha256", result.stderr.lower())
+
+    def test_wrong_application_architecture_fails(self) -> None:
+        app = self.root / "TunnelBoard.exe"
+        app.write_bytes(fake_pe(b"app", machine=0x014C))
+        manifest_path = self.root / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for record in manifest["files"]:
+            if record["path"] == "TunnelBoard.exe":
+                record["size"] = app.stat().st_size
+                record["sha256"] = digest(app.read_bytes())
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        result = self.run_verify(self.archive())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("architecture mismatch", result.stderr.lower())
 
     def test_undeclared_executable_fails(self) -> None:
         (self.root / "debug.exe").write_bytes(b"debug")
         result = self.run_verify(self.archive())
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("undeclared", result.stderr.lower())
+
+    def test_executable_outside_manifest_root_fails(self) -> None:
+        archive = self.archive()
+        with zipfile.ZipFile(archive, "a") as zf:
+            zf.writestr("sibling-debug.exe", b"debug")
+        result = self.run_verify(archive)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("single top-level", result.stderr.lower())
 
     def test_manifest_path_traversal_fails(self) -> None:
         manifest_path = self.root / "manifest.json"
