@@ -60,6 +60,7 @@ type RuntimePort interface {
 type RoutePort interface {
 	RouteStatus() ([]biz.RouteStatusItem, error)
 	AppliedState() (biz.RouteAppliedState, error)
+	PreviewDesired(model.VaultData, int) (biz.RoutePreview, error)
 	NeutralizeRoutes(context.Context) error
 	ReconcileRoutes() (biz.RouteApplyResult, error)
 }
@@ -100,13 +101,20 @@ type Service struct {
 	importStage  *stagedImport
 	hostChangeMu sync.Mutex
 	hostChanges  map[string]stagedSSHHostChange
+	routeStageMu sync.Mutex
+	routeStages  map[string]stagedRouteChange
 	maintenance  atomic.Bool
 	sequence     atomic.Uint64
 	commands     *recentCommandCache
 }
 
 func NewService(deps Dependencies) *Service {
-	return &Service{store: deps.Store, catalog: deps.Catalog, runtime: deps.Runtime, routes: deps.Routes, restore: deps.Restore, recovery: deps.Recovery, backup: deps.Backup, packages: deps.Packages, hostChanges: make(map[string]stagedSSHHostChange), commands: newRecentCommandCache(deps.CommandCache)}
+	return &Service{
+		store: deps.Store, catalog: deps.Catalog, runtime: deps.Runtime, routes: deps.Routes,
+		restore: deps.Restore, recovery: deps.Recovery, backup: deps.Backup, packages: deps.Packages,
+		hostChanges: make(map[string]stagedSSHHostChange), routeStages: make(map[string]stagedRouteChange),
+		commands: newRecentCommandCache(deps.CommandCache),
+	}
 }
 
 // LegacyMutation 仅供 app.go 迁移期兼容绑定使用，使旧调用也服从 maintenance gate。
@@ -170,6 +178,20 @@ type stagedSSHHostChange struct {
 	affected      []biz.AffectedForward
 	request       biz.SaveSSHHostRequest
 	proposed      model.SSHHost
+}
+
+const routeChangeStageTTL = 5 * time.Minute
+
+type stagedRouteChange struct {
+	token           string
+	expiresAt       time.Time
+	desiredRevision string
+	appliedRevision string
+	intent          RouteChangeIntent
+	candidate       model.VaultData
+	route           *model.WebRoute
+	requiredDomains []string
+	caTrustNeeded   bool
 }
 
 func (s *Service) GetSnapshot(ctx context.Context) (AppSnapshot, error) {
@@ -481,6 +503,286 @@ func sameAffectedForwards(a, b []biz.AffectedForward) bool {
 	return true
 }
 
+// PreviewRouteChange 构造完整候选 desired state，并用短期 token 绑定当前
+// Vault/applied revisions。该方法纯读，不写 Vault、hosts、Caddy 或 CA。
+func (s *Service) PreviewRouteChange(ctx context.Context, intent RouteChangeIntent) (RouteChangePreview, error) {
+	if err := ctx.Err(); err != nil {
+		return RouteChangePreview{}, err
+	}
+	if s.maintenance.Load() {
+		return RouteChangePreview{}, ErrMaintenance
+	}
+	data, err := s.store.Load()
+	if err != nil {
+		return RouteChangePreview{}, err
+	}
+	desiredRevision := revisionOfCatalog(data)
+	if intent.ExpectedRevision != "" && intent.ExpectedRevision != desiredRevision {
+		return RouteChangePreview{}, fmt.Errorf("%w: current=%s", ErrRevisionConflict, desiredRevision)
+	}
+	applied, err := s.routes.AppliedState()
+	if err != nil {
+		return RouteChangePreview{}, err
+	}
+	// VaultData 的 slice 是引用语义；Preview 必须复制将要修改的 Route slice，
+	// 否则内存 Store/缓存 Adapter 会在纯读预览期间被意外改写。
+	candidate := data
+	candidate.WebRoutes = append([]model.WebRoute(nil), data.WebRoutes...)
+	changedRoute, previous, err := applyRouteIntent(&candidate, intent)
+	if err != nil {
+		return RouteChangePreview{}, err
+	}
+	previewRouteID := 0
+	if changedRoute != nil {
+		previewRouteID = changedRoute.ID
+	}
+	systemPreview, err := s.routes.PreviewDesired(candidate, previewRouteID)
+	if err != nil {
+		return RouteChangePreview{}, err
+	}
+	requiredDomains := append([]string(nil), systemPreview.RequiresConfirmation...)
+	token, err := newRouteChangeToken()
+	if err != nil {
+		return RouteChangePreview{}, err
+	}
+	expiresAt := time.Now().Add(routeChangeStageTTL)
+	caTrustNeeded := systemPreview.CATrustNeeded
+	stage := stagedRouteChange{
+		token: token, expiresAt: expiresAt, desiredRevision: desiredRevision,
+		appliedRevision: applied.AppliedDesiredRevision, intent: intent, candidate: candidate,
+		route: cloneWebRoute(changedRoute), requiredDomains: append([]string(nil), requiredDomains...),
+		caTrustNeeded: caTrustNeeded,
+	}
+	s.routeStageMu.Lock()
+	// UI 全局只允许一个 Route mutation；新 Preview 同时废止旧 token，既避免
+	// 旧确认框迟到提交，也让恶意重复预览无法在会话内堆积 stage。
+	s.routeStages = map[string]stagedRouteChange{token: stage}
+	s.routeStageMu.Unlock()
+	return RouteChangePreview{
+		Token: token, ExpiresAt: expiresAt, DesiredRevision: desiredRevision,
+		AppliedRevision: applied.AppliedDesiredRevision, Route: cloneWebRoute(changedRoute),
+		LinkedChanges: linkedRouteFlagChanges(previous, changedRoute), HostsRecords: systemPreview.HostsRecords,
+		RequiresConfirmation: requiredDomains,
+		CATrustNeeded:        caTrustNeeded,
+	}, nil
+}
+
+// CommitRouteChange 先在应用 mutation lock 内复核 Preview token，再以一次
+// Vault Update 保存 desired state，最后串行 reconcile。保存成功后应用失败不会
+// 回滚 desired，而是通过 saved_not_applied 把两种事实同时返回给 UI。
+func (s *Service) CommitRouteChange(ctx context.Context, command CommitRouteChangeCommand) (RouteCommandResult, error) {
+	if err := ctx.Err(); err != nil {
+		return RouteCommandResult{}, err
+	}
+	if s.maintenance.Load() {
+		return RouteCommandResult{}, ErrMaintenance
+	}
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
+	if s.maintenance.Load() {
+		return RouteCommandResult{}, ErrMaintenance
+	}
+	s.routeStageMu.Lock()
+	stage, ok := s.routeStages[command.Token]
+	s.routeStageMu.Unlock()
+	if !ok || strings.TrimSpace(command.Token) == "" || time.Now().After(stage.expiresAt) {
+		return rejectedRouteResult("invalid_or_expired_token", "route preview token is invalid or expired"), nil
+	}
+	if !containsAllDomains(command.ConfirmedDomains, stage.requiredDomains) {
+		return rejectedRouteResult("confirmation_required", "domain override confirmation is required"), nil
+	}
+	if stage.caTrustNeeded && !command.ConfirmCATrust {
+		return rejectedRouteResult("ca_confirmation_required", "current-user CA trust confirmation is required"), nil
+	}
+	data, err := s.store.Load()
+	if err != nil {
+		return RouteCommandResult{}, err
+	}
+	if revisionOfCatalog(data) != stage.desiredRevision {
+		s.deleteRouteStage(command.Token)
+		return rejectedRouteResult("stale_revision", "route preview is stale"), nil
+	}
+	applied, err := s.routes.AppliedState()
+	if err != nil {
+		return RouteCommandResult{}, err
+	}
+	if applied.AppliedDesiredRevision != stage.appliedRevision {
+		s.deleteRouteStage(command.Token)
+		return rejectedRouteResult("stale_applied_revision", "applied route state changed after preview"), nil
+	}
+
+	var savedRoute *model.WebRoute
+	updated, err := s.store.Update(func(current *model.VaultData) error {
+		if revisionOfCatalog(*current) != stage.desiredRevision {
+			return ErrRevisionConflict
+		}
+		changed, _, changeErr := applyRouteIntent(current, stage.intent)
+		if changeErr != nil {
+			return changeErr
+		}
+		savedRoute = cloneWebRoute(changed)
+		return nil
+	})
+	if err != nil {
+		s.deleteRouteStage(command.Token)
+		code := "desired_save_failed"
+		if errors.Is(err, ErrRevisionConflict) {
+			code = "stale_revision"
+		}
+		return RouteCommandResult{Outcome: RouteOutcomeRejected, Error: &AppErrorView{Code: code, Message: err.Error()}}, nil
+	}
+	s.deleteRouteStage(command.Token)
+	acceptedRevision := revisionOfCatalog(updated)
+	applyResult, reconcileErr := s.routes.ReconcileRoutes()
+	applied, appliedErr := s.routes.AppliedState()
+	result := RouteCommandResult{
+		DesiredSaved: true, AcceptedRevision: acceptedRevision, Route: savedRoute,
+		StateMayHaveChanged: true, EventSequence: s.sequence.Add(1),
+	}
+	if appliedErr == nil {
+		result.Applied = &applied
+	}
+	if reconcileErr != nil {
+		result.Outcome = RouteOutcomeSavedNotApplied
+		result.Error = &AppErrorView{Code: "route_apply_failed", Message: reconcileErr.Error()}
+		if appliedErr != nil {
+			result.Outcome = RouteOutcomeStateUnknown
+			result.Error = &AppErrorView{Code: "route_state_unknown", Message: appliedErr.Error()}
+		}
+		return result, nil
+	}
+	if applyResult.PortConflict != "" {
+		result.Outcome = RouteOutcomeHostsOnly
+		return result, nil
+	}
+	result.Outcome = RouteOutcomeApplied
+	return result, nil
+}
+
+func (s *Service) deleteRouteStage(token string) {
+	s.routeStageMu.Lock()
+	delete(s.routeStages, token)
+	s.routeStageMu.Unlock()
+}
+
+func rejectedRouteResult(code, message string) RouteCommandResult {
+	return RouteCommandResult{Outcome: RouteOutcomeRejected, Error: &AppErrorView{Code: code, Message: message}}
+}
+
+func applyRouteIntent(data *model.VaultData, intent RouteChangeIntent) (*model.WebRoute, *model.WebRoute, error) {
+	if data == nil {
+		return nil, nil, errors.New("application: missing route candidate")
+	}
+	var changed *model.WebRoute
+	var previous *model.WebRoute
+	switch intent.Action {
+	case RouteChangeUpsert:
+		if intent.Route == nil {
+			return nil, nil, errors.New("application: route payload is required")
+		}
+		route := normalizeRoute(*intent.Route)
+		if route.ID == 0 {
+			route.ID = nextRouteID(data.WebRoutes)
+			data.WebRoutes = append(data.WebRoutes, route)
+			changed = &data.WebRoutes[len(data.WebRoutes)-1]
+		} else {
+			idx := routeIndex(data.WebRoutes, route.ID)
+			if idx < 0 {
+				return nil, nil, fmt.Errorf("web route %d not found", route.ID)
+			}
+			copy := data.WebRoutes[idx]
+			previous = &copy
+			data.WebRoutes[idx] = route
+			changed = &data.WebRoutes[idx]
+		}
+	case RouteChangeSetFlag:
+		idx := routeIndex(data.WebRoutes, intent.RouteID)
+		if idx < 0 {
+			return nil, nil, fmt.Errorf("web route %d not found", intent.RouteID)
+		}
+		copy := data.WebRoutes[idx]
+		previous = &copy
+		switch intent.Flag {
+		case RouteFlagHostsEnabled:
+			data.WebRoutes[idx].HostsEnabled = intent.Enabled
+			if !intent.Enabled {
+				data.WebRoutes[idx].CaddyEnabled = false
+			}
+		case RouteFlagCaddyEnabled:
+			data.WebRoutes[idx].CaddyEnabled = intent.Enabled
+			if intent.Enabled {
+				data.WebRoutes[idx].HostsEnabled = true
+			}
+		default:
+			return nil, nil, fmt.Errorf("application: unsupported route flag %q", intent.Flag)
+		}
+		changed = &data.WebRoutes[idx]
+	case RouteChangeDelete:
+		idx := routeIndex(data.WebRoutes, intent.RouteID)
+		if idx < 0 {
+			return nil, nil, fmt.Errorf("web route %d not found", intent.RouteID)
+		}
+		copy := data.WebRoutes[idx]
+		previous = &copy
+		data.WebRoutes = append(data.WebRoutes[:idx], data.WebRoutes[idx+1:]...)
+	default:
+		return nil, nil, fmt.Errorf("application: unsupported route change action %q", intent.Action)
+	}
+	if err := data.Validate(); err != nil {
+		return nil, nil, err
+	}
+	return changed, previous, nil
+}
+
+func normalizeRoute(route model.WebRoute) model.WebRoute {
+	route.Domain = strings.TrimSpace(strings.ToLower(route.Domain))
+	route.TLSSNI = strings.TrimSpace(route.TLSSNI)
+	if route.UpstreamScheme == "" {
+		route.UpstreamScheme = "http"
+	}
+	if route.CaddyEnabled {
+		route.HostsEnabled = true
+	} else if !route.HostsEnabled {
+		route.CaddyEnabled = false
+	}
+	return route
+}
+
+func nextRouteID(routes []model.WebRoute) int {
+	maxID := 0
+	for _, route := range routes {
+		if route.ID > maxID {
+			maxID = route.ID
+		}
+	}
+	return maxID + 1
+}
+
+func routeIndex(routes []model.WebRoute, id int) int {
+	for i := range routes {
+		if routes[i].ID == id {
+			return i
+		}
+	}
+	return -1
+}
+
+func containsAllDomains(confirmed, required []string) bool {
+	for _, requiredDomain := range required {
+		found := false
+		for _, confirmedDomain := range confirmed {
+			if strings.EqualFold(strings.TrimSpace(confirmedDomain), requiredDomain) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 func runningAffectedIDs(items []biz.AffectedForward) []int {
 	ids := make([]int, 0, len(items))
 	for _, item := range items {
@@ -571,6 +873,36 @@ func sanitizeSSHHostChangeResult(result *CommitSSHHostChangeResult, secret strin
 		result.ForwardResults[i].Error = redact(result.ForwardResults[i].Error)
 		result.ForwardResults[i].CompensationError = redact(result.ForwardResults[i].CompensationError)
 	}
+}
+
+func cloneWebRoute(route *model.WebRoute) *model.WebRoute {
+	if route == nil {
+		return nil
+	}
+	copy := *route
+	return &copy
+}
+
+func linkedRouteFlagChanges(before, after *model.WebRoute) []RouteFlagChange {
+	if after == nil {
+		return nil
+	}
+	var changes []RouteFlagChange
+	if before == nil || before.HostsEnabled != after.HostsEnabled {
+		changes = append(changes, RouteFlagChange{Flag: RouteFlagHostsEnabled, Enabled: after.HostsEnabled})
+	}
+	if before == nil || before.CaddyEnabled != after.CaddyEnabled {
+		changes = append(changes, RouteFlagChange{Flag: RouteFlagCaddyEnabled, Enabled: after.CaddyEnabled})
+	}
+	return changes
+}
+
+func newRouteChangeToken() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("application: create route preview token: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func (s *Service) MoveForwards(ctx context.Context, command MoveForwardsCommand) (MoveForwardsResult, error) {

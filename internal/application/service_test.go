@@ -12,6 +12,7 @@ import (
 	"github.com/HanZephyr/TunnelBoard/internal/application"
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
+	"github.com/HanZephyr/TunnelBoard/internal/route"
 )
 
 type memStore struct {
@@ -85,14 +86,38 @@ func (f *fakeRuntime) PreflightHostChange(_ context.Context, _ model.SSHHost, _ 
 	return f.preflight
 }
 
-type fakeRoutes struct{}
-
-func (fakeRoutes) RouteStatus() ([]biz.RouteStatusItem, error) { return nil, nil }
-func (fakeRoutes) AppliedState() (biz.RouteAppliedState, error) {
-	return biz.RouteAppliedState{AppliedDesiredRevision: "route-v1"}, nil
+type fakeRoutes struct {
+	applied    biz.RouteAppliedState
+	reconciles int
+	result     biz.RouteApplyResult
+	err        error
 }
-func (fakeRoutes) NeutralizeRoutes(context.Context) error         { return nil }
-func (fakeRoutes) ReconcileRoutes() (biz.RouteApplyResult, error) { return biz.RouteApplyResult{}, nil }
+
+func (*fakeRoutes) RouteStatus() ([]biz.RouteStatusItem, error) { return nil, nil }
+func (f *fakeRoutes) AppliedState() (biz.RouteAppliedState, error) {
+	if f.applied.AppliedDesiredRevision == "" {
+		f.applied.AppliedDesiredRevision = "route-v1"
+	}
+	return f.applied, nil
+}
+func (*fakeRoutes) PreviewDesired(data model.VaultData, routeID int) (biz.RoutePreview, error) {
+	entries, _ := route.PlanHosts(data)
+	preview := biz.RoutePreview{HostsRecords: entries}
+	for _, candidate := range data.WebRoutes {
+		if candidate.ID == routeID && candidate.HostsEnabled && route.NeedsConfirmation(candidate.Domain) {
+			preview.RequiresConfirmation = []string{candidate.Domain}
+		}
+		if candidate.CaddyEnabled {
+			preview.CATrustNeeded = true
+		}
+	}
+	return preview, nil
+}
+func (*fakeRoutes) NeutralizeRoutes(context.Context) error { return nil }
+func (f *fakeRoutes) ReconcileRoutes() (biz.RouteApplyResult, error) {
+	f.reconciles++
+	return f.result, f.err
+}
 
 type fakeRestore struct{}
 
@@ -123,7 +148,7 @@ func (fakeRecovery) State() (bool, bool, error) { return false, false, nil }
 func (fakeRecovery) ClearQuarantine() error     { return nil }
 
 func newService(store *memStore, runtime *fakeRuntime) *application.Service {
-	return application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
+	return application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
 }
 
 func TestSnapshotNeverSerializesSSHSecrets(t *testing.T) {
@@ -214,7 +239,7 @@ func TestCommandResultCacheExpiresAndEvictsOldestEntry(t *testing.T) {
 			{ID: 2, Name: "two", Host: "10.0.0.2", Port: 22, User: "ops", AuthType: "password", Password: "secret", TimeoutMs: 5000},
 		}}}
 		service := application.NewService(application.Dependencies{
-			Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}, CommandCache: options,
+			Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}, CommandCache: options,
 		})
 		return service, store
 	}
@@ -447,7 +472,7 @@ func TestMaintenanceRejectsStartButNeverBlocksSafeStop(t *testing.T) {
 	store := &memStore{data: model.VaultData{Version: 1}}
 	runtime := &fakeRuntime{}
 	restore := &blockingRestore{entered: make(chan struct{}), release: make(chan struct{})}
-	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: fakeRoutes{}, Restore: restore, Recovery: fakeRecovery{}})
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: &fakeRoutes{}, Restore: restore, Recovery: fakeRecovery{}})
 	done := make(chan error, 1)
 	go func() {
 		_, err := service.CommitRestore(context.Background(), biz.RestoreCommitRequest{Confirmed: true})
@@ -464,5 +489,124 @@ func TestMaintenanceRejectsStartButNeverBlocksSafeStop(t *testing.T) {
 	close(restore.release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func routeFixture() model.VaultData {
+	return model.VaultData{
+		Version:   1,
+		Folders:   []model.Folder{{ID: 1, Name: "default"}},
+		SSHHosts:  []model.SSHHost{{ID: 1, Name: "host", Host: "127.0.0.1", Port: 22, User: "user", AuthType: "ssh_agent"}},
+		Forwards:  []model.Forward{{ID: 1, FolderID: 1, Name: "web", Mode: model.ModeLocal, ChainHostIDs: []int{1}, LocalHost: "127.0.0.1", LocalPort: 8080, RemoteHost: "127.0.0.1", RemotePort: 80}},
+		WebRoutes: []model.WebRoute{{ID: 1, ForwardID: 1, Domain: "demo.example.com", UpstreamScheme: "http"}},
+	}
+}
+
+func TestRouteChangeCommitRejectsStaleTokenBeforeSaving(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	routes := &fakeRoutes{}
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: routes, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
+	snapshot, err := service.GetSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := service.PreviewRouteChange(context.Background(), application.RouteChangeIntent{
+		ExpectedRevision: snapshot.Revisions.Vault, Action: application.RouteChangeSetFlag,
+		RouteID: 1, Flag: application.RouteFlagHostsEnabled, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Token == "" || preview.DesiredRevision != snapshot.Revisions.Vault || preview.AppliedRevision != "route-v1" {
+		t.Fatalf("preview not revision-bound: %+v", preview)
+	}
+	store.data.Prefs.AutoRun = true // 模拟 Preview 后的并发 Vault mutation。
+	result, err := service.CommitRouteChange(context.Background(), application.CommitRouteChangeCommand{Token: preview.Token, ConfirmedDomains: preview.RequiresConfirmation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != application.RouteOutcomeRejected || result.DesiredSaved || routes.reconciles != 0 {
+		t.Fatalf("stale commit result=%+v reconciles=%d", result, routes.reconciles)
+	}
+	if store.data.WebRoutes[0].HostsEnabled {
+		t.Fatal("stale commit changed desired route")
+	}
+}
+
+func TestRouteChangeKeepsSavedDesiredWhenReconcileFails(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	routes := &fakeRoutes{err: errors.New("caddy load failed"), applied: biz.RouteAppliedState{AppliedDesiredRevision: "route-v1", Status: biz.RouteStatusError}}
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: routes, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
+	snapshot, _ := service.GetSnapshot(context.Background())
+	preview, err := service.PreviewRouteChange(context.Background(), application.RouteChangeIntent{
+		ExpectedRevision: snapshot.Revisions.Vault, Action: application.RouteChangeSetFlag,
+		RouteID: 1, Flag: application.RouteFlagCaddyEnabled, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preview.CATrustNeeded {
+		t.Fatal("enabling caddy must request current-user CA confirmation")
+	}
+	result, err := service.CommitRouteChange(context.Background(), application.CommitRouteChangeCommand{Token: preview.Token, ConfirmedDomains: preview.RequiresConfirmation, ConfirmCATrust: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != application.RouteOutcomeSavedNotApplied || !result.DesiredSaved || !result.StateMayHaveChanged {
+		t.Fatalf("result=%+v", result)
+	}
+	if result.Route == nil || !result.Route.HostsEnabled || !result.Route.CaddyEnabled || !store.data.WebRoutes[0].CaddyEnabled {
+		t.Fatalf("saved desired route lost: result=%+v stored=%+v", result.Route, store.data.WebRoutes[0])
+	}
+	if routes.reconciles != 1 || result.AcceptedRevision == snapshot.Revisions.Vault {
+		t.Fatalf("reconciles=%d accepted=%q", routes.reconciles, result.AcceptedRevision)
+	}
+}
+
+func TestRouteChangeRequiresConfirmedDomainBeforeSaving(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	routes := &fakeRoutes{}
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: routes, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
+	snapshot, _ := service.GetSnapshot(context.Background())
+	preview, err := service.PreviewRouteChange(context.Background(), application.RouteChangeIntent{
+		ExpectedRevision: snapshot.Revisions.Vault, Action: application.RouteChangeSetFlag,
+		RouteID: 1, Flag: application.RouteFlagHostsEnabled, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.RequiresConfirmation) != 1 || preview.RequiresConfirmation[0] != "demo.example.com" {
+		t.Fatalf("confirmation preview=%+v", preview)
+	}
+	rejected, err := service.CommitRouteChange(context.Background(), application.CommitRouteChangeCommand{Token: preview.Token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rejected.Outcome != application.RouteOutcomeRejected || rejected.DesiredSaved || store.data.WebRoutes[0].HostsEnabled || routes.reconciles != 0 {
+		t.Fatalf("unconfirmed result=%+v stored=%+v reconciles=%d", rejected, store.data.WebRoutes[0], routes.reconciles)
+	}
+	result, err := service.CommitRouteChange(context.Background(), application.CommitRouteChangeCommand{Token: preview.Token, ConfirmedDomains: []string{"demo.example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != application.RouteOutcomeApplied || !result.DesiredSaved || !store.data.WebRoutes[0].HostsEnabled || routes.reconciles != 1 {
+		t.Fatalf("confirmed result=%+v stored=%+v reconciles=%d", result, store.data.WebRoutes[0], routes.reconciles)
+	}
+}
+
+func TestRouteUpsertEnforcesCaddyHostsInvariantInBackend(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
+	snapshot, _ := service.GetSnapshot(context.Background())
+	preview, err := service.PreviewRouteChange(context.Background(), application.RouteChangeIntent{
+		ExpectedRevision: snapshot.Revisions.Vault,
+		Action:           application.RouteChangeUpsert,
+		Route:            &model.WebRoute{ID: 1, ForwardID: 1, Domain: "demo.test", HostsEnabled: false, CaddyEnabled: true, UpstreamScheme: "http"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Route == nil || !preview.Route.HostsEnabled || !preview.Route.CaddyEnabled {
+		t.Fatalf("backend did not enforce caddy -> hosts: %+v", preview.Route)
 	}
 }

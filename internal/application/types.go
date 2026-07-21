@@ -5,6 +5,7 @@ import (
 
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
+	"github.com/HanZephyr/TunnelBoard/internal/route"
 )
 
 type CommandMeta struct {
@@ -156,6 +157,81 @@ type MoveForwardsResult struct {
 	UnchangedIDs     []int  `json:"unchangedIds"`
 	AcceptedRevision string `json:"acceptedRevision"`
 	EventSequence    uint64 `json:"eventSequence"`
+}
+
+type RouteChangeAction string
+
+const (
+	RouteChangeUpsert  RouteChangeAction = "upsert"
+	RouteChangeSetFlag RouteChangeAction = "set_flag"
+	RouteChangeDelete  RouteChangeAction = "delete"
+)
+
+type RouteFlag string
+
+const (
+	RouteFlagHostsEnabled RouteFlag = "hostsEnabled"
+	RouteFlagCaddyEnabled RouteFlag = "caddyEnabled"
+)
+
+// RouteChangeIntent 只表达一次用户意图；SetFlag 不携带旧 Route 全字段，
+// Upsert 用于 RouteModal，Delete 用于删除确认。
+type RouteChangeIntent struct {
+	ExpectedRevision string            `json:"expectedRevision"`
+	Action           RouteChangeAction `json:"action"`
+	RouteID          int               `json:"routeId,omitempty"`
+	Flag             RouteFlag         `json:"flag,omitempty"`
+	Enabled          bool              `json:"enabled,omitempty"`
+	Route            *model.WebRoute   `json:"route,omitempty"`
+}
+
+type RouteFlagChange struct {
+	Flag    RouteFlag `json:"flag"`
+	Enabled bool      `json:"enabled"`
+}
+
+type RouteChangePreview struct {
+	Token                string            `json:"token"`
+	ExpiresAt            time.Time         `json:"expiresAt"`
+	DesiredRevision      string            `json:"desiredRevision"`
+	AppliedRevision      string            `json:"appliedRevision"`
+	Route                *model.WebRoute   `json:"route,omitempty"`
+	LinkedChanges        []RouteFlagChange `json:"linkedChanges,omitempty"`
+	HostsRecords         []route.HostEntry `json:"hostsRecords,omitempty"`
+	RequiresConfirmation []string          `json:"requiresConfirmation,omitempty"`
+	CATrustNeeded        bool              `json:"caTrustNeeded"`
+}
+
+type CommitRouteChangeCommand struct {
+	Token            string   `json:"token"`
+	ConfirmedDomains []string `json:"confirmedDomains,omitempty"`
+	ConfirmCATrust   bool     `json:"confirmCATrust"`
+}
+
+type RouteCommandOutcome string
+
+const (
+	RouteOutcomeApplied         RouteCommandOutcome = "applied"
+	RouteOutcomeHostsOnly       RouteCommandOutcome = "hosts_only"
+	RouteOutcomeSavedNotApplied RouteCommandOutcome = "saved_not_applied"
+	RouteOutcomeRejected        RouteCommandOutcome = "rejected"
+	RouteOutcomeStateUnknown    RouteCommandOutcome = "state_unknown"
+)
+
+type AppErrorView struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type RouteCommandResult struct {
+	Outcome             RouteCommandOutcome    `json:"outcome"`
+	DesiredSaved        bool                   `json:"desiredSaved"`
+	AcceptedRevision    string                 `json:"acceptedRevision,omitempty"`
+	Route               *model.WebRoute        `json:"route,omitempty"`
+	Applied             *biz.RouteAppliedState `json:"applied,omitempty"`
+	Error               *AppErrorView          `json:"error,omitempty"`
+	StateMayHaveChanged bool                   `json:"stateMayHaveChanged"`
+	EventSequence       uint64                 `json:"eventSequence,omitempty"`
 }
 
 type PreviewLocalListenerCommand struct {

@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -48,14 +47,18 @@ type RouteApplyResult struct {
 
 // RouteStatusItem 是单条 Route 的系统生效状态。
 type RouteStatusItem struct {
-	RouteID      int    `json:"routeId"`
-	Domain       string `json:"domain"`
-	HostsEnabled bool   `json:"hostsEnabled"`
-	HostsApplied bool   `json:"hostsApplied"`
-	CaddyEnabled bool   `json:"caddyEnabled"`
-	CaddyRunning bool   `json:"caddyRunning"`
-	PortConflict bool   `json:"portConflict"`
-	CATrusted    bool   `json:"caTrusted"`
+	RouteID         int              `json:"routeId"`
+	Domain          string           `json:"domain"`
+	HostsEnabled    bool             `json:"hostsEnabled"`
+	HostsApplied    bool             `json:"hostsApplied"`
+	CaddyEnabled    bool             `json:"caddyEnabled"`
+	CaddyRunning    bool             `json:"caddyRunning"`
+	PortConflict    bool             `json:"portConflict"`
+	CATrusted       bool             `json:"caTrusted"`
+	State           RouteApplyStatus `json:"state"`
+	DesiredRevision string           `json:"desiredRevision"`
+	AppliedRevision string           `json:"appliedRevision,omitempty"`
+	Error           string           `json:"error,omitempty"`
 }
 
 // RoutePreview 是 ApplyRoute 前的预览：将写入的 hosts 记录、需要的确认项与风险点。
@@ -434,23 +437,34 @@ func (b *RouterBiz) RouteStatus() ([]RouteStatusItem, error) {
 	for _, e := range b.currentManagedEntries() {
 		applied[e.Domain] = true
 	}
+	desiredRevision := desiredRouteRevision(data)
+	appliedState, stateErr := b.state.loadState()
+	if stateErr != nil {
+		appliedState = RouteAppliedState{Status: RouteStatusUnknown, LastError: sanitizeRouteError(stateErr)}
+	}
 	caddyStatus := b.caddy.Status(context.Background())
 	running := caddyStatus.Owned
-	portConflict := !running && strings.Contains(strings.ToLower(caddyStatus.LastError), "443")
+	portConflict := appliedState.AppliedDesiredRevision == desiredRevision && appliedState.PortConflict != ""
 	caStatus, caErr := b.caTrust.Status(context.Background())
 	caTrusted := caErr == nil && caStatus.State == helper.CATrusted
 
 	items := make([]RouteStatusItem, 0, len(data.WebRoutes))
 	for _, r := range data.WebRoutes {
+		state := RouteStatusPending
+		if appliedState.AppliedDesiredRevision == desiredRevision {
+			state = appliedState.Status
+		} else if appliedState.Status == RouteStatusError || appliedState.Status == RouteStatusCleanupPending || appliedState.Status == RouteStatusQuarantined {
+			state = appliedState.Status
+		}
+		if state == "" {
+			state = RouteStatusUnknown
+		}
 		items = append(items, RouteStatusItem{
-			RouteID:      r.ID,
-			Domain:       r.Domain,
-			HostsEnabled: r.HostsEnabled,
-			HostsApplied: r.HostsEnabled && applied[r.Domain],
-			CaddyEnabled: r.CaddyEnabled,
-			CaddyRunning: r.CaddyEnabled && running,
-			PortConflict: r.CaddyEnabled && portConflict,
-			CATrusted:    caTrusted,
+			RouteID: r.ID, Domain: r.Domain, HostsEnabled: r.HostsEnabled,
+			HostsApplied: r.HostsEnabled && applied[r.Domain], CaddyEnabled: r.CaddyEnabled,
+			CaddyRunning: r.CaddyEnabled && running, PortConflict: r.CaddyEnabled && portConflict,
+			CATrusted: caTrusted, State: state, DesiredRevision: desiredRevision,
+			AppliedRevision: appliedState.AppliedDesiredRevision, Error: appliedState.LastError,
 		})
 	}
 	return items, nil
@@ -464,6 +478,18 @@ func (b *RouterBiz) PreviewRoute(routeID int) (RoutePreview, error) {
 	if err != nil {
 		return RoutePreview{}, err
 	}
+	return b.previewDesiredLocked(data, routeID)
+}
+
+// PreviewDesired 对尚未写入 Vault 的完整候选状态进行纯读预览；CA 需求以
+// 当前用户证书库的实际查询结果为准，不相信历史 applied 指纹。
+func (b *RouterBiz) PreviewDesired(data model.VaultData, routeID int) (RoutePreview, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.previewDesiredLocked(data, routeID)
+}
+
+func (b *RouterBiz) previewDesiredLocked(data model.VaultData, routeID int) (RoutePreview, error) {
 	entries, _ := route.PlanHosts(data)
 	preview := RoutePreview{HostsRecords: entries}
 	for _, r := range data.WebRoutes {

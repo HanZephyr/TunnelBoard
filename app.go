@@ -416,6 +416,22 @@ func (a *App) SaveWebRoute(route model.WebRoute) (model.WebRoute, error) {
 	return saved, err
 }
 
+// PreviewRouteChange 预览一次 revision-bound Route 用户意图，不产生系统副作用。
+func (a *App) PreviewRouteChange(intent application.RouteChangeIntent) (application.RouteChangePreview, error) {
+	if err := a.ensureReady(); err != nil {
+		return application.RouteChangePreview{}, err
+	}
+	return a.application.PreviewRouteChange(context.Background(), intent)
+}
+
+// CommitRouteChange 消费不透明 Preview token，原子保存 desired 后串行收敛系统状态。
+func (a *App) CommitRouteChange(command application.CommitRouteChangeCommand) (application.RouteCommandResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return application.RouteCommandResult{}, err
+	}
+	return a.application.CommitRouteChange(context.Background(), command)
+}
+
 // PreviewRoute 返回应用前预览：将写入的 hosts 记录、需要确认的域名、443 冲突与 CA 信任需求。
 func (a *App) PreviewRoute(routeID int) (biz.RoutePreview, error) {
 	if err := a.ensureReady(); err != nil {
