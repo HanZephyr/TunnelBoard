@@ -179,6 +179,29 @@ func TestDeleteSelectionRules(t *testing.T) {
 	})
 }
 
+func TestMoveForwardsIsAtomic(t *testing.T) {
+	c := newCatalog()
+	source, _ := c.CreateFolder("source", 0)
+	target, _ := c.CreateFolder("target", 0)
+	host, _ := c.SaveSSHHost(model.SSHHost{Name: "h", Host: "10.0.0.1", User: "u", AuthType: "password", Password: "x"})
+	first, _ := c.SaveForward(model.Forward{FolderID: source.ID, Name: "a", Mode: "local", ChainHostIDs: []int{host.ID}, LocalHost: "127.0.0.1", LocalPort: 5001, RemoteHost: "x", RemotePort: 80})
+
+	if err := c.MoveForwards([]int{first.ID, 999}, target.ID); err == nil {
+		t.Fatal("missing forward must reject the whole move")
+	}
+	data, _ := c.Data()
+	if data.Forwards[0].FolderID != source.ID {
+		t.Fatalf("rejected move changed data: %+v", data.Forwards)
+	}
+	if err := c.MoveForwards([]int{first.ID}, target.ID); err != nil {
+		t.Fatalf("valid move: %v", err)
+	}
+	data, _ = c.Data()
+	if data.Forwards[0].FolderID != target.ID {
+		t.Fatalf("move not applied: %+v", data.Forwards)
+	}
+}
+
 // MoveForward 把 Forward 移到目标文件夹；目标必须存在。
 func TestMoveForward(t *testing.T) {
 	c := newCatalog()
