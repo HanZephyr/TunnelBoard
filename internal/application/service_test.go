@@ -117,11 +117,12 @@ func (f *fakeRuntime) PreflightHostChange(_ context.Context, _ model.SSHHost, _ 
 }
 
 type fakeRoutes struct {
-	applied    biz.RouteAppliedState
-	reconciles int
-	result     biz.RouteApplyResult
-	err        error
-	resumes    int
+	applied         biz.RouteAppliedState
+	reconciles      int
+	result          biz.RouteApplyResult
+	err             error
+	resumes         int
+	recoveryPending bool
 }
 
 func (*fakeRoutes) RouteStatus() ([]biz.RouteStatusItem, error) { return nil, nil }
@@ -149,7 +150,8 @@ func (f *fakeRoutes) ReconcileRoutes() (biz.RouteApplyResult, error) {
 	f.reconciles++
 	return f.result, f.err
 }
-func (f *fakeRoutes) ResumeCaddy() error { f.resumes++; return f.err }
+func (f *fakeRoutes) ResumeCaddy() error             { f.resumes++; return f.err }
+func (f *fakeRoutes) RecoveryPending() (bool, error) { return f.recoveryPending, f.err }
 
 type fakeRestore struct{}
 
@@ -265,6 +267,61 @@ func TestStartupNetworkCannotEnterDuringRestoreMaintenance(t *testing.T) {
 	}
 	close(release)
 	<-done
+}
+
+func TestRecoveryStateBlocksManualNetworkOperationsButAllowsSafeStop(t *testing.T) {
+	for _, recovery := range []fakeRecovery{{quarantined: true}, {pending: true}} {
+		runtime := &fakeRuntime{}
+		store := &memStore{data: model.VaultData{Version: 1}}
+		service := application.NewService(application.Dependencies{
+			Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: &fakeRoutes{},
+			Restore: fakeRestore{}, Recovery: recovery,
+		})
+		errorsByID := service.StartForwards(context.Background(), []int{7})
+		if !strings.Contains(errorsByID[7], application.ErrRecoveryNetworkBlocked.Error()) || runtime.starts != 0 {
+			t.Fatalf("manual start escaped recovery gate: errors=%v starts=%d", errorsByID, runtime.starts)
+		}
+		called := false
+		if err := service.NetworkOperation(context.Background(), func() error { called = true; return nil }); !errors.Is(err, application.ErrRecoveryNetworkBlocked) || called {
+			t.Fatalf("network operation err=%v called=%v", err, called)
+		}
+		if err := service.StopForward(7); err != nil || runtime.stops != 1 {
+			t.Fatalf("safe stop must remain available: err=%v stops=%d", err, runtime.stops)
+		}
+	}
+}
+
+func TestRouteJournalBlocksOtherNetworkButRouteMutationCanRecoverIt(t *testing.T) {
+	runtime := &fakeRuntime{}
+	routes := &fakeRoutes{recoveryPending: true}
+	store := &memStore{data: model.VaultData{Version: 1}}
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: routes,
+		Restore: fakeRestore{}, Recovery: fakeRecovery{},
+	})
+	if err := service.NetworkOperation(context.Background(), func() error { return nil }); !errors.Is(err, application.ErrRecoveryNetworkBlocked) {
+		t.Fatalf("non-route network operation error = %v", err)
+	}
+	called := false
+	if err := service.RouteMutation(context.Background(), func() error { called = true; return nil }); err != nil || !called {
+		t.Fatalf("explicit route recovery mutation err=%v called=%v", err, called)
+	}
+}
+
+func TestActivateRestoredNetworkRejectsPendingJournal(t *testing.T) {
+	runtime := &fakeRuntime{}
+	routes := &fakeRoutes{}
+	store := &memStore{data: model.VaultData{Version: 1}}
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: routes,
+		Restore: fakeRestore{}, Recovery: fakeRecovery{quarantined: true, pending: true},
+	})
+	if err := service.ActivateRestoredNetwork(context.Background()); !errors.Is(err, application.ErrRecoveryNetworkBlocked) {
+		t.Fatalf("ActivateRestoredNetwork error = %v", err)
+	}
+	if runtime.autoStarts != 0 || routes.reconciles != 0 {
+		t.Fatalf("pending journal activated network: runtime=%+v routes=%+v", runtime, routes)
+	}
 }
 
 func TestSnapshotNeverSerializesSSHSecrets(t *testing.T) {

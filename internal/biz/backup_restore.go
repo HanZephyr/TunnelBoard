@@ -14,6 +14,8 @@ import (
 
 var ErrRestorePreviewStale = errors.New("biz: restore preview is stale")
 
+const restoreRuntimeBudget = 5 * time.Second
+
 type RestoreFacts struct {
 	VaultRevision   string `json:"vaultRevision"`
 	RuntimeRevision string `json:"runtimeRevision"`
@@ -45,9 +47,15 @@ type RestoreVaultCandidate struct{ ID string }
 type RestoreSuspendPlan struct{ RunningForwardIDs []int }
 
 type RestoreJournal struct {
-	TransactionID string
-	FileDigest    string
-	Before        RestoreFacts
+	TransactionID              string       `json:"transactionId"`
+	FileDigest                 string       `json:"fileDigest"`
+	Before                     RestoreFacts `json:"before"`
+	BeforeVaultStorageRevision string       `json:"beforeVaultStorageRevision"`
+	Phase                      string       `json:"phase"`
+	CandidateID                string       `json:"candidateId,omitempty"`
+	RunningForwardIDs          []int        `json:"runningForwardIds,omitempty"`
+	RoutesNeutralized          bool         `json:"routesNeutralized,omitempty"`
+	VaultReplaced              bool         `json:"vaultReplaced,omitempty"`
 }
 
 type RestoreCompensation struct {
@@ -63,6 +71,8 @@ type RestoreCompensation struct {
 // Runtime suspension and Route reconciliation; RestoreCoordinator owns their ordering.
 type RestoreEffects interface {
 	Snapshot(context.Context) (RestoreFacts, error)
+	VaultStorageRevision(context.Context) (string, error)
+	CaptureRunningForwards(context.Context) ([]int, error)
 	PrepareCandidate(context.Context, model.VaultData) (RestoreVaultCandidate, error)
 	WriteJournal(context.Context, RestoreJournal) error
 	SuspendAll(context.Context) (RestoreSuspendPlan, error)
@@ -72,6 +82,16 @@ type RestoreEffects interface {
 	CommitJournal(context.Context, string) error
 	Compensate(context.Context, RestoreCompensation) error
 }
+
+const (
+	RestorePhasePlanned           = "planned"
+	RestorePhaseCandidatePrepared = "candidate_prepared"
+	RestorePhaseRuntimeSuspended  = "runtime_suspended"
+	RestorePhaseRoutesNeutralized = "routes_neutralized"
+	RestorePhaseReplacingVault    = "replacing_vault"
+	RestorePhaseVaultReplaced     = "vault_replaced"
+	RestorePhaseQuarantined       = "quarantined"
+)
 
 // RestoreCoordinator is the deep Module exposed to the application layer.
 // Stage is read-only; Commit consumes a confirmed, current staged token exactly once.
@@ -145,8 +165,22 @@ func (c *RestoreCoordinator) CommitRestore(ctx context.Context, request RestoreC
 		clearKeyFiles(staged.KeyFiles)
 		return RestoreCommitResult{}, err
 	}
+	beforeStorageRevision, err := c.effects.VaultStorageRevision(ctx)
+	if err != nil {
+		clearKeyFiles(staged.KeyFiles)
+		return RestoreCommitResult{}, fmt.Errorf("biz: capture restore vault storage revision: %w", err)
+	}
+	runningForwardIDs, err := c.effects.CaptureRunningForwards(ctx)
+	if err != nil {
+		clearKeyFiles(staged.KeyFiles)
+		return RestoreCommitResult{}, fmt.Errorf("biz: capture restore runtime plan: %w", err)
+	}
 	compensation := RestoreCompensation{TransactionID: transactionID, Before: current}
-	journal := RestoreJournal{TransactionID: transactionID, FileDigest: staged.FileDigest, Before: current}
+	journal := RestoreJournal{
+		TransactionID: transactionID, FileDigest: staged.FileDigest, Before: current,
+		BeforeVaultStorageRevision: beforeStorageRevision,
+		Phase:                      RestorePhasePlanned, RunningForwardIDs: append([]int(nil), runningForwardIDs...),
+	}
 	if err := c.effects.WriteJournal(ctx, journal); err != nil {
 		clearKeyFiles(staged.KeyFiles)
 		return RestoreCommitResult{}, fmt.Errorf("biz: write restore journal: %w", err)
@@ -157,23 +191,52 @@ func (c *RestoreCoordinator) CommitRestore(ctx context.Context, request RestoreC
 		return RestoreCommitResult{}, c.compensate(ctx, compensation, "prepare restore candidate", err)
 	}
 	compensation.Candidate = candidate
-	plan, err := c.effects.SuspendAll(ctx)
+	journal.CandidateID = candidate.ID
+	journal.Phase = RestorePhaseCandidatePrepared
+	if err := c.effects.WriteJournal(ctx, journal); err != nil {
+		return RestoreCommitResult{}, c.compensate(ctx, compensation, "persist prepared restore candidate", err)
+	}
+	suspendCtx, suspendCancel := context.WithTimeout(ctx, restoreRuntimeBudget)
+	plan, err := c.effects.SuspendAll(suspendCtx)
+	suspendCancel()
 	compensation.SuspendPlan = plan
 	if err != nil {
 		return RestoreCommitResult{}, c.compensate(ctx, compensation, "suspend runtime", err)
+	}
+	journal.Phase = RestorePhaseRuntimeSuspended
+	if err := c.effects.WriteJournal(ctx, journal); err != nil {
+		return RestoreCommitResult{}, c.compensate(ctx, compensation, "persist suspended runtime", err)
 	}
 	if err := c.effects.NeutralizeRoutes(ctx); err != nil {
 		return RestoreCommitResult{}, c.compensate(ctx, compensation, "neutralize routes", err)
 	}
 	compensation.RoutesNeutralized = true
+	journal.RoutesNeutralized = true
+	journal.Phase = RestorePhaseRoutesNeutralized
+	if err := c.effects.WriteJournal(ctx, journal); err != nil {
+		return RestoreCommitResult{}, c.compensate(ctx, compensation, "persist neutralized routes", err)
+	}
+	journal.Phase = RestorePhaseReplacingVault
+	if err := c.effects.WriteJournal(ctx, journal); err != nil {
+		return RestoreCommitResult{}, c.compensate(ctx, compensation, "persist vault replacement intent", err)
+	}
 	if err := c.effects.ReplaceVault(ctx, candidate); err != nil {
 		return RestoreCommitResult{}, c.compensate(ctx, compensation, "replace vault", err)
 	}
 	compensation.ReplacedVault = true
+	journal.VaultReplaced = true
+	journal.Phase = RestorePhaseVaultReplaced
+	if err := c.effects.WriteJournal(ctx, journal); err != nil {
+		return RestoreCommitResult{TransactionID: transactionID, JournalPending: true}, fmt.Errorf("biz: persist replaced vault: %w", err)
+	}
 	// After replacement, failures remain journal-pending and startup recovery must converge
 	// to the new Vault in quarantine; rolling back here could resurrect old network effects.
 	if err := c.effects.EnterQuarantine(ctx); err != nil {
 		return RestoreCommitResult{TransactionID: transactionID, JournalPending: true}, fmt.Errorf("biz: enter restore quarantine: %w", err)
+	}
+	journal.Phase = RestorePhaseQuarantined
+	if err := c.effects.WriteJournal(ctx, journal); err != nil {
+		return RestoreCommitResult{TransactionID: transactionID, Quarantined: true, JournalPending: true}, fmt.Errorf("biz: persist restore quarantine: %w", err)
 	}
 	if err := c.effects.CommitJournal(ctx, transactionID); err != nil {
 		return RestoreCommitResult{TransactionID: transactionID, Quarantined: true, JournalPending: true}, fmt.Errorf("biz: commit restore journal: %w", err)
@@ -182,7 +245,11 @@ func (c *RestoreCoordinator) CommitRestore(ctx context.Context, request RestoreC
 }
 
 func (c *RestoreCoordinator) compensate(ctx context.Context, state RestoreCompensation, operation string, cause error) error {
-	compensationErr := c.effects.Compensate(ctx, state)
+	// Compensation must get a fresh budget: the suspend context may already have expired,
+	// and reusing it would make recovery of successfully stopped Forward instances impossible.
+	compensationCtx, cancel := context.WithTimeout(context.Background(), restoreRuntimeBudget)
+	defer cancel()
+	compensationErr := c.effects.Compensate(compensationCtx, state)
 	if compensationErr != nil {
 		return fmt.Errorf("biz: %s: %w; compensation failed: %v", operation, cause, compensationErr)
 	}

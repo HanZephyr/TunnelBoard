@@ -23,11 +23,12 @@ import (
 )
 
 var (
-	ErrMaintenance        = errors.New("application: maintenance in progress")
-	ErrRevisionConflict   = errors.New("application: revision conflict")
-	ErrCommandIDConflict  = errors.New("application: command id conflict")
-	ErrSSHHostChangeToken = errors.New("application: invalid or expired ssh host change token")
-	ErrSSHHostChangeStale = errors.New("application: ssh host change preview is stale")
+	ErrMaintenance            = errors.New("application: maintenance in progress")
+	ErrRevisionConflict       = errors.New("application: revision conflict")
+	ErrCommandIDConflict      = errors.New("application: command id conflict")
+	ErrSSHHostChangeToken     = errors.New("application: invalid or expired ssh host change token")
+	ErrSSHHostChangeStale     = errors.New("application: ssh host change preview is stale")
+	ErrRecoveryNetworkBlocked = errors.New("application: network operations are blocked by restore recovery")
 )
 
 const sshHostChangeTTL = 2 * time.Minute
@@ -65,6 +66,7 @@ type RoutePort interface {
 	NeutralizeRoutes(context.Context) error
 	ReconcileRoutes() (biz.RouteApplyResult, error)
 	ResumeCaddy() error
+	RecoveryPending() (bool, error)
 }
 
 type StartupNetworkResult struct {
@@ -161,6 +163,13 @@ func (s *Service) CheckForUpdates(ctx context.Context, command CheckForUpdatesCo
 	if quarantined || pending || s.maintenance.Load() {
 		return CheckForUpdatesResult{Skipped: true, SkipReason: "recovery_isolation"}, nil
 	}
+	routePending, err := s.routes.RecoveryPending()
+	if err != nil {
+		return CheckForUpdatesResult{}, err
+	}
+	if routePending {
+		return CheckForUpdatesResult{Skipped: true, SkipReason: "route_recovery_pending"}, nil
+	}
 	if command.Trigger == UpdateCheckStartup {
 		data, err := s.store.Load()
 		if err != nil {
@@ -218,6 +227,85 @@ func (s *Service) LegacyMutation(ctx context.Context, mutate func() error) error
 	return nil
 }
 
+// NetworkOperation serializes any operation that can open outbound connections or
+// apply local routing state, and rejects it while restore recovery is pending/quarantined.
+// Safe convergence operations (Stop/Neutralize/Recover) intentionally bypass this gate.
+func (s *Service) NetworkOperation(ctx context.Context, operation func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.maintenance.Load() {
+		return ErrMaintenance
+	}
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
+	if s.maintenance.Load() {
+		return ErrMaintenance
+	}
+	if err := s.ensureNetworkAllowedLocked(); err != nil {
+		return err
+	}
+	return operation()
+}
+
+func (s *Service) NetworkMutation(ctx context.Context, mutate func() error) error {
+	err := s.NetworkOperation(ctx, mutate)
+	if err == nil {
+		s.sequence.Add(1)
+	}
+	return err
+}
+
+// RouteMutation is the explicit recovery path for an interrupted Route transaction.
+// Restore recovery still blocks it, while RouterBiz is allowed to finish/replace its own
+// durable journal before executing the requested Route mutation.
+func (s *Service) RouteMutation(ctx context.Context, mutate func() error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.maintenance.Load() {
+		return ErrMaintenance
+	}
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
+	if s.maintenance.Load() {
+		return ErrMaintenance
+	}
+	if err := s.ensureRestoreNetworkAllowedLocked(); err != nil {
+		return err
+	}
+	if err := mutate(); err != nil {
+		return err
+	}
+	s.sequence.Add(1)
+	return nil
+}
+
+func (s *Service) ensureNetworkAllowedLocked() error {
+	if err := s.ensureRestoreNetworkAllowedLocked(); err != nil {
+		return err
+	}
+	pending, err := s.routes.RecoveryPending()
+	if err != nil {
+		return err
+	}
+	if pending {
+		return ErrRecoveryNetworkBlocked
+	}
+	return nil
+}
+
+func (s *Service) ensureRestoreNetworkAllowedLocked() error {
+	quarantined, pending, err := s.recovery.State()
+	if err != nil {
+		return err
+	}
+	if quarantined || pending {
+		return ErrRecoveryNetworkBlocked
+	}
+	return nil
+}
+
 // StartupNetwork serializes automatic network restoration with configuration mutations.
 // Recovery state is rechecked under the mutation gate so a delayed startup goroutine cannot
 // escape restore quarantine or enter an active maintenance transaction.
@@ -233,12 +321,10 @@ func (s *Service) StartupNetwork(ctx context.Context) (StartupNetworkResult, err
 	if s.maintenance.Load() {
 		return StartupNetworkResult{}, ErrMaintenance
 	}
-	quarantined, pending, err := s.recovery.State()
-	if err != nil {
-		return StartupNetworkResult{}, err
-	}
-	if quarantined || pending {
+	if err := s.ensureNetworkAllowedLocked(); errors.Is(err, ErrRecoveryNetworkBlocked) {
 		return StartupNetworkResult{Skipped: true}, nil
+	} else if err != nil {
+		return StartupNetworkResult{}, err
 	}
 	errorsByID, runtimeErr := s.runtime.StartAutoStart()
 	result := StartupNetworkResult{ForwardErrors: map[int]string{}}
@@ -256,7 +342,7 @@ func (s *Service) StartupNetwork(ctx context.Context) (StartupNetworkResult, err
 
 func (s *Service) StartForwards(ctx context.Context, ids []int) map[int]string {
 	errorsByID := map[int]string{}
-	err := s.LegacyMutation(ctx, func() error {
+	err := s.NetworkMutation(ctx, func() error {
 		for _, id := range ids {
 			if err := s.runtime.Start(id); err != nil {
 				errorsByID[id] = err.Error()
@@ -403,6 +489,9 @@ func (s *Service) CommitSSHHostChange(ctx context.Context, command CommitSSHHost
 	}
 	if s.maintenance.Load() {
 		return CommitSSHHostChangeResult{}, ErrMaintenance
+	}
+	if err := s.ensureNetworkAllowedLocked(); err != nil {
+		return CommitSSHHostChangeResult{}, err
 	}
 	s.mutation.Lock()
 	defer s.mutation.Unlock()
@@ -694,6 +783,9 @@ func (s *Service) CommitRouteChange(ctx context.Context, command CommitRouteChan
 	}
 	if s.maintenance.Load() {
 		return RouteCommandResult{}, ErrMaintenance
+	}
+	if err := s.ensureRestoreNetworkAllowedLocked(); err != nil {
+		return RouteCommandResult{}, err
 	}
 	s.mutation.Lock()
 	defer s.mutation.Unlock()
@@ -1327,9 +1419,12 @@ func (s *Service) ActivateRestoredNetwork(ctx context.Context) error {
 	}
 	s.mutation.Lock()
 	defer s.mutation.Unlock()
-	quarantined, _, err := s.recovery.State()
+	quarantined, pending, err := s.recovery.State()
 	if err != nil || !quarantined {
 		return err
+	}
+	if pending {
+		return ErrRecoveryNetworkBlocked
 	}
 	if _, err := s.routes.ReconcileRoutes(); err != nil {
 		_ = s.routes.NeutralizeRoutes(ctx)

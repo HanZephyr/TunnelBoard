@@ -5,22 +5,34 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 )
 
 type fakeRestoreEffects struct {
-	facts       biz.RestoreFacts
-	calls       []string
-	prepared    model.VaultData
-	failAt      string
-	compensated *biz.RestoreCompensation
+	facts              biz.RestoreFacts
+	calls              []string
+	journalPhases      []string
+	prepared           model.VaultData
+	failAt             string
+	compensated        *biz.RestoreCompensation
+	suspendDeadline    time.Duration
+	compensateDeadline time.Duration
 }
 
 func (f *fakeRestoreEffects) Snapshot(context.Context) (biz.RestoreFacts, error) {
 	f.calls = append(f.calls, "snapshot")
 	return f.facts, nil
+}
+func (f *fakeRestoreEffects) VaultStorageRevision(context.Context) (string, error) {
+	f.calls = append(f.calls, "storage")
+	return "storage-v1", nil
+}
+func (f *fakeRestoreEffects) CaptureRunningForwards(context.Context) ([]int, error) {
+	f.calls = append(f.calls, "capture")
+	return []int{1, 2}, nil
 }
 func (f *fakeRestoreEffects) PrepareCandidate(_ context.Context, data model.VaultData) (biz.RestoreVaultCandidate, error) {
 	f.calls = append(f.calls, "prepare")
@@ -30,15 +42,19 @@ func (f *fakeRestoreEffects) PrepareCandidate(_ context.Context, data model.Vaul
 	}
 	return biz.RestoreVaultCandidate{ID: "candidate-1"}, nil
 }
-func (f *fakeRestoreEffects) WriteJournal(context.Context, biz.RestoreJournal) error {
+func (f *fakeRestoreEffects) WriteJournal(_ context.Context, journal biz.RestoreJournal) error {
 	f.calls = append(f.calls, "journal")
+	f.journalPhases = append(f.journalPhases, journal.Phase)
 	if f.failAt == "journal" {
 		return errors.New("journal failed")
 	}
 	return nil
 }
-func (f *fakeRestoreEffects) SuspendAll(context.Context) (biz.RestoreSuspendPlan, error) {
+func (f *fakeRestoreEffects) SuspendAll(ctx context.Context) (biz.RestoreSuspendPlan, error) {
 	f.calls = append(f.calls, "suspend")
+	if deadline, ok := ctx.Deadline(); ok {
+		f.suspendDeadline = time.Until(deadline)
+	}
 	plan := biz.RestoreSuspendPlan{RunningForwardIDs: []int{1, 2}}
 	if f.failAt == "suspend" {
 		return plan, errors.New("suspend failed")
@@ -73,10 +89,35 @@ func (f *fakeRestoreEffects) CommitJournal(context.Context, string) error {
 	}
 	return nil
 }
-func (f *fakeRestoreEffects) Compensate(_ context.Context, c biz.RestoreCompensation) error {
+func (f *fakeRestoreEffects) Compensate(ctx context.Context, c biz.RestoreCompensation) error {
 	f.calls = append(f.calls, "compensate")
+	if deadline, ok := ctx.Deadline(); ok {
+		f.compensateDeadline = time.Until(deadline)
+	}
 	f.compensated = &c
 	return nil
+}
+
+func TestCommitRestoreBoundsSuspendAndCompensationIndependently(t *testing.T) {
+	effects := &fakeRestoreEffects{
+		facts:  biz.RestoreFacts{VaultRevision: "v1", RuntimeRevision: "run1", RouteRevision: "route1"},
+		failAt: "suspend",
+	}
+	coordinator := newRestoreCoordinator(t, effects)
+	preview, err := coordinator.StageRestore(context.Background(), biz.RestoreStageRequest{
+		Path: writeBackupFile(t, makeBackup(t)), Password: "pw",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.CommitRestore(context.Background(), biz.RestoreCommitRequest{Token: preview.Token, Confirmed: true}); err == nil {
+		t.Fatal("suspend failure must be returned")
+	}
+	for name, budget := range map[string]time.Duration{"suspend": effects.suspendDeadline, "compensate": effects.compensateDeadline} {
+		if budget <= 0 || budget > 5*time.Second {
+			t.Fatalf("%s budget = %s, want independent deadline within 5s", name, budget)
+		}
+	}
 }
 
 func newRestoreCoordinator(t *testing.T, effects *fakeRestoreEffects) *biz.RestoreCoordinator {
@@ -152,9 +193,17 @@ func TestCommitRestoreRunsTransactionInOrderAndClearsMachineLocalCAState(t *test
 	if err != nil {
 		t.Fatalf("CommitRestore: %v", err)
 	}
-	want := []string{"snapshot", "journal", "prepare", "suspend", "neutralize", "replace", "quarantine", "complete"}
+	want := []string{"snapshot", "storage", "capture", "journal", "prepare", "journal", "suspend", "journal", "neutralize", "journal", "journal", "replace", "journal", "quarantine", "journal", "complete"}
 	if !reflect.DeepEqual(effects.calls, want) {
 		t.Fatalf("calls = %v, want %v", effects.calls, want)
+	}
+	wantPhases := []string{
+		biz.RestorePhasePlanned, biz.RestorePhaseCandidatePrepared, biz.RestorePhaseRuntimeSuspended,
+		biz.RestorePhaseRoutesNeutralized, biz.RestorePhaseReplacingVault, biz.RestorePhaseVaultReplaced,
+		biz.RestorePhaseQuarantined,
+	}
+	if !reflect.DeepEqual(effects.journalPhases, wantPhases) {
+		t.Fatalf("journal phases = %v, want %v", effects.journalPhases, wantPhases)
 	}
 	if !result.Quarantined || result.TransactionID == "" {
 		t.Fatalf("result = %+v", result)
@@ -180,7 +229,7 @@ func TestCommitRestoreCompensatesPreReplacementFailure(t *testing.T) {
 	if _, err := coordinator.CommitRestore(context.Background(), biz.RestoreCommitRequest{Token: preview.Token, Confirmed: true}); err == nil {
 		t.Fatal("neutralize failure must be returned")
 	}
-	want := []string{"snapshot", "journal", "prepare", "suspend", "neutralize", "compensate"}
+	want := []string{"snapshot", "storage", "capture", "journal", "prepare", "journal", "suspend", "journal", "neutralize", "compensate"}
 	if !reflect.DeepEqual(effects.calls, want) {
 		t.Fatalf("calls = %v, want %v", effects.calls, want)
 	}
@@ -209,7 +258,7 @@ func TestCommitRestoreKeepsJournalPendingAfterVaultReplacement(t *testing.T) {
 	if effects.compensated != nil {
 		t.Fatalf("post-replacement failure must not resurrect old state: %+v", effects.compensated)
 	}
-	want := []string{"snapshot", "journal", "prepare", "suspend", "neutralize", "replace", "quarantine"}
+	want := []string{"snapshot", "storage", "capture", "journal", "prepare", "journal", "suspend", "journal", "neutralize", "journal", "journal", "replace", "journal", "quarantine"}
 	if !reflect.DeepEqual(effects.calls, want) {
 		t.Fatalf("calls = %v, want %v", effects.calls, want)
 	}

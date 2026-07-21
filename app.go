@@ -371,7 +371,7 @@ func (a *App) DeleteSelection(sel biz.DeleteSelection) error {
 	if err := a.ensureReady(); err != nil {
 		return err
 	}
-	return a.application.LegacyMutation(context.Background(), func() error {
+	return a.application.RouteMutation(context.Background(), func() error {
 		for _, id := range sel.ForwardIDs {
 			_ = a.runtime.Stop(id)
 		}
@@ -446,7 +446,7 @@ func (a *App) ApplyRoute(routeID int, confirmedDomains []string) (biz.RouteApply
 		return biz.RouteApplyResult{}, err
 	}
 	var result biz.RouteApplyResult
-	err := a.application.LegacyMutation(context.Background(), func() error { var err error; result, err = a.router.ApplyRoute(routeID, confirmedDomains); return err })
+	err := a.application.RouteMutation(context.Background(), func() error { var err error; result, err = a.router.ApplyRoute(routeID, confirmedDomains); return err })
 	return result, err
 }
 
@@ -456,7 +456,7 @@ func (a *App) RemoveRoute(routeID int) (biz.RouteApplyResult, error) {
 		return biz.RouteApplyResult{}, err
 	}
 	var result biz.RouteApplyResult
-	err := a.application.LegacyMutation(context.Background(), func() error { var err error; result, err = a.router.RemoveRoute(routeID); return err })
+	err := a.application.RouteMutation(context.Background(), func() error { var err error; result, err = a.router.RemoveRoute(routeID); return err })
 	return result, err
 }
 
