@@ -462,6 +462,18 @@ func TestStartupUpdateCheckFailsClosedWithoutNetwork(t *testing.T) {
 	}
 }
 
+func TestUpdateCheckFailsClosedWhenRecoveryStateIsUnavailable(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1, Prefs: model.Prefs{UpdateCheckEnabled: true}}}
+	updates := &fakeUpdates{}
+	service := application.NewService(application.Dependencies{Store: store, Updates: updates, AppVersion: "1.2.3"})
+	if _, err := service.CheckForUpdates(context.Background(), application.CheckForUpdatesCommand{Trigger: application.UpdateCheckStartup}); err == nil {
+		t.Fatal("missing recovery state must fail closed")
+	}
+	if updates.calls != 0 {
+		t.Fatalf("network called %d times", updates.calls)
+	}
+}
+
 func TestUpdateCheckSingleflightUsesBackendVersion(t *testing.T) {
 	store := &memStore{data: model.VaultData{Version: 1, Prefs: model.Prefs{UpdateCheckEnabled: true}}}
 	updates := &fakeUpdates{started: make(chan struct{}, 1), release: make(chan struct{})}

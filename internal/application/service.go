@@ -145,6 +145,9 @@ func (s *Service) CheckForUpdates(ctx context.Context, command CheckForUpdatesCo
 	if s.updates == nil {
 		return CheckForUpdatesResult{}, errors.New("application: updater is unavailable")
 	}
+	if s.recovery == nil {
+		return CheckForUpdatesResult{}, errors.New("application: recovery state is unavailable")
+	}
 	quarantined, pending, err := s.recovery.State()
 	if err != nil {
 		return CheckForUpdatesResult{}, err
