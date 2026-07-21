@@ -554,19 +554,22 @@ func TestCommitImportCommandIDReturnsCachedResultWithoutRepeatingMutation(t *tes
 
 func TestStartupUpdateCheckFailsClosedWithoutNetwork(t *testing.T) {
 	for _, test := range []struct {
-		name     string
-		prefs    model.Prefs
-		recovery updateRecovery
+		name         string
+		prefs        model.Prefs
+		recovery     updateRecovery
+		routePending bool
 	}{
 		{name: "disabled"},
 		{name: "quarantined", prefs: model.Prefs{UpdateCheckEnabled: true}, recovery: updateRecovery{quarantined: true}},
 		{name: "journal pending", prefs: model.Prefs{UpdateCheckEnabled: true}, recovery: updateRecovery{pending: true}},
+		{name: "route recovery pending", prefs: model.Prefs{UpdateCheckEnabled: true}, routePending: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store := &memStore{data: model.VaultData{Version: 1, Prefs: test.prefs}}
 			updates := &fakeUpdates{}
+			routes := &fakeRoutes{recoveryPending: test.routePending}
 			service := application.NewService(application.Dependencies{
-				Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: test.recovery,
+				Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: routes, Restore: fakeRestore{}, Recovery: test.recovery,
 				Updates: updates, AppVersion: "1.2.3",
 			})
 			result, err := service.CheckForUpdates(context.Background(), application.CheckForUpdatesCommand{Trigger: application.UpdateCheckStartup})
