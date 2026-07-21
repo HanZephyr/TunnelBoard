@@ -6,7 +6,7 @@ import {
   DeleteSelection,
   EnrollHostKey,
   GetRuntimeSnapshot,
-  MoveForward,
+  MoveForwards,
   ReplaceHostKey,
   SaveForward,
   StartForward,
@@ -15,10 +15,12 @@ import {
 } from '../../../wailsjs/go/main/App'
 import { callBackend, errorMessage, isValidPort } from '../../utils/backend'
 import { formatLatency as formatLatencyUtil } from '../../utils/format'
+import { createApplicationClient } from '../../utils/applicationClient'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import StatusChip from '../common/StatusChip.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
+import BaseDialog from '../common/BaseDialog.vue'
 import ForwardModal from '../modals/ForwardModal.vue'
 import HostKeyDialog from '../modals/HostKeyDialog.vue'
 
@@ -34,12 +36,14 @@ const props = defineProps({
   forwards: {
     type: Array,
     default: () => []
-  }
+  },
+  configurationLocked: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['vault-changed', 'notify'])
 
 const { t } = useI18n()
+const application = createApplicationClient()
 
 // ---- 文件夹树（最多两层，parentId=0 为顶层）----
 function bySortThenId(a, b) {
@@ -139,6 +143,7 @@ const confirmDialog = reactive({
   confirmLabel: '',
   confirmClass: 'btn-danger',
   showCancel: true,
+  busy: false,
   onConfirm: null
 })
 
@@ -156,6 +161,7 @@ function openConfirm({
   confirmDialog.confirmClass = confirmClass
   confirmDialog.showCancel = showCancel
   confirmDialog.onConfirm = onConfirm
+  confirmDialog.busy = false
   confirmDialog.visible = true
 }
 
@@ -165,10 +171,18 @@ function closeConfirm() {
 }
 
 async function handleConfirm() {
+  if (confirmDialog.busy) return
   const handler = confirmDialog.onConfirm
-  closeConfirm()
   if (typeof handler === 'function') {
-    await handler()
+    confirmDialog.busy = true
+    try {
+      await handler()
+    } finally {
+      confirmDialog.busy = false
+      closeConfirm()
+    }
+  } else {
+    closeConfirm()
   }
 }
 
@@ -181,6 +195,7 @@ const folderDialog = reactive({
 })
 
 function openFolderDialog(parentId) {
+  if (props.configurationLocked) return
   folderDialog.parentId = parentId
   folderDialog.name = ''
   folderDialog.error = ''
@@ -188,6 +203,7 @@ function openFolderDialog(parentId) {
 }
 
 async function saveFolder() {
+  if (props.configurationLocked) return
   const name = folderDialog.name.trim()
   if (!name) {
     folderDialog.error = t('forwards.folderNameRequired')
@@ -208,6 +224,7 @@ async function saveFolder() {
 
 // ---- 文件夹删除：空文件夹直接删；非空捕获后端报错后二次确认级联 ----
 async function deleteFolder(folder) {
+  if (props.configurationLocked) return
   try {
     await callBackend(DeleteSelection, {
       folderIds: [folder.id],
@@ -273,6 +290,7 @@ function defaultForwardForm() {
 }
 
 function openNewForward() {
+  if (props.configurationLocked) return
   if (!props.folders.length) {
     emit('notify', t('forwards.notify.needFolder'))
     return
@@ -288,6 +306,7 @@ function openNewForward() {
 defineExpose({ openNewForward })
 
 function editForward(forward) {
+  if (props.configurationLocked) return
   editingForwardId.value = forward.id
   Object.assign(forwardForm, {
     name: forward.name,
@@ -318,6 +337,7 @@ function validateForwardPayload(payload) {
 }
 
 async function saveForward() {
+  if (props.configurationLocked) return
   const payload = {
     id: editingForwardId.value || 0,
     folderId: Number(forwardForm.folderId),
@@ -353,6 +373,7 @@ function onHostCreated() {
 
 // ---- Forward 删除（单条 / 批量）----
 function deleteForward(forward) {
+  if (props.configurationLocked) return
   openConfirm({
     message: t('forwards.confirmations.deleteForward', { name: forward.name }),
     onConfirm: async () => {
@@ -401,8 +422,8 @@ const moveTargetId = ref('')
 const moveTargets = computed(() => folderOptions.value.filter((option) => option.id !== selectedFolderId.value))
 
 function onMoveTargetChange() {
+  if (props.configurationLocked) return
   const targetId = Number(moveTargetId.value)
-  moveTargetId.value = ''
   if (!targetId) return
   const ids = [...selectedForwardIds.value]
   if (!ids.length) return
@@ -412,9 +433,9 @@ function onMoveTargetChange() {
     confirmClass: 'btn-primary',
     onConfirm: async () => {
       try {
-        for (const id of ids) {
-          await callBackend(MoveForward, id, targetId)
-        }
+        await application.moveForwards({ meta: {}, forwardIds: ids, targetFolderId: targetId }, (forwardIds, folderId) => callBackend(MoveForwards, forwardIds, folderId))
+        moveTargetId.value = ''
+        clearSelection()
         emit('vault-changed')
         emit('notify', t('forwards.notify.movedCount', { count: ids.length }))
       } catch (err) {
@@ -598,12 +619,13 @@ async function stopForward(forward) {
 function toggleForward(forward) {
   if (isActiveStatus(runtimeOf(forward.id).status)) {
     void stopForward(forward)
-  } else {
+  } else if (!props.configurationLocked) {
     void startForward(forward)
   }
 }
 
 async function startSelectedForwards() {
+  if (props.configurationLocked) return
   const ids = [...selectedForwardIds.value]
   if (!ids.length || batchPending.value) return
   batchPending.value = true
@@ -706,6 +728,7 @@ function chainLabel(forward) {
           class="btn icon-ghost-btn"
           :title="t('forwards.newFolder')"
           :aria-label="t('forwards.newFolder')"
+          :disabled="configurationLocked"
           @click="openFolderDialog(0)"
         >
           <i class="bi bi-folder-plus" aria-hidden="true"></i>
@@ -723,17 +746,19 @@ function chainLabel(forward) {
             <div
               class="folder-row"
               :class="{ active: selectedFolderId === folder.id }"
-              @click="selectedFolderId = folder.id"
             >
-              <i class="bi bi-folder2 folder-icon" aria-hidden="true"></i>
-              <span class="folder-name cell-ellipsis" :title="folder.name">{{ folder.name }}</span>
-              <span class="folder-count">{{ folderForwardCount(folder.id) }}</span>
-              <span class="folder-actions" @click.stop>
+              <button type="button" class="folder-select-btn" :aria-current="selectedFolderId === folder.id ? 'page' : undefined" @click="selectedFolderId = folder.id">
+                <i class="bi bi-folder2 folder-icon" aria-hidden="true"></i>
+                <span class="folder-name cell-ellipsis" :title="folder.name">{{ folder.name }}</span>
+                <span class="folder-count">{{ folderForwardCount(folder.id) }}</span>
+              </button>
+              <span class="folder-actions">
                 <button
                   type="button"
                   class="folder-action-btn"
                   :title="t('forwards.newSubfolder')"
                   :aria-label="t('forwards.newSubfolder')"
+                  :disabled="configurationLocked"
                   @click="openFolderDialog(folder.id)"
                 >
                   <i class="bi bi-plus-lg" aria-hidden="true"></i>
@@ -749,28 +774,22 @@ function chainLabel(forward) {
                 </button>
               </span>
             </div>
-            <div
-              v-for="child in childFolders(folder.id)"
-              :key="child.id"
-              class="folder-row child"
-              :class="{ active: selectedFolderId === child.id }"
-              @click="selectedFolderId = child.id"
-            >
-              <i class="bi bi-folder2 folder-icon" aria-hidden="true"></i>
-              <span class="folder-name cell-ellipsis" :title="child.name">{{ child.name }}</span>
-              <span class="folder-count">{{ folderForwardCount(child.id) }}</span>
-              <span class="folder-actions" @click.stop>
-                <button
-                  type="button"
-                  class="folder-action-btn danger"
-                  :title="t('app.common.delete')"
-                  :aria-label="t('app.common.delete')"
-                  @click="deleteFolder(child)"
-                >
-                  <i class="bi bi-trash3" aria-hidden="true"></i>
-                </button>
-              </span>
-            </div>
+            <ul v-if="childFolders(folder.id).length" class="folder-children">
+              <li v-for="child in childFolders(folder.id)" :key="child.id">
+                <div class="folder-row child" :class="{ active: selectedFolderId === child.id }">
+                  <button type="button" class="folder-select-btn" :aria-current="selectedFolderId === child.id ? 'page' : undefined" @click="selectedFolderId = child.id">
+                    <i class="bi bi-folder2 folder-icon" aria-hidden="true"></i>
+                    <span class="folder-name cell-ellipsis" :title="child.name">{{ child.name }}</span>
+                    <span class="folder-count">{{ folderForwardCount(child.id) }}</span>
+                  </button>
+                  <span class="folder-actions">
+                    <button type="button" class="folder-action-btn danger" :title="t('app.common.delete')" :aria-label="t('app.common.delete')" @click="deleteFolder(child)">
+                      <i class="bi bi-trash3" aria-hidden="true"></i>
+                    </button>
+                  </span>
+                </div>
+              </li>
+            </ul>
           </li>
         </ul>
       </div>
@@ -800,7 +819,7 @@ function chainLabel(forward) {
           <button
             type="button"
             class="batch-action ok"
-            :disabled="batchPending"
+            :disabled="configurationLocked || batchPending"
             @click="startSelectedForwards"
           >
             <i class="bi bi-play-fill" aria-hidden="true"></i>{{ t('forwards.startSelected') }}
@@ -817,12 +836,15 @@ function chainLabel(forward) {
             v-model="moveTargetId"
             class="form-select form-select-sm batch-move-select"
             :aria-label="t('forwards.moveToPlaceholder')"
-            @change="onMoveTargetChange"
+            :disabled="configurationLocked || batchPending"
           >
             <option value="">{{ t('forwards.moveToPlaceholder') }}</option>
             <option v-for="target in moveTargets" :key="target.id" :value="target.id">{{ target.label }}</option>
           </select>
-          <button type="button" class="batch-action danger" @click="deleteSelectedForwards">
+          <button type="button" class="batch-action" :disabled="configurationLocked || batchPending || !moveTargetId" @click="onMoveTargetChange">
+            <i class="bi bi-folder-symlink" aria-hidden="true"></i>{{ t('forwards.moveSelected') }}
+          </button>
+          <button type="button" class="batch-action danger" :disabled="configurationLocked || batchPending" @click="deleteSelectedForwards">
             <i class="bi bi-trash3" aria-hidden="true"></i>{{ t('forwards.deleteSelected') }}
           </button>
           <button
@@ -842,7 +864,7 @@ function chainLabel(forward) {
         <div v-else-if="!visibleForwards.length" class="empty-state">
           <i class="bi bi-inbox empty-state-icon" aria-hidden="true"></i>
           <p class="empty-state-text">{{ t('forwards.emptyFolder') }}</p>
-          <button type="button" class="btn btn-primary header-action-btn" @click="openNewForward">
+          <button type="button" class="btn btn-primary header-action-btn" :disabled="configurationLocked" @click="openNewForward">
             <i class="bi bi-plus-lg" aria-hidden="true"></i>{{ t('app.header.newForward') }}
           </button>
         </div>
@@ -936,14 +958,7 @@ function chainLabel(forward) {
     </div>
   </section>
 
-  <div v-if="folderDialog.visible" class="overlay">
-    <div class="dialog-card compact-dialog action-confirm-dialog">
-      <div class="dialog-head">
-        <h3 class="dialog-title">
-          {{ folderDialog.parentId ? t('forwards.newSubfolder') : t('forwards.newFolder') }}
-        </h3>
-      </div>
-      <div class="dialog-body">
+  <BaseDialog :visible="folderDialog.visible" :title="folderDialog.parentId ? t('forwards.newSubfolder') : t('forwards.newFolder')" class="action-confirm-dialog" @close="folderDialog.visible = false">
         <label class="form-label" for="folderName">{{ t('forwards.folderName') }}</label>
         <input
           id="folderName"
@@ -954,17 +969,15 @@ function chainLabel(forward) {
           @keyup.enter="saveFolder"
         />
         <div v-if="folderDialog.error" class="form-error mt-2">{{ folderDialog.error }}</div>
-      </div>
-      <div class="dialog-footer">
+    <template #footer>
         <button type="button" class="btn btn-outline-secondary" @click="folderDialog.visible = false">
           {{ t('app.common.cancel') }}
         </button>
         <button type="button" class="btn btn-primary" @click="saveFolder">
           {{ t('app.common.create') }}
         </button>
-      </div>
-    </div>
-  </div>
+    </template>
+  </BaseDialog>
 
   <ForwardModal
     :show="forwardModalOpen"
@@ -985,6 +998,7 @@ function chainLabel(forward) {
     :confirm-label="confirmDialog.confirmLabel"
     :confirm-class="confirmDialog.confirmClass"
     :show-cancel="confirmDialog.showCancel"
+    :busy="confirmDialog.busy"
     @confirm="handleConfirm"
     @close="closeConfirm"
   />

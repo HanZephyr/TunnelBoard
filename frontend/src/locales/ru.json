@@ -37,6 +37,17 @@
             "moveDown": "Вниз",
             "remove": "Убрать",
             "none": "--"
+        },
+        "snapshot": {
+            "loading": "Загрузка данных приложения…",
+            "loadFailed": "Не удалось загрузить данные; пустое состояние не отображается",
+            "stale": "Показаны последние успешно загруженные данные. Изменение настроек приостановлено.",
+            "retry": "Повторить"
+        },
+        "update": {
+            "available": "Доступно обновление",
+            "latestVersion": "Последняя версия: {version}",
+            "openRelease": "Открыть страницу загрузки"
         }
     },
     "overview": {
@@ -95,6 +106,7 @@
         "selectedCount": "Выбрано: {count}",
         "clearSelection": "Снять выделение",
         "moveToPlaceholder": "Переместить в…",
+        "moveSelected": "Переместить",
         "deleteSelected": "Удалить",
         "clearSelection": "Снять выбор",
         "modal": {
@@ -119,7 +131,8 @@
             "description": "Описание",
             "descriptionPlaceholder": "Необязательно",
             "newHostToggle": "Новый хост",
-            "newHostSave": "Сохранить и добавить"
+            "newHostSave": "Сохранить и добавить",
+            "newHostPersists": "Сохранение хоста — отдельное действие. Хост останется, даже если отменить Forward."
         },
         "errors": {
             "nameRequired": "Имя обязательно.",
@@ -190,6 +203,10 @@
             "keyPathPlaceholder": "~/.ssh/id_rsa",
             "password": "Пароль",
             "passwordPlaceholder": "Введите пароль",
+            "secretAction": "Действие с учетными данными",
+            "keepSecret": "Сохранить учетные данные",
+            "replaceSecret": "Заменить учетные данные",
+            "clearSecret": "Удалить учетные данные",
             "keyPassphrase": "Парольная фраза ключа",
             "keyPassphrasePlaceholder": "Необязательно (парольная фраза закрытого ключа)",
             "agentSocketPath": "Путь к сокету агента (необязательно)",
@@ -312,7 +329,16 @@
             "caddyRunning": "Caddy работает",
             "caddyStopped": "Caddy остановлен",
             "portConflict": "конфликт порта 443",
-            "caTrusted": "Локальный CA доверен"
+            "caTrusted": "Локальный CA доверен",
+            "checking": "Проверка состояния системы",
+            "unknown": "Состояние системы неизвестно",
+            "applied": "hosts и Caddy применены",
+            "hostsOnly": "Применен только hosts",
+            "pending": "Сохранено, ожидает применения",
+            "error": "Ошибка применения",
+            "cleanupPending": "Ожидается очистка",
+            "quarantined": "Карантин восстановления",
+            "notDesired": "Отключено"
         },
         "modal": {
             "newTitle": "Новый веб-маршрут",

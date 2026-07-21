@@ -1,8 +1,12 @@
 <script setup>
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CheckLocalPortAvailable, SaveSSHHost } from '../../../wailsjs/go/main/App'
 import { callBackend, errorMessage, isValidPort } from '../../utils/backend'
+import BaseDialog from '../common/BaseDialog.vue'
+import SSHHostFields from '../hosts/SSHHostFields.vue'
+import { createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
+import { createApplicationClient } from '../../utils/applicationClient'
 
 const props = defineProps({
   show: {
@@ -36,6 +40,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'submit', 'host-created'])
 
 const { t } = useI18n()
+const application = createApplicationClient()
 
 const chainCandidateId = ref('')
 
@@ -77,29 +82,7 @@ function removeChainHost(index) {
 const newHostOpen = ref(false)
 const newHostSaving = ref(false)
 const newHostError = ref('')
-const newHostForm = reactive({
-  name: '',
-  host: '',
-  port: 22,
-  user: '',
-  authType: 'ssh_key',
-  keyPath: '',
-  password: '',
-  agentSocketPath: ''
-})
-
-const newHostShowsKeyPath = computed(() => newHostForm.authType === 'ssh_key')
-const newHostShowsPassword = computed(() => newHostForm.authType === 'password' || newHostForm.authType === 'ssh_key')
-const newHostShowsAgentSocket = computed(() => newHostForm.authType === 'ssh_agent')
-
-watch(
-  () => newHostForm.authType,
-  () => {
-    if (!newHostShowsKeyPath.value) newHostForm.keyPath = ''
-    if (!newHostShowsPassword.value) newHostForm.password = ''
-    if (!newHostShowsAgentSocket.value) newHostForm.agentSocketPath = ''
-  }
-)
+const newHostForm = reactive(createSSHHostDraft())
 
 watch(
   () => props.show,
@@ -109,16 +92,7 @@ watch(
 )
 
 function openNewHostForm() {
-  Object.assign(newHostForm, {
-    name: '',
-    host: '',
-    port: 22,
-    user: '',
-    authType: 'ssh_key',
-    keyPath: '',
-    password: '',
-    agentSocketPath: ''
-  })
+  Object.assign(newHostForm, createSSHHostDraft())
   newHostError.value = ''
   newHostOpen.value = true
 }
@@ -129,13 +103,8 @@ function cancelNewHostForm() {
 }
 
 function validateNewHost() {
-  if (!newHostForm.name.trim()) return t('hosts.errors.nameRequired')
-  if (!newHostForm.host.trim()) return t('hosts.errors.hostRequired')
-  if (!newHostForm.user.trim()) return t('hosts.errors.userRequired')
-  if (!isValidPort(newHostForm.port)) return t('hosts.errors.portRange')
-  if (newHostForm.authType === 'ssh_key' && !newHostForm.keyPath.trim()) return t('hosts.errors.keyPathRequired')
-  if (newHostForm.authType === 'password' && !newHostForm.password) return t('hosts.errors.passwordRequired')
-  return ''
+  const code = validateSSHHostDraft(newHostForm)
+  return code ? t(`hosts.errors.${code}`) : ''
 }
 
 async function saveNewHost() {
@@ -147,24 +116,10 @@ async function saveNewHost() {
   }
   newHostSaving.value = true
   newHostError.value = ''
-  const authType = newHostForm.authType
-  const payload = {
-    id: 0,
-    name: newHostForm.name.trim(),
-    host: newHostForm.host.trim(),
-    port: Number(newHostForm.port),
-    user: newHostForm.user.trim(),
-    authType,
-    keyPath: authType === 'ssh_key' ? newHostForm.keyPath.trim() : '',
-    agentSocketPath: authType === 'ssh_agent' ? newHostForm.agentSocketPath.trim() : '',
-    password: authType === 'password' || authType === 'ssh_key' ? newHostForm.password : '',
-    keepAliveIntervalMs: 5000,
-    timeoutMs: 5000,
-    hostKeyAlgorithms: '',
-    notes: ''
-  }
+  const command = toSaveSSHHostCommand(newHostForm)
   try {
-    const saved = await callBackend(SaveSSHHost, payload)
+    const result = await application.saveSSHHost(command, (payload) => callBackend(SaveSSHHost, payload))
+    const saved = result?.host || result
     const newId = Number(saved?.id)
     if (Number.isInteger(newId) && newId > 0 && !props.form.chainHostIds.includes(newId)) {
       props.form.chainHostIds.push(newId)
@@ -181,36 +136,39 @@ async function saveNewHost() {
 // 端口冲突预警：编辑时经实际绑定预检本地监听端口（remote 模式在服务端绑定，不做本机预检）。
 const portWarning = ref('')
 let portCheckTimer = null
+let portCheckGeneration = 0
 watch(
   () => [props.show, props.form.mode, props.form.localHost, props.form.localPort],
   () => {
+    const generation = ++portCheckGeneration
     portWarning.value = ''
     if (portCheckTimer) clearTimeout(portCheckTimer)
     if (!props.show || props.form.mode === 'remote') return
     const port = Number(props.form.localPort)
     if (!Number.isInteger(port) || port < 1 || port > 65535) return
+    const host = String(props.form.localHost || '')
     portCheckTimer = setTimeout(async () => {
       try {
-        await CheckLocalPortAvailable(String(props.form.localHost || ''), port)
-        portWarning.value = ''
+        const result = await application.previewLocalListener({ host, port, editingForwardId: props.editingForwardId || 0 }, (localHost, localPort) => CheckLocalPortAvailable(localHost, localPort))
+        if (generation !== portCheckGeneration || !props.show) return
+        portWarning.value = result?.status === 'occupied' ? t('forwards.modal.portConflict', { port }) : result?.status === 'unknown' ? String(result?.message || '') : ''
       } catch (_) {
+        if (generation !== portCheckGeneration || !props.show) return
         portWarning.value = t('forwards.modal.portConflict', { port })
       }
     }, 400)
   },
   { immediate: true }
 )
+
+onBeforeUnmount(() => {
+  portCheckGeneration += 1
+  if (portCheckTimer) clearTimeout(portCheckTimer)
+})
 </script>
 
 <template>
-  <div v-if="show" class="overlay">
-    <div class="dialog-card compact-dialog forward-dialog">
-      <div class="dialog-head">
-        <h3 class="dialog-title">
-          {{ editingForwardId ? t('forwards.modal.editTitle') : t('forwards.modal.newTitle') }}
-        </h3>
-      </div>
-      <div class="dialog-body">
+  <BaseDialog :visible="show" :title="editingForwardId ? t('forwards.modal.editTitle') : t('forwards.modal.newTitle')" class="forward-dialog" @close="$emit('close')">
         <div class="row g-2">
           <div class="col-12 col-md-7">
             <label class="form-label" for="forwardName">{{ t('forwards.modal.name') }}</label>
@@ -298,93 +256,8 @@ watch(
                 <i class="bi bi-plus-lg" aria-hidden="true"></i>{{ t('forwards.modal.newHostToggle') }}
               </button>
               <div v-else class="newhost-form">
-                <div class="row g-2">
-                  <div class="col-12 col-md-6">
-                    <label class="form-label" for="newHostName">{{ t('hosts.modal.name') }}</label>
-                    <input
-                      id="newHostName"
-                      v-model="newHostForm.name"
-                      type="text"
-                      class="form-control form-control-sm"
-                      :placeholder="t('hosts.modal.namePlaceholder')"
-                    />
-                  </div>
-                  <div class="col-12 col-md-6">
-                    <label class="form-label" for="newHostUser">{{ t('hosts.modal.user') }}</label>
-                    <input
-                      id="newHostUser"
-                      v-model="newHostForm.user"
-                      type="text"
-                      class="form-control form-control-sm"
-                      placeholder="e.g. ubuntu"
-                    />
-                  </div>
-                  <div class="col-12 col-md-8">
-                    <label class="form-label" for="newHostAddress">{{ t('hosts.modal.host') }}</label>
-                    <input
-                      id="newHostAddress"
-                      v-model="newHostForm.host"
-                      type="text"
-                      class="form-control form-control-sm"
-                      :placeholder="t('hosts.modal.hostPlaceholder')"
-                    />
-                  </div>
-                  <div class="col-12 col-md-4">
-                    <label class="form-label" for="newHostPort">{{ t('hosts.modal.port') }}</label>
-                    <input
-                      id="newHostPort"
-                      v-model="newHostForm.port"
-                      type="number"
-                      min="1"
-                      max="65535"
-                      class="form-control form-control-sm"
-                    />
-                  </div>
-                  <div class="col-12">
-                    <label class="form-label" for="newHostAuthType">{{ t('hosts.modal.authType') }}</label>
-                    <select id="newHostAuthType" v-model="newHostForm.authType" class="form-select form-select-sm">
-                      <option value="password">{{ t('hosts.auth.password') }}</option>
-                      <option value="ssh_key">{{ t('hosts.auth.sshKey') }}</option>
-                      <option value="ssh_agent">{{ t('hosts.auth.sshAgent') }}</option>
-                    </select>
-                  </div>
-                  <div v-if="newHostShowsKeyPath" class="col-12">
-                    <label class="form-label" for="newHostKeyPath">{{ t('hosts.modal.keyPath') }}</label>
-                    <input
-                      id="newHostKeyPath"
-                      v-model="newHostForm.keyPath"
-                      type="text"
-                      class="form-control form-control-sm"
-                      :placeholder="t('hosts.modal.keyPathPlaceholder')"
-                    />
-                  </div>
-                  <div v-if="newHostShowsPassword" class="col-12">
-                    <label class="form-label" for="newHostPassword">
-                      {{ newHostForm.authType === 'ssh_key' ? t('hosts.modal.keyPassphrase') : t('hosts.modal.password') }}
-                    </label>
-                    <input
-                      id="newHostPassword"
-                      v-model="newHostForm.password"
-                      type="password"
-                      class="form-control form-control-sm"
-                      :placeholder="
-                        newHostForm.authType === 'ssh_key'
-                          ? t('hosts.modal.keyPassphrasePlaceholder')
-                          : t('hosts.modal.passwordPlaceholder')
-                      "
-                    />
-                  </div>
-                  <div v-if="newHostShowsAgentSocket" class="col-12">
-                    <label class="form-label" for="newHostAgentSocket">{{ t('hosts.modal.agentSocketPath') }}</label>
-                    <input
-                      id="newHostAgentSocket"
-                      v-model="newHostForm.agentSocketPath"
-                      type="text"
-                      class="form-control form-control-sm"
-                      :placeholder="t('hosts.modal.agentSocketPlaceholder')"
-                    />
-                  </div>
-                </div>
+                <p class="field-note" role="note">{{ t('forwards.modal.newHostPersists') }}</p>
+                <SSHHostFields :draft="newHostForm" mode="compact" id-prefix="forward-new-host" />
                 <div class="newhost-footer">
                   <div v-if="newHostError" class="form-error">{{ newHostError }}</div>
                   <div class="newhost-actions">
@@ -481,15 +354,13 @@ watch(
         </div>
 
         <div v-if="validationError" class="form-error mt-2">{{ validationError }}</div>
-      </div>
-      <div class="dialog-footer">
+    <template #footer>
         <button type="button" class="btn btn-outline-secondary" @click="$emit('close')">
           {{ t('app.common.cancel') }}
         </button>
         <button type="button" class="btn btn-primary" @click="$emit('submit')">
           {{ t('app.common.save') }}
         </button>
-      </div>
-    </div>
-  </div>
+    </template>
+  </BaseDialog>
 </template>

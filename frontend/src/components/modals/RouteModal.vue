@@ -1,6 +1,7 @@
 <script setup>
 import { computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import BaseDialog from '../common/BaseDialog.vue'
 
 const props = defineProps({
   show: {
@@ -54,14 +55,7 @@ watch(
 </script>
 
 <template>
-  <div v-if="show" class="overlay">
-    <div class="dialog-card compact-dialog">
-      <div class="dialog-head">
-        <h3 class="dialog-title">
-          {{ editingRouteId ? t('routes.modal.editTitle') : t('routes.modal.newTitle') }}
-        </h3>
-      </div>
-      <div class="dialog-body">
+  <BaseDialog :visible="show" :title="editingRouteId ? t('routes.modal.editTitle') : t('routes.modal.newTitle')" @close="$emit('close')">
         <div class="row g-2">
           <div class="col-12">
             <label class="form-label" for="routeDomain">{{ t('routes.modal.domain') }}</label>
@@ -112,15 +106,13 @@ watch(
           </div>
         </div>
         <div v-if="validationError" class="form-error mt-2">{{ validationError }}</div>
-      </div>
-      <div class="dialog-footer">
+    <template #footer>
         <button type="button" class="btn btn-outline-secondary" @click="$emit('close')">
           {{ t('app.common.cancel') }}
         </button>
         <button type="button" class="btn btn-primary" @click="$emit('submit')">
           {{ t('app.common.save') }}
         </button>
-      </div>
-    </div>
-  </div>
+    </template>
+  </BaseDialog>
 </template>

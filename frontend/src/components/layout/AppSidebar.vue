@@ -22,7 +22,7 @@ defineProps({
   }
 })
 
-defineEmits(['switch-page', 'open-release-page', 'toggle-collapse'])
+defineEmits(['switch-page', 'open-update-details', 'toggle-collapse'])
 </script>
 
 <template>
@@ -71,7 +71,17 @@ defineEmits(['switch-page', 'open-release-page', 'toggle-collapse'])
       <span class="sidebar-version" :class="{ compact: collapsed }">
         <template v-if="!collapsed">v{{ appVersion }}</template>
         <template v-else>v</template>
-        <span v-if="hasNewVersion" class="version-new-badge" @click="$emit('open-release-page')">new</span>
+        <button
+          v-if="hasNewVersion"
+          type="button"
+          class="version-new-badge"
+          :aria-label="$t('app.update.available')"
+          :title="$t('app.update.available')"
+          @click="$emit('open-update-details')"
+        >
+          <i v-if="collapsed" class="bi bi-arrow-up-circle-fill" aria-hidden="true" />
+          <template v-else>new</template>
+        </button>
       </span>
     </div>
   </aside>

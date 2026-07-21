@@ -37,6 +37,17 @@
             "moveDown": "Move down",
             "remove": "Remove",
             "none": "--"
+        },
+        "snapshot": {
+            "loading": "Loading application data…",
+            "loadFailed": "Application data could not be loaded; an empty state is not shown",
+            "stale": "Showing the last successful snapshot. Configuration changes are paused.",
+            "retry": "Retry"
+        },
+        "update": {
+            "available": "Update available",
+            "latestVersion": "Latest version: {version}",
+            "openRelease": "Open download page"
         }
     },
     "overview": {
@@ -94,6 +105,7 @@
         "stopSelected": "Stop",
         "selectedCount": "{count} selected",
         "moveToPlaceholder": "Move to…",
+        "moveSelected": "Move",
         "deleteSelected": "Delete",
         "clearSelection": "Clear selection",
         "clearSelection": "Clear selection",
@@ -119,7 +131,8 @@
             "description": "Description",
             "descriptionPlaceholder": "Optional",
             "newHostToggle": "New Host",
-            "newHostSave": "Save & Add"
+            "newHostSave": "Save & Add",
+            "newHostPersists": "Saving a host is independent. It remains saved even if you cancel this Forward."
         },
         "errors": {
             "nameRequired": "Name is required.",
@@ -190,6 +203,10 @@
             "keyPathPlaceholder": "~/.ssh/id_rsa",
             "password": "Password",
             "passwordPlaceholder": "Enter password",
+            "secretAction": "Credential action",
+            "keepSecret": "Keep saved credential",
+            "replaceSecret": "Replace credential",
+            "clearSecret": "Clear credential",
             "keyPassphrase": "Key Passphrase",
             "keyPassphrasePlaceholder": "Optional (private key passphrase)",
             "agentSocketPath": "Agent Socket Path (optional)",
@@ -312,7 +329,16 @@
             "caddyRunning": "caddy running",
             "caddyStopped": "caddy stopped",
             "portConflict": "port 443 conflict",
-            "caTrusted": "Local CA trusted"
+            "caTrusted": "Local CA trusted",
+            "checking": "Checking system state",
+            "unknown": "System state unknown",
+            "applied": "hosts and Caddy applied",
+            "hostsOnly": "hosts only",
+            "pending": "Saved, waiting to apply",
+            "error": "Apply failed",
+            "cleanupPending": "Cleanup pending",
+            "quarantined": "Restore quarantine",
+            "notDesired": "Disabled"
         },
         "modal": {
             "newTitle": "New Web Route",
