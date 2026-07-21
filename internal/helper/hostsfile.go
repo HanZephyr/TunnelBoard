@@ -1,14 +1,20 @@
 package helper
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/HanZephyr/TunnelBoard/internal/route"
 )
+
+var ErrManagedHostsConflict = errors.New("helper: managed hosts block changed")
 
 // 受托管区块标记：helper 只触碰这两个标记之间的行，区块外内容保持原样。
 const (
@@ -74,6 +80,76 @@ func WriteManagedHosts(path string, entries []route.HostEntry) error {
 	}
 	slog.Info("managed hosts written", "entries", len(entries), "path", path)
 	return nil
+}
+
+// WriteManagedHostsTransaction 只以 managed block digest 做并发前置条件，并使用
+// 同目录唯一临时文件原子替换；区块外内容在替换前重新读取并保留。
+func WriteManagedHostsTransaction(path string, entries []route.HostEntry, transactionID, expectedDigest string) (string, error) {
+	original, err := readHostsOrEmpty(path)
+	if err != nil {
+		return "", err
+	}
+	currentDigest := ManagedEntriesDigest(ParseManagedHosts(string(original)))
+	if expectedDigest != "" && expectedDigest != currentDigest {
+		return currentDigest, fmt.Errorf("%w: got %s, want %s", ErrManagedHostsConflict, currentDigest, expectedDigest)
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	file, err := os.CreateTemp(dir, ".tunnelboard-hosts-"+transactionID+"-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("helper: create unique hosts temp: %w", err)
+	}
+	tempPath := file.Name()
+	defer os.Remove(tempPath)
+	writeLatest := func(latest []byte) error {
+		if _, err := file.Seek(0, 0); err != nil {
+			return err
+		}
+		if err := file.Truncate(0); err != nil {
+			return err
+		}
+		if _, err := file.Write([]byte(RenderManagedHosts(string(latest), entries))); err != nil {
+			return err
+		}
+		return file.Sync()
+	}
+	if err := writeLatest(original); err != nil {
+		_ = file.Close()
+		return "", fmt.Errorf("helper: write hosts transaction: %w", err)
+	}
+	latest, err := readHostsOrEmpty(path)
+	if err != nil {
+		_ = file.Close()
+		return "", err
+	}
+	latestDigest := ManagedEntriesDigest(ParseManagedHosts(string(latest)))
+	if latestDigest != currentDigest {
+		_ = file.Close()
+		return latestDigest, fmt.Errorf("%w: got %s, want %s", ErrManagedHostsConflict, latestDigest, currentDigest)
+	}
+	if string(latest) != string(original) {
+		if err := writeLatest(latest); err != nil {
+			_ = file.Close()
+			return "", fmt.Errorf("helper: refresh hosts transaction: %w", err)
+		}
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return "", fmt.Errorf("helper: replace hosts transaction: %w", err)
+	}
+	appliedDigest := ManagedEntriesDigest(entries)
+	slog.Info("managed hosts transaction committed", "entries", len(entries), "op", transactionID)
+	return appliedDigest, nil
+}
+
+func ManagedEntriesDigest(entries []route.HostEntry) string {
+	raw, _ := json.Marshal(entries)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 // readHostsOrEmpty 读取 hosts 文件；文件不存在视为空内容。

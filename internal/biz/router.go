@@ -231,7 +231,7 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 
 	hostsChanged := !entriesEqual(entries, prevEntries)
 	if hostsChanged {
-		if err := b.callHelper(helper.Request{Op: helper.OpApplyManagedHosts, Hosts: entries}); err != nil {
+		if err := b.callHelper(helper.Request{Op: helper.OpApplyManagedHosts, Hosts: entries, TransactionID: journal.TxID, ExpectedManagedDigest: digestHosts(prevEntries)}); err != nil {
 			slog.Error("apply managed hosts failed", "err", err)
 			return result, fmt.Errorf("apply managed hosts: %w", err)
 		}
@@ -280,7 +280,7 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 	revision := configRevision(caddyConfig)
 	applyResult, err := b.caddy.Apply(context.Background(), revision, caddyConfig)
 	if err != nil {
-		b.rollbackHosts(prevEntries, hostsChanged)
+		b.rollbackHosts(prevEntries, entries, hostsChanged)
 		slog.Error("reload caddy failed", "err", err)
 		return result, fmt.Errorf("reload caddy: %w", err)
 	}
@@ -304,7 +304,7 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 		identity, err := b.caTrust.EnsureCurrentCaddyCATrusted(context.Background())
 		if err != nil {
 			b.rollbackCaddy(prevRunning, prevConfig)
-			b.rollbackHosts(prevEntries, hostsChanged)
+			b.rollbackHosts(prevEntries, entries, hostsChanged)
 			slog.Error("trust local ca failed", "err", err)
 			return result, fmt.Errorf("trust local ca: %w", err)
 		}
@@ -437,10 +437,10 @@ func (b *RouterBiz) callHelper(req helper.Request) error {
 	return nil
 }
 
-func (b *RouterBiz) rollbackHosts(prevEntries []route.HostEntry, hostsChanged bool) {
+func (b *RouterBiz) rollbackHosts(prevEntries, currentEntries []route.HostEntry, hostsChanged bool) {
 	if hostsChanged {
 		slog.Warn("rollback managed hosts to previous entries", "entries", len(prevEntries))
-		_ = b.callHelper(helper.Request{Op: helper.OpApplyManagedHosts, Hosts: prevEntries})
+		_ = b.callHelper(helper.Request{Op: helper.OpApplyManagedHosts, Hosts: prevEntries, TransactionID: newRouteTxID(), ExpectedManagedDigest: digestHosts(currentEntries)})
 	}
 }
 

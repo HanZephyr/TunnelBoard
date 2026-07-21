@@ -32,8 +32,10 @@ const (
 
 // Request 是主程序经命名管道发给 helper 的结构化请求。
 type Request struct {
-	Op    string            `json:"op"`
-	Hosts []route.HostEntry `json:"hosts,omitempty"`
+	Op                    string            `json:"op"`
+	Hosts                 []route.HostEntry `json:"hosts,omitempty"`
+	TransactionID         string            `json:"transactionId,omitempty"`
+	ExpectedManagedDigest string            `json:"expectedManagedDigest,omitempty"`
 	// Deprecated: 提权 Helper 不再接受 CA 内容或指纹；字段仅用于让旧调用方
 	// 在其他模块迁移期间保持可编译，服务端仍会按未知操作拒绝。
 	CertDER    []byte `json:"-"`
@@ -42,9 +44,10 @@ type Request struct {
 
 // Response 是 helper 对每个 Request 的应答；Error 非空即失败。
 type Response struct {
-	OK      bool   `json:"ok"`
-	Version string `json:"version,omitempty"`
-	Error   string `json:"error,omitempty"`
+	OK            bool   `json:"ok"`
+	Version       string `json:"version,omitempty"`
+	ManagedDigest string `json:"managedDigest,omitempty"`
+	Error         string `json:"error,omitempty"`
 }
 
 // Environment 注入 helper 的全部外部副作用：hosts 文件路径与 CA 系统操作。
@@ -67,6 +70,13 @@ func HandleRequest(req Request, env Environment) Response {
 	case OpPing:
 		return Response{OK: true, Version: env.Version}
 	case OpApplyManagedHosts:
+		if req.TransactionID != "" {
+			digest, err := WriteManagedHostsTransaction(env.HostsPath, req.Hosts, req.TransactionID, req.ExpectedManagedDigest)
+			if err != nil {
+				return fail(err)
+			}
+			return Response{OK: true, ManagedDigest: digest}
+		}
 		return done(WriteManagedHosts(env.HostsPath, req.Hosts))
 	case OpRemoveManagedHosts:
 		return done(WriteManagedHosts(env.HostsPath, nil))
@@ -81,10 +91,31 @@ func ValidateRequest(req Request) error {
 	case OpPing, OpRemoveManagedHosts:
 		return nil
 	case OpApplyManagedHosts:
-		return validateHostEntries(req.Hosts)
+		if err := validateHostEntries(req.Hosts); err != nil {
+			return err
+		}
+		if req.TransactionID != "" && !isLowerHex(req.TransactionID, 32) {
+			return errors.New("helper: invalid transaction id")
+		}
+		if req.ExpectedManagedDigest != "" && !isLowerHex(req.ExpectedManagedDigest, 64) {
+			return errors.New("helper: invalid managed digest")
+		}
+		return nil
 	default:
 		return fmt.Errorf("helper: unknown op %q", req.Op)
 	}
+}
+
+func isLowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func fail(err error) Response { return Response{OK: false, Error: err.Error()} }

@@ -49,9 +49,13 @@ func (c *localElevatedClient) Call(req Request) (Response, error) {
 	case OpPing:
 		return Response{OK: true, Version: "local-elevated"}, nil
 	case OpApplyManagedHosts:
-		err = c.applyManagedHosts(req.Hosts)
+		var digest string
+		digest, err = c.applyManagedHosts(req.Hosts, req.ExpectedManagedDigest)
+		if err == nil {
+			return Response{OK: true, ManagedDigest: digest}, nil
+		}
 	case OpRemoveManagedHosts:
-		err = c.applyManagedHosts(nil)
+		_, err = c.applyManagedHosts(nil, "")
 	}
 	if err != nil {
 		return Response{OK: false, Error: err.Error()}, nil
@@ -60,13 +64,20 @@ func (c *localElevatedClient) Call(req Request) (Response, error) {
 }
 
 // applyManagedHosts 读取当前 hosts，渲染受托管区块到临时文件，再经系统授权替换。
-func (c *localElevatedClient) applyManagedHosts(entries []route.HostEntry) error {
+func (c *localElevatedClient) applyManagedHosts(entries []route.HostEntry, expectedDigest string) (string, error) {
 	content, err := os.ReadFile(SystemHostsPath())
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("helper: read hosts: %w", err)
+		return "", fmt.Errorf("helper: read hosts: %w", err)
+	}
+	currentDigest := ManagedEntriesDigest(ParseManagedHosts(string(content)))
+	if expectedDigest != "" && expectedDigest != currentDigest {
+		return currentDigest, fmt.Errorf("%w: got %s, want %s", ErrManagedHostsConflict, currentDigest, expectedDigest)
 	}
 	rendered := RenderManagedHosts(string(content), entries)
-	return c.privilege.ApplyManagedHosts(context.Background(), []byte(rendered))
+	if err := c.privilege.ApplyManagedHosts(context.Background(), []byte(rendered)); err != nil {
+		return "", err
+	}
+	return ManagedEntriesDigest(entries), nil
 }
 
 type unavailablePrivilege struct{ err error }

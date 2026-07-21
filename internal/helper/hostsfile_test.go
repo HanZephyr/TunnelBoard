@@ -1,6 +1,7 @@
 package helper_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -142,6 +143,51 @@ func TestWriteManagedHostsCreatesMissingFile(t *testing.T) {
 	bak, err := os.ReadFile(path + ".tunnelboard.bak")
 	if err != nil || len(bak) != 0 {
 		t.Fatalf("backup = %q, err = %v, want empty backup", bak, err)
+	}
+}
+
+func TestWriteManagedHostsTransactionUsesDigestAndUniqueTemp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hosts")
+	original := "127.0.0.1 localhost\r\n"
+	if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	expected := helper.ManagedEntriesDigest(nil)
+	digest, err := helper.WriteManagedHostsTransaction(path, managedEntries(), strings.Repeat("a", 32), expected)
+	if err != nil {
+		t.Fatalf("transaction: %v", err)
+	}
+	if digest != helper.ManagedEntriesDigest(managedEntries()) {
+		t.Fatalf("digest = %s", digest)
+	}
+	if _, err := os.Stat(path + ".tunnelboard.tmp"); !os.IsNotExist(err) {
+		t.Fatalf("fixed temp must not exist: %v", err)
+	}
+	if _, err := os.Stat(path + ".tunnelboard.bak"); !os.IsNotExist(err) {
+		t.Fatalf("fixed backup must not exist: %v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, ".tunnelboard-hosts-*.tmp"))
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("transaction temp leaked: %v, %v", matches, err)
+	}
+}
+
+func TestWriteManagedHostsTransactionRejectsStaleManagedDigest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hosts")
+	if err := os.WriteFile(path, []byte(helper.RenderManagedHosts("", managedEntries())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := helper.WriteManagedHostsTransaction(path, nil, strings.Repeat("b", 32), helper.ManagedEntriesDigest(nil))
+	if !errors.Is(err, helper.ErrManagedHostsConflict) {
+		t.Fatalf("err = %v", err)
+	}
+	content, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(helper.ParseManagedHosts(string(content))) != len(managedEntries()) {
+		t.Fatal("stale transaction modified hosts")
 	}
 }
 
