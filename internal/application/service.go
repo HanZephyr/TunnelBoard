@@ -428,7 +428,7 @@ func (s *Service) commitSSHHostChangeOnceLocked(ctx context.Context, token strin
 			return result, nil
 		}
 	}
-	saved, changed, err := s.catalog.SaveSSHHostSecure(stage.request)
+	saved, changed, data, err := s.catalog.SaveSSHHostSecureWithData(stage.request)
 	if err != nil {
 		result.FailureStage, result.OperationError = "save", err.Error()
 		compensateHostChange(s.runtime, plan, result.ForwardResults)
@@ -452,10 +452,6 @@ func (s *Service) commitSSHHostChangeOnceLocked(ctx context.Context, token strin
 			result.FailureStage = "restart"
 		}
 	}
-	data, err = s.store.Load()
-	if err != nil {
-		return CommitSSHHostChangeResult{}, err
-	}
 	result.Committed = true
 	result.Host = sshHostView(saved)
 	result.AcceptedRevision = revisionOfCatalog(data)
@@ -467,6 +463,13 @@ func (s *Service) commitSSHHostChangeOnceLocked(ctx context.Context, token strin
 // SaveSSHHost 保留旧绑定的兼容形状；连接身份变化必须携带 Preview 返回的 token，
 // 单独的 ConfirmRestart 布尔值不再被视为事实绑定的授权。
 func (s *Service) SaveSSHHost(ctx context.Context, command SaveSSHHostCommand) (SaveSSHHostResult, error) {
+	// 非连接身份变更的提交结果由 saveSSHHostWithoutIdentityChange 缓存；在重新做
+	// Preview 之前先命中缓存，确保网络/存储层瞬时故障不会破坏安全重试语义。
+	if cached, _, ok, err := lookupCommandResult[SaveSSHHostResult](s.commands, command.Meta.CommandID, "save_ssh_host", command); err != nil {
+		return SaveSSHHostResult{}, err
+	} else if ok {
+		return cached, nil
+	}
 	if command.ConfirmRestart && command.PreviewToken != "" {
 		committed, err := s.CommitSSHHostChange(ctx, CommitSSHHostChangeCommand{Meta: command.Meta, Token: command.PreviewToken})
 		legacy := saveSSHHostResultFromCommit(committed)
@@ -523,16 +526,12 @@ func (s *Service) saveSSHHostWithoutIdentityChange(ctx context.Context, command 
 		return SaveSSHHostResult{}, fmt.Errorf("%w: current=%s", ErrRevisionConflict, current)
 	}
 	request := biz.SaveSSHHostRequest{Host: command.Host.model(), SecretAction: command.SecretAction, SecretInput: command.SecretInput}
-	saved, changed, err := s.catalog.SaveSSHHostSecure(request)
+	saved, changed, data, err := s.catalog.SaveSSHHostSecureWithData(request)
 	if err != nil {
 		return SaveSSHHostResult{}, err
 	}
 	if changed {
 		return SaveSSHHostResult{}, ErrSSHHostChangeStale
-	}
-	data, err = s.store.Load()
-	if err != nil {
-		return SaveSSHHostResult{}, err
 	}
 	result := SaveSSHHostResult{Host: sshHostView(saved), AcceptedRevision: revisionOfCatalog(data), EventSequence: s.sequence.Add(1)}
 	if err := storeCommandResult(s.commands, command.Meta.CommandID, "save_ssh_host", digest, result); err != nil {
@@ -1020,7 +1019,7 @@ func (s *Service) MoveForwards(ctx context.Context, command MoveForwardsCommand)
 	if command.Meta.ExpectedRevision != "" && command.Meta.ExpectedRevision != current {
 		return MoveForwardsResult{}, fmt.Errorf("%w: current=%s", ErrRevisionConflict, current)
 	}
-	report, err := s.catalog.MoveForwards(command.ForwardIDs, command.TargetFolderID)
+	report, updated, err := s.catalog.MoveForwardsWithData(command.ForwardIDs, command.TargetFolderID)
 	if err != nil {
 		return MoveForwardsResult{}, err
 	}
@@ -1031,11 +1030,7 @@ func (s *Service) MoveForwards(ctx context.Context, command MoveForwardsCommand)
 		}
 		return result, nil
 	}
-	data, err = s.store.Load()
-	if err != nil {
-		return MoveForwardsResult{}, err
-	}
-	result := MoveForwardsResult{ChangedIDs: report.ChangedIDs, UnchangedIDs: report.UnchangedIDs, AcceptedRevision: revisionOfCatalog(data), EventSequence: s.sequence.Add(1)}
+	result := MoveForwardsResult{ChangedIDs: report.ChangedIDs, UnchangedIDs: report.UnchangedIDs, AcceptedRevision: revisionOfCatalog(updated), EventSequence: s.sequence.Add(1)}
 	if err := storeCommandResult(s.commands, command.Meta.CommandID, "move_forwards", digest, result); err != nil {
 		return MoveForwardsResult{}, err
 	}

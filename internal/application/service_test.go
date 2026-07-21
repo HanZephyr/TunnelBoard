@@ -18,8 +18,10 @@ import (
 )
 
 type memStore struct {
-	data    model.VaultData
-	updates int
+	data          model.VaultData
+	updates       int
+	loads         int
+	failLoadAfter int
 }
 
 type fakeImportPackage struct {
@@ -34,7 +36,13 @@ func (f *fakeImportPackage) Take(context.Context, biz.TakeStageRequest) (biz.Sta
 }
 func (*fakeImportPackage) Cancel(string) {}
 
-func (m *memStore) Load() (model.VaultData, error) { return m.data, nil }
+func (m *memStore) Load() (model.VaultData, error) {
+	m.loads++
+	if m.failLoadAfter > 0 && m.loads > m.failLoadAfter {
+		return model.VaultData{}, errors.New("injected load failure")
+	}
+	return m.data, nil
+}
 func (m *memStore) Update(fn func(*model.VaultData) error) (model.VaultData, error) {
 	d := m.data
 	if err := fn(&d); err != nil {
@@ -249,7 +257,8 @@ func TestSaveSSHHostRequiresRestartBeforeChangingRunningConnection(t *testing.T)
 }
 
 func TestSaveSSHHostCommandIDReturnsCachedResultWithoutRepeatingMutation(t *testing.T) {
-	store := &memStore{data: model.VaultData{Version: 1}}
+	// Preview 自身读取两次，提交前再校验一次；写入后不得再依赖一次可能失败的 Load。
+	store := &memStore{data: model.VaultData{Version: 1}, failLoadAfter: 3}
 	service := newService(store, &fakeRuntime{})
 	cmd := application.SaveSSHHostCommand{
 		Meta:         application.CommandMeta{CommandID: "save-host-1"},
@@ -343,7 +352,7 @@ func TestMoveForwardsCommandIDCachesChangedAndUnchangedResult(t *testing.T) {
 			{ID: 10, Name: "move", FolderID: 1, Mode: "local", ChainHostIDs: []int{1}, LocalHost: "127.0.0.1", LocalPort: 5010, RemoteHost: "db", RemotePort: 5432},
 			{ID: 20, Name: "stay", FolderID: 2, Mode: "local", ChainHostIDs: []int{1}, LocalHost: "127.0.0.1", LocalPort: 5020, RemoteHost: "db", RemotePort: 5432},
 		},
-	}}
+	}, failLoadAfter: 1}
 	service := newService(store, &fakeRuntime{})
 	cmd := application.MoveForwardsCommand{Meta: application.CommandMeta{CommandID: "move-1"}, ForwardIDs: []int{10, 20}, TargetFolderID: 2}
 
@@ -396,7 +405,8 @@ func TestMoveForwardsAllUnchangedDoesNotWriteOrEmitMutation(t *testing.T) {
 }
 
 func TestCommitImportCommandIDReturnsCachedResultWithoutRepeatingMutation(t *testing.T) {
-	store := &memStore{data: model.VaultData{Version: 1}}
+	// Stage 及其业务预览读取两次，提交前再校验一次；成功写入后直接使用 Update 返回的快照。
+	store := &memStore{data: model.VaultData{Version: 1}, failLoadAfter: 3}
 	packages := &fakeImportPackage{staged: biz.StagedBackup{Vault: model.VaultData{Version: 1}}}
 	service := application.NewService(application.Dependencies{
 		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{},

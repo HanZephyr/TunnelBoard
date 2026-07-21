@@ -105,9 +105,15 @@ func (b *CatalogBiz) SaveSSHHost(host model.SSHHost) (model.SSHHost, error) {
 // SaveSSHHostSecure 是 WebView 写入主机的唯一领域入口：已保存秘密只从 Vault
 // 合并，绝不相信请求 Host.Password；实际 replace/clear 才递增 CredentialRevision。
 func (b *CatalogBiz) SaveSSHHostSecure(request SaveSSHHostRequest) (model.SSHHost, bool, error) {
+	saved, changed, _, err := b.SaveSSHHostSecureWithData(request)
+	return saved, changed, err
+}
+
+// SaveSSHHostSecureWithData 返回原子 Update 提交的同一份 Vault 快照。
+func (b *CatalogBiz) SaveSSHHostSecureWithData(request SaveSSHHostRequest) (model.SSHHost, bool, model.VaultData, error) {
 	var saved model.SSHHost
 	connectionChanged := false
-	_, err := b.store.Update(func(d *model.VaultData) error {
+	updated, err := b.store.Update(func(d *model.VaultData) error {
 		host, previous, changed, err := prepareSSHHostSecure(*d, request)
 		if err != nil {
 			return err
@@ -126,9 +132,9 @@ func (b *CatalogBiz) SaveSSHHostSecure(request SaveSSHHostRequest) (model.SSHHos
 		return nil
 	})
 	if err != nil {
-		return model.SSHHost{}, false, err
+		return model.SSHHost{}, false, model.VaultData{}, err
 	}
-	return saved, connectionChanged, nil
+	return saved, connectionChanged, updated, nil
 }
 
 func (b *CatalogBiz) PreviewSSHHostSecure(request SaveSSHHostRequest) (model.SSHHost, bool, error) {
@@ -330,16 +336,22 @@ func (b *CatalogBiz) MoveForward(forwardID, targetFolderID int) error {
 // MoveForwards 在一次 Vault Update 中移动全部 Forward。任何 ID 或目标文件夹
 // 无效都会使 mutate 返回错误，因此不会出现部分移动。
 func (b *CatalogBiz) MoveForwards(forwardIDs []int, targetFolderID int) (MoveForwardsReport, error) {
+	report, _, err := b.MoveForwardsWithData(forwardIDs, targetFolderID)
+	return report, err
+}
+
+// MoveForwardsWithData 返回与批量移动同一原子提交对应的 Vault 快照。
+func (b *CatalogBiz) MoveForwardsWithData(forwardIDs []int, targetFolderID int) (MoveForwardsReport, model.VaultData, error) {
 	if len(forwardIDs) == 0 {
-		return MoveForwardsReport{}, fmt.Errorf("at least one forward is required")
+		return MoveForwardsReport{}, model.VaultData{}, fmt.Errorf("at least one forward is required")
 	}
 	if len(forwardIDs) > MaxMoveForwardsBatch {
-		return MoveForwardsReport{}, fmt.Errorf("at most %d forwards may be moved", MaxMoveForwardsBatch)
+		return MoveForwardsReport{}, model.VaultData{}, fmt.Errorf("at most %d forwards may be moved", MaxMoveForwardsBatch)
 	}
 	seen := make(map[int]struct{}, len(forwardIDs))
 	for _, id := range forwardIDs {
 		if _, exists := seen[id]; exists {
-			return MoveForwardsReport{}, fmt.Errorf("forward %d is duplicated", id)
+			return MoveForwardsReport{}, model.VaultData{}, fmt.Errorf("forward %d is duplicated", id)
 		}
 		seen[id] = struct{}{}
 	}
@@ -348,7 +360,7 @@ func (b *CatalogBiz) MoveForwards(forwardIDs []int, targetFolderID int) (MoveFor
 		UnchangedIDs: make([]int, 0, len(forwardIDs)),
 	}
 	var noChange = errors.New("move forwards: no change")
-	_, err := b.store.Update(func(d *model.VaultData) error {
+	updated, err := b.store.Update(func(d *model.VaultData) error {
 		if indexFolder(d.Folders, targetFolderID) < 0 {
 			return fmt.Errorf("%w: folder %d", model.ErrRefMissing, targetFolderID)
 		}
@@ -374,12 +386,12 @@ func (b *CatalogBiz) MoveForwards(forwardIDs []int, targetFolderID int) (MoveFor
 		return d.Validate()
 	})
 	if errors.Is(err, noChange) {
-		return report, nil
+		return report, model.VaultData{}, nil
 	}
 	if err != nil {
-		return MoveForwardsReport{}, err
+		return MoveForwardsReport{}, model.VaultData{}, err
 	}
-	return report, nil
+	return report, updated, nil
 }
 
 // ResolveChain 按 fw.ChainHostIDs 顺序从 Vault 解析 SSH 主机链；缺 ID 以
