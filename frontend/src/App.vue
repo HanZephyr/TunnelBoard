@@ -92,11 +92,12 @@ const folders = ref([])
 const sshHosts = ref([])
 const forwards = ref([])
 const webRoutes = ref([])
+const routeStatuses = ref([])
+const vaultRevision = ref('')
 const snapshotStore = createAppSnapshotStore()
 const snapshotPhase = ref('loading')
 const snapshotError = ref('')
 const hasSnapshot = ref(false)
-const vaultRevision = ref('')
 
 async function loadVault() {
   await snapshotStore.refresh(async () => {
@@ -106,7 +107,7 @@ async function loadVault() {
       ...catalog,
       vaultRevision: raw?.revisions?.vault || raw?.Revisions?.Vault || raw?.vaultRevision || 0,
       eventSequence: raw?.eventSequence || raw?.EventSequence || 0,
-      routeStatuses: raw?.routes?.items || raw?.Routes?.Items || raw?.routeStatuses || []
+      routeStatuses: Array.isArray(raw?.routes) ? raw.routes : Array.isArray(raw?.Routes) ? raw.Routes : raw?.routeStatuses || []
     }
   })
   snapshotPhase.value = snapshotStore.state.phase
@@ -118,6 +119,7 @@ async function loadVault() {
     sshHosts.value = Array.isArray(data?.sshHosts) ? data.sshHosts : []
     forwards.value = Array.isArray(data?.forwards) ? data.forwards : []
     webRoutes.value = Array.isArray(data?.webRoutes) ? data.webRoutes : []
+    routeStatuses.value = Array.isArray(data?.routeStatuses) ? data.routeStatuses : []
     vaultRevision.value = String(data?.vaultRevision || '')
   }
 }
@@ -278,6 +280,8 @@ onBeforeUnmount(() => {
           :ssh-hosts="sshHosts"
           :forwards="forwards"
           :web-routes="webRoutes"
+          :route-statuses="routeStatuses"
+          :vault-revision="vaultRevision"
           @notify="notify"
           @go-forwards="switchPage('forwards')"
         />

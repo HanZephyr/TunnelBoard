@@ -26,6 +26,12 @@ export function createApplicationClient(bindings = runtimeBindings()) {
     async moveForwards(command) {
       return invoke('MoveForwardsCommand', command)
     },
+    async previewRouteChange(intent) {
+      return invoke('PreviewRouteChange', intent)
+    },
+    async commitRouteChange(command) {
+      return invoke('CommitRouteChange', command)
+    },
     async previewLocalListener(command) {
       return invoke('PreviewLocalListenerCommand', command)
     }
