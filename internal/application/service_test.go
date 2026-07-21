@@ -3,15 +3,21 @@ package application_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/HanZephyr/TunnelBoard/internal/application"
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 )
 
-type memStore struct{ data model.VaultData }
+type memStore struct {
+	data    model.VaultData
+	updates int
+}
 
 func (m *memStore) Load() (model.VaultData, error) { return m.data, nil }
 func (m *memStore) Update(fn func(*model.VaultData) error) (model.VaultData, error) {
@@ -19,6 +25,7 @@ func (m *memStore) Update(fn func(*model.VaultData) error) (model.VaultData, err
 	if err := fn(&d); err != nil {
 		return model.VaultData{}, err
 	}
+	m.updates++
 	m.data = d
 	return d, nil
 }
@@ -141,6 +148,153 @@ func TestSaveSSHHostRequiresRestartBeforeChangingRunningConnection(t *testing.T)
 	raw, _ := json.Marshal(result)
 	if strings.Contains(string(raw), "new-secret") {
 		t.Fatalf("result leaked secret: %s", raw)
+	}
+}
+
+func TestSaveSSHHostCommandIDReturnsCachedResultWithoutRepeatingMutation(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1}}
+	service := newService(store, &fakeRuntime{})
+	cmd := application.SaveSSHHostCommand{
+		Meta:         application.CommandMeta{CommandID: "save-host-1"},
+		Host:         application.SSHHostInput{Name: "db", Host: "10.0.0.1", Port: 22, User: "ops", AuthType: "password"},
+		SecretAction: biz.SecretReplace,
+		SecretInput:  "secret",
+	}
+
+	first, err := service.SaveSSHHost(context.Background(), cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.SaveSSHHost(context.Background(), cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(second, first) {
+		t.Fatalf("cached result mismatch: first=%+v second=%+v", first, second)
+	}
+	if store.updates != 1 || len(store.data.SSHHosts) != 1 {
+		t.Fatalf("duplicate command repeated mutation: updates=%d hosts=%d", store.updates, len(store.data.SSHHosts))
+	}
+
+	cmd.Host.Host = "10.0.0.2"
+	if _, err := service.SaveSSHHost(context.Background(), cmd); !errors.Is(err, application.ErrCommandIDConflict) {
+		t.Fatalf("same id with different payload error = %v", err)
+	}
+	if store.updates != 1 || store.data.SSHHosts[0].Host != "10.0.0.1" {
+		t.Fatalf("conflicting command mutated data: updates=%d host=%s", store.updates, store.data.SSHHosts[0].Host)
+	}
+}
+
+func TestCommandResultCacheExpiresAndEvictsOldestEntry(t *testing.T) {
+	newCachedService := func(options application.CommandCacheOptions) (*application.Service, *memStore) {
+		store := &memStore{data: model.VaultData{Version: 1, SSHHosts: []model.SSHHost{
+			{ID: 1, Name: "one", Host: "10.0.0.1", Port: 22, User: "ops", AuthType: "password", Password: "secret"},
+			{ID: 2, Name: "two", Host: "10.0.0.2", Port: 22, User: "ops", AuthType: "password", Password: "secret"},
+		}}}
+		service := application.NewService(application.Dependencies{
+			Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}, CommandCache: options,
+		})
+		return service, store
+	}
+	command := func(id string, hostID int) application.SaveSSHHostCommand {
+		return application.SaveSSHHostCommand{
+			Meta:         application.CommandMeta{CommandID: id},
+			Host:         application.SSHHostInput{ID: hostID, Name: map[int]string{1: "one", 2: "two"}[hostID], Host: map[int]string{1: "10.0.0.1", 2: "10.0.0.2"}[hostID], Port: 22, User: "ops", AuthType: "password", Notes: "updated"},
+			SecretAction: biz.SecretKeep,
+		}
+	}
+
+	t.Run("ttl", func(t *testing.T) {
+		service, store := newCachedService(application.CommandCacheOptions{TTL: time.Millisecond, Capacity: 10})
+		first, err := service.SaveSSHHost(context.Background(), command("ttl-1", 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+		second, err := service.SaveSSHHost(context.Background(), command("ttl-1", 1))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if store.updates != 2 || second.EventSequence == first.EventSequence {
+			t.Fatalf("expired result was retained: updates=%d first=%d second=%d", store.updates, first.EventSequence, second.EventSequence)
+		}
+	})
+
+	t.Run("capacity", func(t *testing.T) {
+		service, store := newCachedService(application.CommandCacheOptions{TTL: time.Hour, Capacity: 1})
+		if _, err := service.SaveSSHHost(context.Background(), command("capacity-1", 1)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.SaveSSHHost(context.Background(), command("capacity-2", 2)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.SaveSSHHost(context.Background(), command("capacity-1", 1)); err != nil {
+			t.Fatal(err)
+		}
+		if store.updates != 3 {
+			t.Fatalf("oldest result was not evicted: updates=%d", store.updates)
+		}
+	})
+}
+
+func TestMoveForwardsCommandIDCachesChangedAndUnchangedResult(t *testing.T) {
+	store := &memStore{data: model.VaultData{
+		Version:  1,
+		Folders:  []model.Folder{{ID: 1, Name: "source"}, {ID: 2, Name: "target"}},
+		SSHHosts: []model.SSHHost{{ID: 1, Name: "host", Host: "10.0.0.1", Port: 22, User: "ops", AuthType: "password", Password: "secret"}},
+		Forwards: []model.Forward{
+			{ID: 10, Name: "move", FolderID: 1, Mode: "local", ChainHostIDs: []int{1}, LocalHost: "127.0.0.1", LocalPort: 5010, RemoteHost: "db", RemotePort: 5432},
+			{ID: 20, Name: "stay", FolderID: 2, Mode: "local", ChainHostIDs: []int{1}, LocalHost: "127.0.0.1", LocalPort: 5020, RemoteHost: "db", RemotePort: 5432},
+		},
+	}}
+	service := newService(store, &fakeRuntime{})
+	cmd := application.MoveForwardsCommand{Meta: application.CommandMeta{CommandID: "move-1"}, ForwardIDs: []int{10, 20}, TargetFolderID: 2}
+
+	first, err := service.MoveForwards(context.Background(), cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.MoveForwards(context.Background(), cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(second, first) {
+		t.Fatalf("cached result mismatch: first=%+v second=%+v", first, second)
+	}
+	if !reflect.DeepEqual(first.ChangedIDs, []int{10}) || !reflect.DeepEqual(first.UnchangedIDs, []int{20}) {
+		t.Fatalf("classification = %+v", first)
+	}
+	if store.updates != 1 {
+		t.Fatalf("duplicate command repeated mutation: updates=%d", store.updates)
+	}
+
+	cmd.TargetFolderID = 1
+	if _, err := service.MoveForwards(context.Background(), cmd); !errors.Is(err, application.ErrCommandIDConflict) {
+		t.Fatalf("same id with different payload error = %v", err)
+	}
+}
+
+func TestMoveForwardsAllUnchangedDoesNotWriteOrEmitMutation(t *testing.T) {
+	store := &memStore{data: model.VaultData{
+		Version:  1,
+		Folders:  []model.Folder{{ID: 2, Name: "target"}},
+		SSHHosts: []model.SSHHost{{ID: 1, Name: "host", Host: "10.0.0.1", Port: 22, User: "ops", AuthType: "password", Password: "secret"}},
+		Forwards: []model.Forward{{ID: 10, Name: "stay", FolderID: 2, Mode: "local", ChainHostIDs: []int{1}, LocalHost: "127.0.0.1", LocalPort: 5010, RemoteHost: "db", RemotePort: 5432}},
+	}}
+	service := newService(store, &fakeRuntime{})
+	before, err := service.GetSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.MoveForwards(context.Background(), application.MoveForwardsCommand{Meta: application.CommandMeta{CommandID: "noop-move"}, ForwardIDs: []int{10}, TargetFolderID: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.ChangedIDs) != 0 || !reflect.DeepEqual(result.UnchangedIDs, []int{10}) {
+		t.Fatalf("result = %+v", result)
+	}
+	if store.updates != 0 || result.EventSequence != before.EventSequence || result.AcceptedRevision != before.Revisions.Vault {
+		t.Fatalf("no-op produced mutation: updates=%d result=%+v before=%+v", store.updates, result, before)
 	}
 }
 

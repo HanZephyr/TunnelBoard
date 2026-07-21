@@ -2,6 +2,7 @@ package biz_test
 
 import (
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
@@ -10,7 +11,8 @@ import (
 
 // fakeStore 是 VaultStore 接口的内存实现，语义与 vault.Store 对齐：mutate 失败则不落盘。
 type fakeStore struct {
-	data model.VaultData
+	data    model.VaultData
+	updates int
 }
 
 func (f *fakeStore) Load() (model.VaultData, error) { return f.data, nil }
@@ -20,6 +22,7 @@ func (f *fakeStore) Update(mutate func(*model.VaultData) error) (model.VaultData
 	if err := mutate(&d); err != nil {
 		return model.VaultData{}, err
 	}
+	f.updates++
 	f.data = d
 	return d, nil
 }
@@ -186,19 +189,70 @@ func TestMoveForwardsIsAtomic(t *testing.T) {
 	host, _ := c.SaveSSHHost(model.SSHHost{Name: "h", Host: "10.0.0.1", User: "u", AuthType: "password", Password: "x"})
 	first, _ := c.SaveForward(model.Forward{FolderID: source.ID, Name: "a", Mode: "local", ChainHostIDs: []int{host.ID}, LocalHost: "127.0.0.1", LocalPort: 5001, RemoteHost: "x", RemotePort: 80})
 
-	if err := c.MoveForwards([]int{first.ID, 999}, target.ID); err == nil {
+	if _, err := c.MoveForwards([]int{first.ID, 999}, target.ID); err == nil {
 		t.Fatal("missing forward must reject the whole move")
 	}
 	data, _ := c.Data()
 	if data.Forwards[0].FolderID != source.ID {
 		t.Fatalf("rejected move changed data: %+v", data.Forwards)
 	}
-	if err := c.MoveForwards([]int{first.ID}, target.ID); err != nil {
+	if _, err := c.MoveForwards([]int{first.ID}, target.ID); err != nil {
 		t.Fatalf("valid move: %v", err)
 	}
 	data, _ = c.Data()
 	if data.Forwards[0].FolderID != target.ID {
 		t.Fatalf("move not applied: %+v", data.Forwards)
+	}
+}
+
+func TestMoveForwardsRejectsInvalidBatchBeforeWriting(t *testing.T) {
+	store := &fakeStore{data: model.VaultData{Version: 1, Folders: []model.Folder{{ID: 1, Name: "target"}}, Forwards: []model.Forward{{ID: 1, Name: "one", FolderID: 1}}}}
+	c := biz.NewCatalogBiz(store)
+	tooMany := make([]int, 5001)
+	for i := range tooMany {
+		tooMany[i] = i + 1
+	}
+	for name, ids := range map[string][]int{
+		"empty":     nil,
+		"too many":  tooMany,
+		"duplicate": {1, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := c.MoveForwards(ids, 1); err == nil {
+				t.Fatal("invalid batch must fail")
+			}
+			if store.updates != 0 {
+				t.Fatalf("invalid batch wrote Vault: updates=%d", store.updates)
+			}
+		})
+	}
+}
+
+func TestMoveForwardsClassifiesNoOpWithoutWriting(t *testing.T) {
+	store := &fakeStore{data: model.VaultData{
+		Version:  1,
+		Folders:  []model.Folder{{ID: 1, Name: "source"}, {ID: 2, Name: "target"}},
+		SSHHosts: []model.SSHHost{{ID: 1, Name: "host", Host: "10.0.0.1", Port: 22, User: "ops", AuthType: "password", Password: "secret"}},
+		Forwards: []model.Forward{
+			{ID: 10, Name: "move", FolderID: 1, Mode: "local", ChainHostIDs: []int{1}, LocalHost: "127.0.0.1", LocalPort: 5010, RemoteHost: "db", RemotePort: 5432},
+			{ID: 20, Name: "stay", FolderID: 2, Mode: "local", ChainHostIDs: []int{1}, LocalHost: "127.0.0.1", LocalPort: 5020, RemoteHost: "db", RemotePort: 5432},
+		},
+	}}
+	c := biz.NewCatalogBiz(store)
+
+	report, err := c.MoveForwards([]int{10, 20}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(report.ChangedIDs, []int{10}) || !reflect.DeepEqual(report.UnchangedIDs, []int{20}) || store.updates != 1 {
+		t.Fatalf("changed report=%+v updates=%d", report, store.updates)
+	}
+	report, err = c.MoveForwards([]int{10, 20}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.ChangedIDs) != 0 || !reflect.DeepEqual(report.UnchangedIDs, []int{10, 20}) || store.updates != 1 {
+		t.Fatalf("no-op report=%+v updates=%d", report, store.updates)
 	}
 }
 
