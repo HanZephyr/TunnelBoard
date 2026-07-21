@@ -168,10 +168,17 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 
 // ApplyStagedImport 在单次 Vault Update 中消费 staged 数据；调用方负责 token 生命周期。
 func (b *BackupBiz) ApplyStagedImport(staged StagedBackup, plan ImportPlan) (ImportSummary, error) {
+	summary, _, err := b.ApplyStagedImportWithData(staged, plan)
+	return summary, err
+}
+
+// ApplyStagedImportWithData 返回与本次原子 Update 同时提交的 Vault 快照，避免调用方
+// 在写入成功后再次 Load，继而把“已落盘”误报成失败并重复执行导入。
+func (b *BackupBiz) ApplyStagedImportWithData(staged StagedBackup, plan ImportPlan) (ImportSummary, model.VaultData, error) {
 	imported, keyFiles := staged.Vault, staged.KeyFiles
 	folderName := strings.TrimSpace(plan.FolderName)
 	if folderName == "" {
-		return ImportSummary{}, fmt.Errorf("folder name is required")
+		return ImportSummary{}, model.VaultData{}, fmt.Errorf("folder name is required")
 	}
 
 	skip := map[string]bool{}
@@ -190,7 +197,7 @@ func (b *BackupBiz) ApplyStagedImport(staged StagedBackup, plan ImportPlan) (Imp
 		summary.KeyFilePaths = append(summary.KeyFilePaths, path)
 	}
 
-	_, err := b.store.Update(func(d *model.VaultData) error {
+	updated, err := b.store.Update(func(d *model.VaultData) error {
 		// 每类 ID 只扫描一次既有数据，随后单调分配；导入复杂度与实体数线性相关。
 		folderIDs := newImportIDSequence(len(d.Folders), func(i int) int { return d.Folders[i].ID })
 		hostIDs := newImportIDSequence(len(d.SSHHosts), func(i int) int { return d.SSHHosts[i].ID })
@@ -310,7 +317,7 @@ func (b *BackupBiz) ApplyStagedImport(staged StagedBackup, plan ImportPlan) (Imp
 		return d.Validate()
 	})
 	if err != nil {
-		return ImportSummary{}, err
+		return ImportSummary{}, model.VaultData{}, err
 	}
 	slog.Info("backup import applied",
 		"folder", folderName,
@@ -318,7 +325,7 @@ func (b *BackupBiz) ApplyStagedImport(staged StagedBackup, plan ImportPlan) (Imp
 		"flattened_folders", summary.FlattenedFolders,
 		"routes_deactivated", summary.RoutesDeactivated,
 		"imported", summary.Imported)
-	return summary, nil
+	return summary, updated, nil
 }
 
 func importSSHHostView(host model.SSHHost) ImportSSHHostView {

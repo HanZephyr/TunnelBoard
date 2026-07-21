@@ -1125,6 +1125,13 @@ func (s *Service) CommitImport(ctx context.Context, command CommitImportCommand)
 	}
 	s.mutation.Lock()
 	defer s.mutation.Unlock()
+	cached, digest, ok, err := lookupCommandResult[CommitImportResult](s.commands, command.Meta.CommandID, "commit_import", command)
+	if err != nil {
+		return CommitImportResult{}, err
+	}
+	if ok {
+		return cached, nil
+	}
 	s.importMu.Lock()
 	stage := s.importStage
 	if stage == nil || command.Token == "" || command.Token != stage.token || time.Now().After(stage.expiresAt) || stage.committed || stage.committing {
@@ -1152,11 +1159,7 @@ func (s *Service) CommitImport(ctx context.Context, command CommitImportCommand)
 	if current != stage.vaultRevision || (command.Meta.ExpectedRevision != "" && command.Meta.ExpectedRevision != current) {
 		return CommitImportResult{}, fmt.Errorf("%w: current=%s", ErrRevisionConflict, current)
 	}
-	summary, err := s.backup.ApplyStagedImport(stage.backup, command.Plan)
-	if err != nil {
-		return CommitImportResult{}, err
-	}
-	data, err = s.store.Load()
+	summary, data, err := s.backup.ApplyStagedImportWithData(stage.backup, command.Plan)
 	if err != nil {
 		return CommitImportResult{}, err
 	}
@@ -1165,17 +1168,20 @@ func (s *Service) CommitImport(ctx context.Context, command CommitImportCommand)
 	stage.backup.Vault = model.VaultData{}
 	summary.KeyFiles = nil
 	summary.KeyFilePaths = nil
+	result := CommitImportResult{Summary: summary, KeyFiles: append([]KeyFileView(nil), stage.keyViews...), AcceptedRevision: revisionOfCatalog(data), EventSequence: s.sequence.Add(1)}
+	if err := storeCommandResult(s.commands, command.Meta.CommandID, "commit_import", digest, result); err != nil {
+		return CommitImportResult{}, err
+	}
 	s.importMu.Lock()
 	stage.committing = false
 	stage.committed = true
-	keyViews := append([]KeyFileView(nil), stage.keyViews...)
 	if len(stage.keyPaths) == 0 {
 		stage.backup.Destroy()
 		s.importStage = nil
 	}
 	s.importMu.Unlock()
 	commitFailed = false
-	return CommitImportResult{Summary: summary, KeyFiles: keyViews, AcceptedRevision: revisionOfCatalog(data), EventSequence: s.sequence.Add(1)}, nil
+	return result, nil
 }
 
 // SaveImportKeyFile 使用 StageImport 建立的短期 lease 把单个私钥直接写到用户选择的路径。

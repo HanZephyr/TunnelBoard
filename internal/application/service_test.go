@@ -22,6 +22,18 @@ type memStore struct {
 	updates int
 }
 
+type fakeImportPackage struct {
+	staged biz.StagedBackup
+}
+
+func (f *fakeImportPackage) Stage(context.Context, biz.StageRequest) (biz.StagePreview, error) {
+	return biz.StagePreview{Token: "import-token", ExpiresAt: time.Now().Add(time.Minute)}, nil
+}
+func (f *fakeImportPackage) Take(context.Context, biz.TakeStageRequest) (biz.StagedBackup, error) {
+	return f.staged, nil
+}
+func (*fakeImportPackage) Cancel(string) {}
+
 func (m *memStore) Load() (model.VaultData, error) { return m.data, nil }
 func (m *memStore) Update(fn func(*model.VaultData) error) (model.VaultData, error) {
 	d := m.data
@@ -380,6 +392,38 @@ func TestMoveForwardsAllUnchangedDoesNotWriteOrEmitMutation(t *testing.T) {
 	}
 	if store.updates != 0 || result.EventSequence != before.EventSequence || result.AcceptedRevision != before.Revisions.Vault {
 		t.Fatalf("no-op produced mutation: updates=%d result=%+v before=%+v", store.updates, result, before)
+	}
+}
+
+func TestCommitImportCommandIDReturnsCachedResultWithoutRepeatingMutation(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1}}
+	packages := &fakeImportPackage{staged: biz.StagedBackup{Vault: model.VaultData{Version: 1}}}
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{},
+		Backup: biz.NewBackupBiz(store), Packages: packages,
+	})
+	stage, err := service.StageImport(context.Background(), application.StageImportRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := application.CommitImportCommand{
+		Meta: application.CommandMeta{CommandID: "import-1"}, Token: stage.Token,
+		Plan: biz.ImportPlan{FolderName: "Imported"},
+	}
+	first, err := service.CommitImport(context.Background(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.CommitImport(context.Background(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, second) || store.updates != 1 || len(store.data.Folders) != 1 {
+		t.Fatalf("duplicate import mutated state: first=%+v second=%+v updates=%d folders=%d", first, second, store.updates, len(store.data.Folders))
+	}
+	command.Plan.FolderName = "Different"
+	if _, err := service.CommitImport(context.Background(), command); !errors.Is(err, application.ErrCommandIDConflict) {
+		t.Fatalf("same id with different payload error = %v", err)
 	}
 }
 
