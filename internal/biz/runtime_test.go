@@ -1,6 +1,7 @@
 package biz
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"errors"
@@ -45,18 +46,19 @@ func (s *memStore) Update(mutate func(*model.VaultData) error) (model.VaultData,
 
 // fakeRun 实现 runHandle：Start/Stop 记录调用，事件与终结由测试驱动。
 type fakeRun struct {
-	mu         sync.Mutex
-	startErr   error
-	started    bool
-	stopCalled bool
-	done       chan struct{}
-	events     chan forward.RuntimeEvent
-	err        error
-	latency    time.Duration
-	hasLatency bool
-	fw         model.Forward
-	hosts      []model.SSHHost
-	doneOnce   sync.Once
+	mu             sync.Mutex
+	startErr       error
+	started        bool
+	stopCalled     bool
+	stopLeavesDone bool
+	done           chan struct{}
+	events         chan forward.RuntimeEvent
+	err            error
+	latency        time.Duration
+	hasLatency     bool
+	fw             model.Forward
+	hosts          []model.SSHHost
+	doneOnce       sync.Once
 }
 
 func newFakeRun() *fakeRun {
@@ -76,14 +78,75 @@ func (f *fakeRun) Start() error {
 	return nil
 }
 
-func (f *fakeRun) Stop() error {
+func (f *fakeRun) Stop(context.Context) error {
+	f.mu.Lock()
+	f.stopCalled = true
+	leavesDone := f.stopLeavesDone
+	f.mu.Unlock()
+	if leavesDone {
+		return nil
+	}
 	f.doneOnce.Do(func() {
-		f.mu.Lock()
-		f.stopCalled = true
-		f.mu.Unlock()
 		close(f.done)
 	})
 	return nil
+}
+
+func TestRuntimeIgnoresEventsAndDoneFromStoppedGeneration(t *testing.T) {
+	factory := &runFactory{onMake: func(r *fakeRun) { r.stopLeavesDone = true }}
+	b := newTestRuntime(seedRuntimeVault(), factory)
+
+	if err := b.Start(1); err != nil {
+		t.Fatalf("Start A failed: %v", err)
+	}
+	runA := factory.last()
+	if err := b.Stop(1); err != nil {
+		t.Fatalf("Stop A failed: %v", err)
+	}
+	if err := b.Start(1); err != nil {
+		t.Fatalf("Start B failed: %v", err)
+	}
+	runB := factory.last()
+	if runA == runB {
+		t.Fatal("Start B must create a new run generation")
+	}
+
+	runA.events <- forward.RuntimeEvent{Type: forward.RuntimeEventDisconnected, Err: errors.New("late A disconnect")}
+	runA.kill(errors.New("late A failure"))
+	time.Sleep(20 * time.Millisecond)
+
+	st, ok := b.Status(1)
+	if !ok || st.Status != RuntimeStateRunning || st.LastError != "" {
+		t.Fatalf("late generation A changed generation B state: %+v, ok=%v", st, ok)
+	}
+	b.mu.Lock()
+	entry := b.runs[1]
+	b.mu.Unlock()
+	if entry == nil || entry.run != runB {
+		t.Fatalf("late generation A removed generation B: %+v", entry)
+	}
+}
+
+func TestRuntimeLocalListenerOwnerOnlyReportsCurrentRunningGeneration(t *testing.T) {
+	factory := &runFactory{}
+	b := newTestRuntime(seedRuntimeVault(), factory)
+	if err := b.Start(1); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	owner, ok := b.LocalListenerOwner("", 5001)
+	if !ok || owner != 1 {
+		t.Fatalf("owner = %d, %v; want forward 1", owner, ok)
+	}
+	if _, ok := b.LocalListenerOwner("127.0.0.1", 5002); ok {
+		t.Fatal("stopped forward must not own a listener")
+	}
+	if err := b.Stop(1); err != nil {
+		t.Fatalf("Stop failed: %v", err)
+	}
+	if _, ok := b.LocalListenerOwner("127.0.0.1", 5001); ok {
+		t.Fatal("stopped generation must no longer own a listener")
+	}
 }
 
 func (f *fakeRun) Done() <-chan struct{}               { return f.done }

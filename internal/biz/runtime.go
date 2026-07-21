@@ -1,9 +1,13 @@
 package biz
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +30,8 @@ const (
 var (
 	ErrHostKeyUnknown  = errors.New("biz: ssh host key unknown")
 	ErrHostKeyMismatch = errors.New("biz: ssh host key mismatch")
+	ErrRuntimeClosing  = errors.New("biz: forward runtime is closing")
+	ErrForwardStopping = errors.New("biz: forward is stopping")
 )
 
 // RuntimeStatus 是一条 Forward 的运行时快照（只存在于内存）。
@@ -39,11 +45,26 @@ type RuntimeStatus struct {
 // runHandle 是运行时实例的接缝；*forward.LocalForward 天然满足该接口。
 type runHandle interface {
 	Start() error
-	Stop() error
+	Stop(context.Context) error
 	Done() <-chan struct{}
 	Events() <-chan forward.RuntimeEvent
 	Err() error
 	LastLatency() (time.Duration, bool)
+}
+
+type runPhase uint8
+
+const (
+	runStarting runPhase = iota
+	runRunning
+	runStopping
+)
+
+type runEntry struct {
+	generation      uint64
+	phase           runPhase
+	run             runHandle
+	listenerAddress string
 }
 
 // RuntimeBiz 是计划文档中的 Forward 运行时 Module：按 Vault 配置启停 Forward、
@@ -55,9 +76,11 @@ type RuntimeBiz struct {
 	pool    *forward.SSHConnPool
 	newRun  func(fw model.Forward, hosts []model.SSHHost, verifier forward.HostKeyVerifier) runHandle
 
-	mu     sync.Mutex
-	runs   map[int]runHandle
-	states map[int]RuntimeStatus
+	mu             sync.Mutex
+	runs           map[int]*runEntry
+	states         map[int]RuntimeStatus
+	nextGeneration uint64
+	closing        bool
 }
 
 // NewRuntimeBiz 以默认工厂（forward.NewLocalForward + 首跳连接池）组装运行时 Module。
@@ -66,7 +89,7 @@ func NewRuntimeBiz(store VaultStore) *RuntimeBiz {
 		store:   store,
 		catalog: NewCatalogBiz(store),
 		pool:    forward.NewSSHConnPool(),
-		runs:    map[int]runHandle{},
+		runs:    map[int]*runEntry{},
 		states:  map[int]RuntimeStatus{},
 	}
 	b.newRun = func(fw model.Forward, hosts []model.SSHHost, verifier forward.HostKeyVerifier) runHandle {
@@ -101,41 +124,60 @@ func (b *RuntimeBiz) hostKeyVerifier() forward.HostKeyVerifier {
 // 已在运行时幂等返回；run.Start() 失败记 error 状态（不存 handle，可重试）。
 func (b *RuntimeBiz) Start(id int) error {
 	b.mu.Lock()
-	_, running := b.runs[id]
-	b.mu.Unlock()
-	if running {
+	if b.closing {
+		b.mu.Unlock()
+		return ErrRuntimeClosing
+	}
+	if entry := b.runs[id]; entry != nil {
+		if entry.phase == runStopping {
+			b.mu.Unlock()
+			return ErrForwardStopping
+		}
+		b.mu.Unlock()
 		return nil
 	}
+	b.nextGeneration++
+	generation := b.nextGeneration
+	b.runs[id] = &runEntry{generation: generation, phase: runStarting}
+	b.mu.Unlock()
 
 	data, err := b.store.Load()
 	if err != nil {
+		b.finishStartFailure(id, generation, err)
 		return err
 	}
 	fw, ok := findForwardByID(data, id)
 	if !ok {
-		return fmt.Errorf("forward %d not found", id)
+		err = fmt.Errorf("forward %d not found", id)
+		b.finishStartFailure(id, generation, err)
+		return err
 	}
 	hosts, err := b.catalog.ResolveChain(fw)
 	if err != nil {
+		b.finishStartFailure(id, generation, err)
 		return err
 	}
 
 	slog.Info("forward start requested", "forward_id", id, "name", fw.Name)
 	run := b.newRun(fw, hosts, b.hostKeyVerifier())
 	if err := run.Start(); err != nil {
-		b.setState(id, RuntimeStateError, err.Error())
+		b.finishStartFailure(id, generation, err)
 		slog.Error("forward start failed", "forward_id", id, "name", fw.Name, "err", err)
 		return err
 	}
 
 	b.mu.Lock()
-	if _, ok := b.runs[id]; ok {
-		// 并发 Start 同一 id：后到者停掉多余实例，先入者生效。
+	entry := b.runs[id]
+	if entry == nil || entry.generation != generation || entry.phase != runStarting || b.closing {
 		b.mu.Unlock()
-		_ = run.Stop()
-		return nil
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = run.Stop(ctx)
+		return ErrForwardStopping
 	}
-	b.runs[id] = run
+	entry.run = run
+	entry.phase = runRunning
+	entry.listenerAddress = localListenerAddress(fw)
 	st := RuntimeStatus{ForwardID: id, Status: RuntimeStateRunning}
 	if latency, ok := run.LastLatency(); ok {
 		st.LatencyMs = latency.Milliseconds()
@@ -143,9 +185,39 @@ func (b *RuntimeBiz) Start(id int) error {
 	b.states[id] = st
 	b.mu.Unlock()
 
-	go b.watch(id, run)
+	go b.watch(id, generation, run)
 	slog.Info("forward started", "forward_id", id, "name", fw.Name)
 	return nil
+}
+
+// LocalListenerOwner 只读返回当前运行代对本地监听地址的所有权。
+// 它不尝试绑定端口，也不泄露可变的 runs 表，供端口预检区分自身监听与外部占用。
+func (b *RuntimeBiz) LocalListenerOwner(host string, port int) (int, bool) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	want := net.JoinHostPort(host, strconv.Itoa(port))
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for id, entry := range b.runs {
+		if entry.phase == runRunning && entry.run != nil && entry.listenerAddress == want {
+			return id, true
+		}
+	}
+	return 0, false
+}
+
+func localListenerAddress(fw model.Forward) string {
+	mode := strings.TrimSpace(fw.Mode)
+	if mode == "remote" {
+		return ""
+	}
+	host := strings.TrimSpace(fw.LocalHost)
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, strconv.Itoa(fw.LocalPort))
 }
 
 // StartMany 批量启动，逐项返回错误（无错项不出现在 map 中）。
@@ -179,34 +251,81 @@ func (b *RuntimeBiz) StartAutoStart() (map[int]error, error) {
 // Stop 停止一条 Forward；未运行时幂等。主动停止后状态为 stopped。
 func (b *RuntimeBiz) Stop(id int) error {
 	b.mu.Lock()
-	run, ok := b.runs[id]
-	if ok {
-		delete(b.runs, id)
-		b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateStopped}
+	entry := b.runs[id]
+	if entry == nil {
+		b.mu.Unlock()
+		return nil
 	}
+	if entry.phase == runStopping {
+		b.mu.Unlock()
+		return ErrForwardStopping
+	}
+	entry.phase = runStopping
+	generation := entry.generation
+	run := entry.run
 	b.mu.Unlock()
-	if !ok {
+	if run == nil {
 		return nil
 	}
 	slog.Info("forward stop requested", "forward_id", id)
-	return run.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err := run.Stop(ctx)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.isCurrentLocked(id, generation, run) {
+		return err
+	}
+	if err != nil {
+		st := b.states[id]
+		st.ForwardID = id
+		st.Status = RuntimeStateError
+		st.LastError = err.Error()
+		b.states[id] = st
+		return err
+	}
+	delete(b.runs, id)
+	b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateStopped}
+	return nil
 }
 
 // Shutdown 停止全部运行中的实例（应用显式退出路径由上层调用），
 // 随后关闭连接池中的全部池化首跳连接。
 func (b *RuntimeBiz) Shutdown() {
 	b.mu.Lock()
-	runs := make([]runHandle, 0, len(b.runs))
-	for id, run := range b.runs {
-		runs = append(runs, run)
-		delete(b.runs, id)
-		b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateStopped}
+	b.closing = true
+	entries := make(map[int]*runEntry, len(b.runs))
+	for id, entry := range b.runs {
+		entry.phase = runStopping
+		entries[id] = entry
 	}
 	b.mu.Unlock()
-	slog.Info("forward runtime shutdown", "count", len(runs))
-	for _, run := range runs {
-		_ = run.Stop()
+	slog.Info("forward runtime shutdown", "count", len(entries))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	for id, entry := range entries {
+		if entry.run == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(id int, entry *runEntry) {
+			defer wg.Done()
+			err := entry.run.Stop(ctx)
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			if !b.isCurrentLocked(id, entry.generation, entry.run) {
+				return
+			}
+			if err != nil {
+				b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateError, LastError: err.Error()}
+				return
+			}
+			delete(b.runs, id)
+			b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateStopped}
+		}(id, entry)
 	}
+	wg.Wait()
 	b.pool.CloseAll()
 }
 
@@ -243,19 +362,20 @@ func (b *RuntimeBiz) Snapshot() ([]RuntimeStatus, error) {
 	return out, nil
 }
 
-func (b *RuntimeBiz) setState(id int, status string, lastError string) {
+func (b *RuntimeBiz) finishStartFailure(id int, generation uint64, err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	st := b.states[id]
-	st.ForwardID = id
-	st.Status = status
-	st.LastError = lastError
-	b.states[id] = st
+	entry := b.runs[id]
+	if entry == nil || entry.generation != generation {
+		return
+	}
+	delete(b.runs, id)
+	b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateError, LastError: err.Error()}
 }
 
 // watch 消费运行时事件驱动状态机；Done 关闭后按 Err 落终态并清理 runs 表。
 // 主动 Stop 路径 Err() 为 nil，落 stopped，不会误覆盖为 error。
-func (b *RuntimeBiz) watch(id int, run runHandle) {
+func (b *RuntimeBiz) watch(id int, generation uint64, run runHandle) {
 	done := run.Done()
 	events := run.Events()
 	for {
@@ -265,10 +385,13 @@ func (b *RuntimeBiz) watch(id int, run runHandle) {
 				events = nil
 				continue
 			}
-			b.handleEvent(id, run, ev)
+			b.handleEvent(id, generation, run, ev)
 		case <-done:
 			b.mu.Lock()
-			defer b.mu.Unlock()
+			if !b.isCurrentLocked(id, generation, run) {
+				b.mu.Unlock()
+				return
+			}
 			delete(b.runs, id)
 			if err := run.Err(); err != nil {
 				st := b.states[id]
@@ -281,14 +404,18 @@ func (b *RuntimeBiz) watch(id int, run runHandle) {
 				b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateStopped}
 				slog.Info("forward finalized stopped", "forward_id", id)
 			}
+			b.mu.Unlock()
 			return
 		}
 	}
 }
 
-func (b *RuntimeBiz) handleEvent(id int, run runHandle, ev forward.RuntimeEvent) {
+func (b *RuntimeBiz) handleEvent(id int, generation uint64, run runHandle, ev forward.RuntimeEvent) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if !b.isCurrentLocked(id, generation, run) {
+		return
+	}
 	st := b.states[id]
 	st.ForwardID = id
 	switch ev.Type {
@@ -307,6 +434,11 @@ func (b *RuntimeBiz) handleEvent(id int, run runHandle, ev forward.RuntimeEvent)
 		slog.Info("forward reconnected", "forward_id", id)
 	}
 	b.states[id] = st
+}
+
+func (b *RuntimeBiz) isCurrentLocked(id int, generation uint64, run runHandle) bool {
+	entry := b.runs[id]
+	return entry != nil && entry.generation == generation && entry.run == run
 }
 
 func findForwardByID(data model.VaultData, id int) (model.Forward, bool) {

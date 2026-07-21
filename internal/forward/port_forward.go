@@ -1,6 +1,7 @@
 package forward
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -196,7 +197,11 @@ func (f *LocalForward) Start() error {
 	return nil
 }
 
-func (f *LocalForward) Stop() error {
+func (f *LocalForward) Stop(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var stopErr error
 	f.stopOnce.Do(func() {
 		slog.Info("forward stop requested", "forward_id", f.forward.ID, "name", f.forward.Name)
 		f.mu.Lock()
@@ -222,12 +227,21 @@ func (f *LocalForward) Stop() error {
 		if ln != nil {
 			_ = ln.Close()
 		}
-		if done != nil {
-			<-done
+		waitDone := make(chan struct{})
+		go func() {
+			if done != nil {
+				<-done
+			}
+			f.wg.Wait()
+			close(waitDone)
+		}()
+		select {
+		case <-waitDone:
+		case <-ctx.Done():
+			stopErr = fmt.Errorf("forward stop timeout: %w", ctx.Err())
 		}
-		f.wg.Wait()
 	})
-	return nil
+	return stopErr
 }
 
 func (f *LocalForward) Done() <-chan struct{} {
