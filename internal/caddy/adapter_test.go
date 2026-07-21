@@ -201,12 +201,22 @@ func routeConfig(host string) []byte {
 	return []byte(fmt.Sprintf(`{"apps":{"http":{"servers":{"tunnelboard":{"listen":[":443"],"routes":[]}}}},"testHost":%q}`, host))
 }
 
-func TestApplyUsesOwnedProcessAndAFUnixAdmin(t *testing.T) {
-	runtimeBase, err := filepath.Abs(filepath.Join("..", "..", ".s"))
+func shortRuntimeBase(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := caddy.NewWithRuntimeBase(t.TempDir(), runtimeBase)
+	dir, err := os.MkdirTemp(root, ".s-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
+func TestApplyUsesOwnedProcessAndAFUnixAdmin(t *testing.T) {
+	a := caddy.NewWithRuntimeBase(t.TempDir(), shortRuntimeBase(t))
 	admin := installOwnedFake(t, a)
 	if strings.Contains(a.AdminListen(), "127.0.0.1") || !strings.HasPrefix(a.AdminListen(), "unix/") {
 		t.Fatalf("admin endpoint must be AF_UNIX, got %q", a.AdminListen())
@@ -237,11 +247,7 @@ func TestApplyUsesOwnedProcessAndAFUnixAdmin(t *testing.T) {
 }
 
 func TestStopOnlyStopsOwnedProcess(t *testing.T) {
-	runtimeBase, err := filepath.Abs(filepath.Join("..", "..", ".s"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := caddy.NewWithRuntimeBase(t.TempDir(), runtimeBase)
+	a := caddy.NewWithRuntimeBase(t.TempDir(), shortRuntimeBase(t))
 	installOwnedFake(t, a)
 	if err := a.Stop(context.Background()); err != nil {
 		t.Fatalf("unowned Stop: %v", err)
@@ -320,11 +326,7 @@ func TestPinnedCaddyAFUnixPOC(t *testing.T) {
 		bin = absolute
 	}
 	t.Setenv(caddy.EnvPathOverride, bin)
-	runtimeBase, err := filepath.Abs(filepath.Join("..", "..", ".p"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := caddy.NewWithRuntimeBase(t.TempDir(), runtimeBase)
+	a := caddy.NewWithRuntimeBase(t.TempDir(), shortRuntimeBase(t))
 	t.Cleanup(func() { _ = os.RemoveAll(a.RuntimeDir()) })
 	a.CheckPort = func() error { return nil }
 	config := []byte(`{"apps":{"http":{"servers":{"poc":{"listen":["127.0.0.1:0"],"routes":[]}}},"tls":{"automation":{"policies":[{"subjects":["poc.test"],"issuers":[{"module":"internal"}]}]}},"pki":{"certificate_authorities":{"local":{"install_trust":false}}}}}`)
