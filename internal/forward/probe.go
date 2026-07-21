@@ -7,6 +7,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/HanZephyr/TunnelBoard/internal/model"
@@ -15,6 +16,21 @@ import (
 )
 
 var ErrKeepAliveTimeout = errors.New("ssh keepalive timeout")
+
+type LocalListenerState string
+
+const (
+	LocalListenerAvailable LocalListenerState = "available"
+	LocalListenerOccupied  LocalListenerState = "occupied"
+	LocalListenerInvalid   LocalListenerState = "invalid"
+	LocalListenerUnknown   LocalListenerState = "unknown"
+)
+
+type LocalListenerProbe struct {
+	State             LocalListenerState
+	NormalizedAddress string
+	Err               error
+}
 
 type keepAliveResult struct {
 	latency time.Duration
@@ -178,14 +194,34 @@ func isPortForwardDenied(err error) bool {
 // CheckLocalPortAvailable 通过实际绑定预检本地监听端口；可绑定则立即释放并返回 nil。
 // 空 host 按 127.0.0.1 处理（与 LocalForward 启动时的回退一致）。
 func CheckLocalPortAvailable(host string, port int) error {
+	preview := PreviewLocalListener(host, port)
+	if preview.State == LocalListenerAvailable {
+		return nil
+	}
+	return preview.Err
+}
+
+// PreviewLocalListener 只观察当前 bind 结果，不创建 reservation，也不修改 Runtime。
+// owned_by_self 由 biz.RuntimeBiz 的只读 ownership Interface 在此结果之前判定。
+func PreviewLocalListener(host string, port int) LocalListenerProbe {
 	host = strings.TrimSpace(host)
 	if host == "" {
 		host = "127.0.0.1"
 	}
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	if port < 1 || port > 65535 {
+		return LocalListenerProbe{State: LocalListenerInvalid, NormalizedAddress: addr, Err: fmt.Errorf("invalid local port %d", port)}
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		return fmt.Errorf("listen %s failed: %w", addr, err)
+		wrapped := fmt.Errorf("listen %s failed: %w", addr, err)
+		if errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, syscall.Errno(10048)) {
+			return LocalListenerProbe{State: LocalListenerOccupied, NormalizedAddress: addr, Err: wrapped}
+		}
+		return LocalListenerProbe{State: LocalListenerUnknown, NormalizedAddress: addr, Err: wrapped}
 	}
-	return ln.Close()
+	if err := ln.Close(); err != nil {
+		return LocalListenerProbe{State: LocalListenerUnknown, NormalizedAddress: addr, Err: fmt.Errorf("close listener %s failed: %w", addr, err)}
+	}
+	return LocalListenerProbe{State: LocalListenerAvailable, NormalizedAddress: addr}
 }
