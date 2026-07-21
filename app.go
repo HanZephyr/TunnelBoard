@@ -57,10 +57,7 @@ type App struct {
 	trayShow *systray.MenuItem
 	trayQuit *systray.MenuItem
 
-	allowClose        atomic.Bool
-	legacyImportMu    sync.Mutex
-	legacyImportPath  string
-	legacyImportToken string
+	allowClose atomic.Bool
 }
 
 // NewApp 打开默认数据目录下的 Vault 并组装应用 Module。
@@ -296,26 +293,6 @@ func (a *App) GetSnapshot() (application.AppSnapshot, error) {
 	return a.application.GetSnapshot(context.Background())
 }
 
-// GetVaultData 是旧前端兼容查询；内部委托无秘密 Snapshot，再映射旧 shape。
-// Deprecated: 新前端应只使用 GetSnapshot。
-func (a *App) GetVaultData() (model.VaultData, error) {
-	snapshot, err := a.GetSnapshot()
-	if err != nil {
-		return model.VaultData{}, err
-	}
-	hosts := make([]model.SSHHost, 0, len(snapshot.Catalog.SSHHosts))
-	for _, h := range snapshot.Catalog.SSHHosts {
-		hosts = append(hosts, model.SSHHost{ID: h.ID, Name: h.Name, Host: h.Host, Port: h.Port, User: h.User,
-			AuthType: h.AuthType, KeyPath: h.KeyPath, AgentSocketPath: h.AgentSocketPath,
-			KeepAliveIntervalMs: h.KeepAliveIntervalMs, TimeoutMs: h.TimeoutMs,
-			HostKeyAlgorithms: h.HostKeyAlgorithms, Notes: h.Notes})
-	}
-	return model.VaultData{Version: snapshot.SchemaVersion, Folders: snapshot.Catalog.Folders, SSHHosts: hosts,
-		Forwards: snapshot.Catalog.Forwards, WebRoutes: snapshot.Catalog.WebRoutes,
-		HostKeys: snapshot.Catalog.HostKeys, Prefs: model.Prefs{AutoRun: snapshot.Preferences.AutoRun,
-			UpdateCheckEnabled: snapshot.Preferences.UpdateCheckEnabled, UILocale: snapshot.Preferences.UILocale}}, nil
-}
-
 // CreateFolder 在 parentID（0 为顶层）下新建文件夹。
 func (a *App) CreateFolder(name string, parentID int) (model.Folder, error) {
 	if err := a.ensureReady(); err != nil {
@@ -344,44 +321,6 @@ func (a *App) MoveForwardsCommand(command application.MoveForwardsCommand) (appl
 		return application.MoveForwardsResult{}, err
 	}
 	return a.application.MoveForwards(context.Background(), command)
-}
-
-// MoveForwards 把多条 Forward 作为一个 Vault 事务移动到目标文件夹。
-func (a *App) MoveForwards(forwardIDs []int, targetFolderID int) error {
-	if err := a.ensureReady(); err != nil {
-		return err
-	}
-	return a.catalog.MoveForwards(forwardIDs, targetFolderID)
-}
-
-// SaveSSHHost 新建（ID 为 0）或更新 SSH 主机。
-func (a *App) SaveSSHHost(host model.SSHHost) (model.SSHHost, error) {
-	if err := a.ensureReady(); err != nil {
-		return model.SSHHost{}, err
-	}
-	action := biz.SecretKeep
-	if host.ID == 0 && host.Password == "" {
-		action = biz.SecretClear
-	} else if host.Password != "" {
-		action = biz.SecretReplace
-	}
-	result, err := a.application.SaveSSHHost(context.Background(), application.SaveSSHHostCommand{
-		Host: application.SSHHostInput{ID: host.ID, Name: host.Name, Host: host.Host, Port: host.Port, User: host.User,
-			AuthType: host.AuthType, KeyPath: host.KeyPath, AgentSocketPath: host.AgentSocketPath,
-			KeepAliveIntervalMs: host.KeepAliveIntervalMs, TimeoutMs: host.TimeoutMs,
-			HostKeyAlgorithms: host.HostKeyAlgorithms, Notes: host.Notes},
-		SecretAction: action, SecretInput: host.Password,
-	})
-	if err != nil {
-		return model.SSHHost{}, err
-	}
-	if result.RequiresRestart {
-		return model.SSHHost{}, fmt.Errorf("ssh host change requires restart confirmation")
-	}
-	h := result.Host
-	return model.SSHHost{ID: h.ID, Name: h.Name, Host: h.Host, Port: h.Port, User: h.User, AuthType: h.AuthType,
-		KeyPath: h.KeyPath, AgentSocketPath: h.AgentSocketPath, KeepAliveIntervalMs: h.KeepAliveIntervalMs,
-		TimeoutMs: h.TimeoutMs, HostKeyAlgorithms: h.HostKeyAlgorithms, Notes: h.Notes}, nil
 }
 
 func (a *App) SaveSSHHostCommand(command application.SaveSSHHostCommand) (application.SaveSSHHostResult, error) {
@@ -540,40 +479,20 @@ func (a *App) SelectBackupFile() (string, error) {
 	return strings.TrimSpace(srcPath), nil
 }
 
-// PreviewImport 解密备份包并返回导入预览（实体计数、冲突与私钥文件清单）。
-func (a *App) PreviewImport(srcPath, password string) (biz.ImportPreview, error) {
+// StageImportCommand 有界读取并只解密一次，后续提交和私钥另存仅使用短期 token。
+func (a *App) StageImportCommand(request application.StageImportRequest) (application.ImportStagePreview, error) {
 	if err := a.ensureReady(); err != nil {
-		return biz.ImportPreview{}, err
+		return application.ImportStagePreview{}, err
 	}
-	path := strings.TrimSpace(srcPath)
-	preview, err := a.application.StageImport(context.Background(), application.StageImportRequest{Path: path, Password: password})
-	if err != nil {
-		return biz.ImportPreview{}, err
-	}
-	a.legacyImportMu.Lock()
-	a.legacyImportPath = path
-	a.legacyImportToken = preview.Token
-	a.legacyImportMu.Unlock()
-	return preview.Preview, nil
+	request.Path = strings.TrimSpace(request.Path)
+	return a.application.StageImport(context.Background(), request)
 }
 
-// ApplyImport 追加导入到新顶层文件夹；不改变任何网络行为。
-func (a *App) ApplyImport(srcPath, password string, plan biz.ImportPlan) (biz.ImportSummary, error) {
+func (a *App) CommitImportCommand(command application.CommitImportCommand) (application.CommitImportResult, error) {
 	if err := a.ensureReady(); err != nil {
-		return biz.ImportSummary{}, err
+		return application.CommitImportResult{}, err
 	}
-	path := strings.TrimSpace(srcPath)
-	a.legacyImportMu.Lock()
-	token := a.legacyImportToken
-	stagedPath := a.legacyImportPath
-	a.legacyImportToken = ""
-	a.legacyImportPath = ""
-	a.legacyImportMu.Unlock()
-	if token == "" || stagedPath != path {
-		return biz.ImportSummary{}, fmt.Errorf("backup import preview is missing or stale")
-	}
-	result, err := a.application.CommitImport(context.Background(), application.CommitImportCommand{Token: token, Plan: plan})
-	return result.Summary, err
+	return a.application.CommitImport(context.Background(), command)
 }
 
 // RestoreBackup 是旧前端兼容入口；内部仍严格执行零副作用 Stage + 事务 Commit。
@@ -613,25 +532,17 @@ func (a *App) ActivateRestoredNetwork() error {
 	return a.application.ActivateRestoredNetwork(context.Background())
 }
 
-// SaveImportKeyFile 从备份包中取出指定私钥文件并经保存对话框写盘（导入后用户显式另存）。
-func (a *App) SaveImportKeyFile(srcPath, password, keyPath string) error {
+// SaveImportKeyFileCommand 只用 token/keyID 选择后端暂存私钥；私钥字节不进入 WebView。
+func (a *App) SaveImportKeyFileCommand(command application.SaveImportKeyFileCommand) error {
 	if err := a.ensureReady(); err != nil {
 		return err
 	}
-	raw, err := os.ReadFile(strings.TrimSpace(srcPath))
-	if err != nil {
-		return fmt.Errorf("read backup file: %w", err)
-	}
-	_, keyFiles, err := vault.ParseBackup(raw, password)
-	if err != nil {
-		return err
-	}
-	content, ok := keyFiles[keyPath]
-	if !ok {
-		return fmt.Errorf("key file %s not found in backup", keyPath)
+	name := filepath.Base(strings.TrimSpace(command.SuggestedName))
+	if name == "." || name == "" {
+		name = "imported-ssh-key"
 	}
 	destPath, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
-		DefaultFilename: filepath.Base(keyPath),
+		DefaultFilename: name,
 	})
 	if err != nil {
 		return fmt.Errorf("file dialog: %w", err)
@@ -639,10 +550,7 @@ func (a *App) SaveImportKeyFile(srcPath, password, keyPath string) error {
 	if strings.TrimSpace(destPath) == "" {
 		return nil // 用户取消
 	}
-	if err := os.WriteFile(destPath, content, 0o600); err != nil {
-		return fmt.Errorf("write key file: %w", err)
-	}
-	return nil
+	return a.application.SaveImportKeyFile(context.Background(), command.Token, command.KeyID, destPath)
 }
 
 // ExportDiagnosticsWithDialog 导出脱敏诊断包（内存日志 + 状态摘要，不含任何秘密）。

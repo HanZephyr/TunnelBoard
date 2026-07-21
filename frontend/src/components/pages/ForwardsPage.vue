@@ -6,7 +6,6 @@ import {
   DeleteSelection,
   EnrollHostKey,
   GetRuntimeSnapshot,
-  MoveForwards,
   ReplaceHostKey,
   SaveForward,
   StartForward,
@@ -433,7 +432,7 @@ function onMoveTargetChange() {
     confirmClass: 'btn-primary',
     onConfirm: async () => {
       try {
-        await application.moveForwards({ meta: {}, forwardIds: ids, targetFolderId: targetId }, (forwardIds, folderId) => callBackend(MoveForwards, forwardIds, folderId))
+        await application.moveForwards({ meta: {}, forwardIds: ids, targetFolderId: targetId })
         moveTargetId.value = ''
         clearSelection()
         emit('vault-changed')

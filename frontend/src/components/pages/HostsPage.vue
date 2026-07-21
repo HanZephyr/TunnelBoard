@@ -1,7 +1,7 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { DeleteSelection, SaveSSHHost } from '../../../wailsjs/go/main/App'
+import { DeleteSelection } from '../../../wailsjs/go/main/App'
 import { callBackend, errorMessage } from '../../utils/backend'
 import { createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
 import { createApplicationClient } from '../../utils/applicationClient'
@@ -128,8 +128,7 @@ async function saveHost() {
     return
   }
   try {
-    const original = props.sshHosts.find((host) => host.id === command.host.id)
-    const result = await application.saveSSHHost(command, (payload) => callBackend(SaveSSHHost, payload), original)
+    const result = await application.saveSSHHost(command)
     const saved = result?.host || result
     hostModalOpen.value = false
     emit('vault-changed')

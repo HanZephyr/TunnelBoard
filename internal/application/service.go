@@ -2,11 +2,14 @@ package application
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -131,6 +134,11 @@ type stagedImport struct {
 	expiresAt     time.Time
 	vaultRevision string
 	backup        biz.StagedBackup
+	keyPaths      map[string]string
+	keyViews      []KeyFileView
+	exporting     map[string]bool
+	committing    bool
+	committed     bool
 }
 
 func (s *Service) GetSnapshot(ctx context.Context) (AppSnapshot, error) {
@@ -324,13 +332,26 @@ func (s *Service) StageImport(ctx context.Context, request StageImportRequest) (
 		staged.Destroy()
 		return ImportStagePreview{}, err
 	}
+	keyPaths, keyViews, err := makeKeyFileLease(preview.KeyFiles, staged.KeyFiles)
+	if err != nil {
+		staged.Destroy()
+		return ImportStagePreview{}, err
+	}
+	publicPreview := ImportPreviewView{
+		Counts: preview.Counts, FolderName: preview.FolderName,
+		HostConflicts: preview.HostConflicts, KeyFiles: keyViews,
+	}
 	s.importMu.Lock()
 	if s.importStage != nil {
 		s.importStage.backup.Destroy()
 	}
-	s.importStage = &stagedImport{token: packagePreview.Token, expiresAt: packagePreview.ExpiresAt, vaultRevision: revision, backup: staged}
+	s.importStage = &stagedImport{
+		token: packagePreview.Token, expiresAt: packagePreview.ExpiresAt,
+		vaultRevision: revision, backup: staged, keyPaths: keyPaths,
+		keyViews: keyViews, exporting: map[string]bool{},
+	}
 	s.importMu.Unlock()
-	return ImportStagePreview{Token: packagePreview.Token, ExpiresAt: packagePreview.ExpiresAt, Preview: preview}, nil
+	return ImportStagePreview{Token: packagePreview.Token, ExpiresAt: packagePreview.ExpiresAt, Preview: publicPreview}, nil
 }
 
 func (s *Service) CommitImport(ctx context.Context, command CommitImportCommand) (CommitImportResult, error) {
@@ -341,13 +362,23 @@ func (s *Service) CommitImport(ctx context.Context, command CommitImportCommand)
 	defer s.mutation.Unlock()
 	s.importMu.Lock()
 	stage := s.importStage
-	if stage == nil || command.Token == "" || command.Token != stage.token || time.Now().After(stage.expiresAt) {
+	if stage == nil || command.Token == "" || command.Token != stage.token || time.Now().After(stage.expiresAt) || stage.committed || stage.committing {
 		s.importMu.Unlock()
 		return CommitImportResult{}, biz.ErrBackupStageToken
 	}
-	s.importStage = nil
+	stage.committing = true
 	s.importMu.Unlock()
-	defer stage.backup.Destroy()
+	commitFailed := true
+	defer func() {
+		if !commitFailed {
+			return
+		}
+		s.importMu.Lock()
+		if s.importStage == stage {
+			stage.committing = false
+		}
+		s.importMu.Unlock()
+	}()
 	data, err := s.store.Load()
 	if err != nil {
 		return CommitImportResult{}, err
@@ -364,7 +395,104 @@ func (s *Service) CommitImport(ctx context.Context, command CommitImportCommand)
 	if err != nil {
 		return CommitImportResult{}, err
 	}
-	return CommitImportResult{Summary: summary, AcceptedRevision: revisionOfCatalog(data), EventSequence: s.sequence.Add(1)}, nil
+	// Vault 数据只允许消费一次；私钥字节继续由短期 key-export lease 持有，
+	// 不返回 WebView，也不要求再次提供备份密码。
+	stage.backup.Vault = model.VaultData{}
+	summary.KeyFiles = nil
+	summary.KeyFilePaths = nil
+	s.importMu.Lock()
+	stage.committing = false
+	stage.committed = true
+	keyViews := append([]KeyFileView(nil), stage.keyViews...)
+	if len(stage.keyPaths) == 0 {
+		stage.backup.Destroy()
+		s.importStage = nil
+	}
+	s.importMu.Unlock()
+	commitFailed = false
+	return CommitImportResult{Summary: summary, KeyFiles: keyViews, AcceptedRevision: revisionOfCatalog(data), EventSequence: s.sequence.Add(1)}, nil
+}
+
+// SaveImportKeyFile 使用 StageImport 建立的短期 lease 把单个私钥直接写到用户选择的路径。
+// 私钥字节不会进入 Wails DTO；每个 keyID 成功保存一次后立即从内存清除。
+func (s *Service) SaveImportKeyFile(ctx context.Context, token, keyID, destination string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.importMu.Lock()
+	stage := s.importStage
+	if stage == nil || !stage.committed || token == "" || token != stage.token || time.Now().After(stage.expiresAt) {
+		s.importMu.Unlock()
+		return biz.ErrBackupStageToken
+	}
+	path, ok := stage.keyPaths[keyID]
+	if !ok || stage.exporting[keyID] {
+		s.importMu.Unlock()
+		return errors.New("application: import key lease is invalid or already in use")
+	}
+	content, ok := stage.backup.KeyFiles[path]
+	if !ok {
+		s.importMu.Unlock()
+		return errors.New("application: staged import key is unavailable")
+	}
+	copyOfContent := append([]byte(nil), content...)
+	stage.exporting[keyID] = true
+	s.importMu.Unlock()
+
+	err := writePrivateKeyAtomic(ctx, destination, copyOfContent)
+	for i := range copyOfContent {
+		copyOfContent[i] = 0
+	}
+
+	s.importMu.Lock()
+	defer s.importMu.Unlock()
+	if s.importStage != stage {
+		return biz.ErrBackupStageToken
+	}
+	delete(stage.exporting, keyID)
+	if err != nil {
+		return err
+	}
+	for i := range stage.backup.KeyFiles[path] {
+		stage.backup.KeyFiles[path][i] = 0
+	}
+	delete(stage.backup.KeyFiles, path)
+	delete(stage.keyPaths, keyID)
+	for index := range stage.keyViews {
+		if stage.keyViews[index].ID == keyID {
+			stage.keyViews = append(stage.keyViews[:index], stage.keyViews[index+1:]...)
+			break
+		}
+	}
+	if len(stage.keyPaths) == 0 {
+		stage.backup.Destroy()
+		s.importStage = nil
+	}
+	return nil
+}
+
+func makeKeyFileLease(paths []string, keyFiles map[string][]byte) (map[string]string, []KeyFileView, error) {
+	sorted := append([]string(nil), paths...)
+	sort.Strings(sorted)
+	byID := make(map[string]string, len(sorted))
+	views := make([]KeyFileView, 0, len(sorted))
+	for _, path := range sorted {
+		content, ok := keyFiles[path]
+		if !ok {
+			return nil, nil, fmt.Errorf("application: staged key %q is unavailable", filepath.Base(path))
+		}
+		random := make([]byte, 18)
+		if _, err := rand.Read(random); err != nil {
+			return nil, nil, fmt.Errorf("application: create key lease id: %w", err)
+		}
+		id := base64.RawURLEncoding.EncodeToString(random)
+		for i := range random {
+			random[i] = 0
+		}
+		byID[id] = path
+		views = append(views, KeyFileView{ID: id, Name: filepath.Base(path), Size: len(content)})
+	}
+	return byID, views, nil
 }
 
 func (s *Service) CommitRestore(ctx context.Context, request biz.RestoreCommitRequest) (biz.RestoreCommitResult, error) {

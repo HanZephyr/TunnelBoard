@@ -142,7 +142,20 @@ type StageImportRequest struct {
 type ImportStagePreview struct {
 	Token     string            `json:"token"`
 	ExpiresAt time.Time         `json:"expiresAt"`
-	Preview   biz.ImportPreview `json:"preview"`
+	Preview   ImportPreviewView `json:"preview"`
+}
+
+type KeyFileView struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Size int    `json:"size"`
+}
+
+type ImportPreviewView struct {
+	Counts        map[string]int     `json:"counts"`
+	FolderName    string             `json:"folderName"`
+	HostConflicts []biz.HostConflict `json:"hostConflicts"`
+	KeyFiles      []KeyFileView      `json:"keyFiles"`
 }
 
 type CommitImportCommand struct {
@@ -153,6 +166,13 @@ type CommitImportCommand struct {
 
 type CommitImportResult struct {
 	Summary          biz.ImportSummary `json:"summary"`
+	KeyFiles         []KeyFileView     `json:"keyFiles,omitempty"`
 	AcceptedRevision string            `json:"acceptedRevision"`
 	EventSequence    uint64            `json:"eventSequence"`
+}
+
+type SaveImportKeyFileCommand struct {
+	Token         string `json:"token"`
+	KeyID         string `json:"keyId"`
+	SuggestedName string `json:"suggestedName,omitempty"`
 }

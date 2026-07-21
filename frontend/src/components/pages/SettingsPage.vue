@@ -2,7 +2,6 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
-  ApplyImport,
   ApplyTrayLocale,
   CheckForUpdates as CheckForUpdatesAPI,
   ExportBackupWithDialog,
@@ -11,9 +10,10 @@ import {
   GetConfigPath,
   GetUpdateCheckEnabled,
   OpenConfigDir,
-  PreviewImport,
   RestoreBackup,
-  SaveImportKeyFile,
+  StageImportCommand,
+  CommitImportCommand,
+  SaveImportKeyFileCommand,
   SaveUILocale,
   SelectBackupFile,
   SetAutoRunEnabled,
@@ -214,9 +214,11 @@ const exportWarnings = ref([])
 const importState = reactive({
   srcPath: '',
   password: '',
+  token: '',
   preview: null,
   folderName: '',
-  resolutions: []
+  resolutions: [],
+  keyFiles: []
 })
 const isPreviewing = ref(false)
 const isImporting = ref(false)
@@ -250,10 +252,7 @@ const previewKeyFiles = computed(() => {
   return Array.isArray(keyFiles) ? keyFiles : []
 })
 
-const summaryKeyFilePaths = computed(() => {
-  const paths = importSummary.value?.keyFilePaths
-  return Array.isArray(paths) ? paths : []
-})
+const summaryKeyFiles = computed(() => importState.keyFiles)
 
 const canRestore = computed(
   () => !!(restoreState.srcPath && restoreState.password && restoreState.confirmed)
@@ -286,6 +285,9 @@ async function onSelectImportFile() {
     if (!srcPath) return // 用户取消：静默
     importState.srcPath = srcPath
     importState.preview = null
+    importState.token = ''
+    importState.password = ''
+    importState.keyFiles = []
     importState.resolutions = []
     importSummary.value = null
   } catch (err) {
@@ -297,12 +299,19 @@ async function onPreviewImport() {
   if (isPreviewing.value || !importState.srcPath || !importState.password) return
   isPreviewing.value = true
   try {
-    const preview = await callBackend(PreviewImport, importState.srcPath, importState.password)
+    const staged = await callBackend(StageImportCommand, {
+      path: importState.srcPath,
+      password: importState.password
+    })
+    const preview = staged?.preview || null
+    importState.token = String(staged?.token || '')
     importState.preview = preview
     importState.folderName = String(preview?.folderName || '')
+    importState.keyFiles = Array.isArray(preview?.keyFiles) ? preview.keyFiles : []
     const conflicts = Array.isArray(preview?.hostConflicts) ? preview.hostConflicts : []
     importState.resolutions = conflicts.map(() => 'rename')
     importSummary.value = null
+    importState.password = ''
   } catch (err) {
     importState.preview = null
     emit('notify', errorMessage(err))
@@ -327,8 +336,10 @@ async function onApplyImport() {
         action: importState.resolutions[index] === 'skip' ? 'skip' : 'rename'
       }))
     }
-    const summary = await callBackend(ApplyImport, importState.srcPath, importState.password, plan)
+    const result = await callBackend(CommitImportCommand, { meta: {}, token: importState.token, plan })
+    const summary = result?.summary || {}
     importSummary.value = summary
+    importState.keyFiles = Array.isArray(result?.keyFiles) ? result.keyFiles : []
     const imported = summary?.imported || {}
     let message = t('settings.backup.importResult', {
       folders: imported.folders || 0,
@@ -342,7 +353,7 @@ async function onApplyImport() {
       message += ' ' + t('settings.backup.routesDeactivatedNote')
     }
     emit('notify', message)
-    // 防止重复点击造成重复导入；保留 srcPath/password 供私钥另存使用。
+    // 防止重复点击造成重复导入；私钥另存只保留后端 lease token，不保留密码。
     importState.preview = null
     emit('vault-changed')
   } catch (err) {
@@ -352,12 +363,17 @@ async function onApplyImport() {
   }
 }
 
-async function onSaveImportKeyFile(keyPath) {
+async function onSaveImportKeyFile(keyFile) {
   if (props.configurationLocked) return
-  if (!keyPath) return
+  if (!keyFile?.id || !importState.token) return
   try {
     // 保存对话框的关闭即反馈；用户取消时后端同样返回成功，故此处静默。
-    await callBackend(SaveImportKeyFile, importState.srcPath, importState.password, keyPath)
+    await callBackend(SaveImportKeyFileCommand, {
+      token: importState.token,
+      keyId: keyFile.id,
+      suggestedName: keyFile.name
+    })
+    importState.keyFiles = importState.keyFiles.filter((item) => item.id !== keyFile.id)
   } catch (err) {
     emit('notify', errorMessage(err))
   }
@@ -686,7 +702,7 @@ async function onRestoreBackup() {
               <template v-if="previewKeyFiles.length">
                 <div class="config-name mb-1">{{ t('settings.backup.keyFilesTitle') }} ({{ previewKeyFiles.length }})</div>
                 <ul class="config-desc mt-1 mb-2">
-                  <li v-for="keyFile in previewKeyFiles" :key="keyFile">{{ keyFile }}</li>
+                  <li v-for="keyFile in previewKeyFiles" :key="keyFile.id">{{ keyFile.name }} · {{ keyFile.size }} B</li>
                 </ul>
               </template>
 
@@ -700,18 +716,18 @@ async function onRestoreBackup() {
               </button>
             </div>
 
-            <div v-if="summaryKeyFilePaths.length" class="mt-3">
-              <div class="config-name mb-1">{{ t('settings.backup.keyFilesTitle') }} ({{ summaryKeyFilePaths.length }})</div>
+            <div v-if="summaryKeyFiles.length" class="mt-3">
+              <div class="config-name mb-1">{{ t('settings.backup.keyFilesTitle') }} ({{ summaryKeyFiles.length }})</div>
               <div
-                v-for="keyPath in summaryKeyFilePaths"
-                :key="keyPath"
+                v-for="keyFile in summaryKeyFiles"
+                :key="keyFile.id"
                 class="d-flex flex-wrap align-items-center gap-2 mb-1"
               >
-                <span class="config-desc text-break mb-0">{{ keyPath }}</span>
+                <span class="config-desc text-break mb-0">{{ keyFile.name }} · {{ keyFile.size }} B</span>
                 <button
                   type="button"
                   class="btn btn-sm btn-outline-secondary flex-shrink-0"
-                  @click="onSaveImportKeyFile(keyPath)"
+                  @click="onSaveImportKeyFile(keyFile)"
                 >
                   {{ t('settings.backup.saveKeyFile') }}
                 </button>

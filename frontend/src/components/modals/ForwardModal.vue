@@ -1,8 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { CheckLocalPortAvailable, SaveSSHHost } from '../../../wailsjs/go/main/App'
-import { callBackend, errorMessage, isValidPort } from '../../utils/backend'
+import { errorMessage, isValidPort } from '../../utils/backend'
 import BaseDialog from '../common/BaseDialog.vue'
 import SSHHostFields from '../hosts/SSHHostFields.vue'
 import { createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
@@ -118,7 +117,7 @@ async function saveNewHost() {
   newHostError.value = ''
   const command = toSaveSSHHostCommand(newHostForm)
   try {
-    const result = await application.saveSSHHost(command, (payload) => callBackend(SaveSSHHost, payload))
+    const result = await application.saveSSHHost(command)
     const saved = result?.host || result
     const newId = Number(saved?.id)
     if (Number.isInteger(newId) && newId > 0 && !props.form.chainHostIds.includes(newId)) {
@@ -149,7 +148,7 @@ watch(
     const host = String(props.form.localHost || '')
     portCheckTimer = setTimeout(async () => {
       try {
-        const result = await application.previewLocalListener({ host, port, editingForwardId: props.editingForwardId || 0 }, (localHost, localPort) => CheckLocalPortAvailable(localHost, localPort))
+        const result = await application.previewLocalListener({ host, port, forwardId: props.editingForwardId || 0 })
         if (generation !== portCheckGeneration || !props.show) return
         portWarning.value = result?.status === 'occupied' ? t('forwards.modal.portConflict', { port }) : result?.status === 'unknown' ? String(result?.message || '') : ''
       } catch (_) {

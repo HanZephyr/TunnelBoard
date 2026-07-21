@@ -6,7 +6,6 @@ import {
   CheckForUpdates as CheckForUpdatesAPI,
   GetAppVersion,
   GetUpdateCheckEnabled,
-  GetVaultData,
   SaveUILocale
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL } from '../wailsjs/runtime/runtime'
@@ -100,7 +99,7 @@ const hasSnapshot = ref(false)
 
 async function loadVault() {
   await snapshotStore.refresh(async () => {
-    const raw = await application.getSnapshot(() => callBackend(GetVaultData))
+    const raw = await application.getSnapshot()
     const catalog = raw?.catalog || raw?.Catalog || raw
     return {
       ...catalog,

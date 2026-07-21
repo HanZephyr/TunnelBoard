@@ -3,28 +3,23 @@ function runtimeBindings() {
 }
 
 export function createApplicationClient(bindings = runtimeBindings()) {
+  const invoke = (name, ...args) => {
+    const binding = bindings[name]
+    if (typeof binding !== 'function') throw new Error(`application binding ${name} is unavailable`)
+    return binding(...args)
+  }
   return {
-    async getSnapshot(legacyGetVault) {
-      if (typeof bindings.GetSnapshot === 'function') return bindings.GetSnapshot()
-      return legacyGetVault()
+    async getSnapshot() {
+      return invoke('GetSnapshot')
     },
-    async saveSSHHost(command, legacySave, original = {}) {
-      if (typeof bindings.SaveSSHHostCommand === 'function') return bindings.SaveSSHHostCommand(command)
-      const password = command.secretAction === 'replace' ? command.secretInput : command.secretAction === 'keep' ? String(original.password || '') : ''
-      return legacySave({ ...command.host, password })
+    async saveSSHHost(command) {
+      return invoke('SaveSSHHostCommand', command)
     },
-    async moveForwards(command, legacyMove) {
-      if (typeof bindings.MoveForwardsCommand === 'function') return bindings.MoveForwardsCommand(command)
-      return legacyMove(command.forwardIds, command.targetFolderId)
+    async moveForwards(command) {
+      return invoke('MoveForwardsCommand', command)
     },
-    async previewLocalListener(command, legacyCheck) {
-      if (typeof bindings.PreviewLocalListenerCommand === 'function') return bindings.PreviewLocalListenerCommand(command)
-      try {
-        await legacyCheck(command.host, command.port)
-        return { status: 'available', host: command.host, port: command.port }
-      } catch (error) {
-        return { status: 'occupied', host: command.host, port: command.port, message: error instanceof Error ? error.message : String(error) }
-      }
+    async previewLocalListener(command) {
+      return invoke('PreviewLocalListenerCommand', command)
     }
   }
 }
