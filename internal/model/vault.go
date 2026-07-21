@@ -38,6 +38,9 @@ type SSHHost struct {
 	TimeoutMs           int    `json:"timeoutMs,omitempty"`
 	HostKeyAlgorithms   string `json:"hostKeyAlgorithms,omitempty"`
 	Notes               string `json:"notes,omitempty"`
+	// CredentialRevision 仅在持久秘密实际 replace/clear 时递增；连接池据此换代，
+	// 不把秘密明文或可离线猜测的秘密哈希纳入连接身份。
+	CredentialRevision uint64 `json:"credentialRevision,omitempty"`
 }
 
 // Forward 是一条独立的 SSH 端口转发规则。

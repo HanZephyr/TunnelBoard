@@ -1,6 +1,8 @@
 package forward
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -11,6 +13,39 @@ import (
 
 	"golang.org/x/crypto/ssh"
 )
+
+var ErrKeepAliveTimeout = errors.New("ssh keepalive timeout")
+
+type keepAliveResult struct {
+	latency time.Duration
+	err     error
+}
+
+// probeSSH 对一次 SSH global request 设置独立 deadline。调用者在 timeout 后
+// 关闭捕获的精确连接代，使可能仍阻塞的 SendRequest goroutine 退出。
+func probeSSH(ctx context.Context, client sshClient, timeout time.Duration) (time.Duration, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	result := make(chan keepAliveResult, 1)
+	go func() {
+		latency, err := sendKeepAliveRequest(client)
+		result <- keepAliveResult{latency: latency, err: err}
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case <-timer.C:
+		return 0, ErrKeepAliveTimeout
+	case r := <-result:
+		return r.latency, r.err
+	}
+}
 
 // sendKeepAliveRequest 发送一次 keepalive@openssh.com 请求并测量往返时延；
 // LocalForward 探测循环（经 TestSSHHostLatency）与 SSHConnPool 池级 keepalive

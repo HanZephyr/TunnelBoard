@@ -23,6 +23,7 @@ type fakeSSHClient struct {
 	waitErr   error
 	sendErr   error
 	sendCalls int
+	blockSend bool
 	dialErr   error
 	dialCalls []string
 }
@@ -58,12 +59,67 @@ func (c *fakeSSHClient) Dial(network, addr string) (net.Conn, error) {
 
 func (c *fakeSSHClient) SendRequest(name string, wantReply bool, payload []byte) (bool, []byte, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.sendCalls++
-	if c.sendErr != nil {
-		return false, nil, c.sendErr
+	block := c.blockSend
+	err := c.sendErr
+	c.mu.Unlock()
+	if block {
+		<-c.waitCh
+		return false, nil, errors.New("client closed")
+	}
+	if err != nil {
+		return false, nil, err
 	}
 	return true, nil, nil
+}
+
+func TestSSHConnPool_KeepAliveTimeoutClosesBlockedGeneration(t *testing.T) {
+	dialer := &fakePoolDialer{onClient: func(c *fakeSSHClient) { c.blockSend = true }}
+	pool := newSSHConnPoolWithDial(dialer.dial)
+	pool.probeTimeout = func(time.Duration) time.Duration { return 20 * time.Millisecond }
+	hosts := poolTestHosts()
+	hosts[0].KeepAliveIntervalMs = 5
+
+	_, release, _, err := pool.dialChain(hosts, nil)
+	if err != nil {
+		t.Fatalf("dialChain: %v", err)
+	}
+	defer release()
+	waitForPoolCond(t, dialer.client(0).isClosed, "blocked keepalive must close its connection generation")
+	if dead, _, _ := pool.entryState(7); !dead {
+		t.Fatal("timed-out keepalive must mark generation dead")
+	}
+}
+
+func TestSSHConnPool_ConnectionIdentityChangeCreatesNewGeneration(t *testing.T) {
+	dialer := &fakePoolDialer{}
+	pool := newSSHConnPoolWithDial(dialer.dial)
+	hostA := poolTestHosts()[0]
+	_, releaseA, _, err := pool.dialChain([]model.SSHHost{hostA}, nil)
+	if err != nil {
+		t.Fatalf("dial A: %v", err)
+	}
+
+	hostB := hostA
+	hostB.Host = "10.0.0.99"
+	_, releaseB, _, err := pool.dialChain([]model.SSHHost{hostB}, nil)
+	if err != nil {
+		t.Fatalf("dial B: %v", err)
+	}
+	if dialer.callCount() != 2 {
+		t.Fatalf("identity change dial calls = %d, want 2", dialer.callCount())
+	}
+	if dialer.client(0).isClosed() {
+		t.Fatal("old generation must remain alive while its lease is held")
+	}
+	releaseA()
+	if !dialer.client(0).isClosed() {
+		t.Fatal("old generation must close after its final lease release")
+	}
+	if dialer.client(1).isClosed() {
+		t.Fatal("releasing old identity must not close current identity")
+	}
+	releaseB()
 }
 
 // kill 模拟连接死亡：Wait 以给定错误返回（不经过 Close）。
@@ -147,14 +203,19 @@ func poolTestHosts() []model.SSHHost {
 // entryState 池内省：持锁读取条目 dead/refs，供测试断言生命周期。
 func (p *SSHConnPool) entryState(id int) (dead bool, refs int, ok bool) {
 	p.mu.Lock()
-	entry, exists := p.entries[id]
+	entries, exists := p.entries[id]
 	p.mu.Unlock()
-	if !exists {
+	if !exists || len(entries) == 0 {
 		return false, 0, false
 	}
-	entry.mu.Lock()
-	defer entry.mu.Unlock()
-	return entry.dead, entry.refs, true
+	dead = true
+	for _, entry := range entries {
+		entry.mu.Lock()
+		dead = dead && entry.dead
+		refs += entry.refs
+		entry.mu.Unlock()
+	}
+	return dead, refs, true
 }
 
 // (a) 同一首跳主机两次 DialChain：只拨一次号，两次返回同一客户端，shared=true。
