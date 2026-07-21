@@ -78,6 +78,27 @@ func TestRemoveCAAuthorityAndKeysRejectsMismatchedPrivateKey(t *testing.T) {
 	}
 }
 
+func TestLegacyAuthorityPathsIncludeRedirectedConfigRoot(t *testing.T) {
+	appData := t.TempDir()
+	implicit := filepath.Join(appData, "TunnelBoard")
+	redirected := filepath.Join(t.TempDir(), "portable-vault")
+	if err := os.MkdirAll(implicit, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(implicit, "config.root"), []byte(redirected+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	paths, err := legacyAuthorityPaths(appData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRedirected := filepath.Join(redirected, "caddy", "pki", "authorities", "local", "root.crt")
+	if len(paths) != 2 || paths[1] != wantRedirected {
+		t.Fatalf("legacy authority paths = %v, want redirected %s", paths, wantRedirected)
+	}
+}
+
 func testCleanupCA(t *testing.T) ([]byte, []byte) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

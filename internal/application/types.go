@@ -228,6 +228,15 @@ type CommitRouteChangeCommand struct {
 	ConfirmCATrust   bool        `json:"confirmCATrust"`
 }
 
+type RestoreActivationPreview struct {
+	CATrustNeeded bool   `json:"caTrustNeeded"`
+	CAFingerprint string `json:"caFingerprint,omitempty"`
+}
+
+type ActivateRestoredNetworkCommand struct {
+	ConfirmedCAFingerprint string `json:"confirmedCAFingerprint,omitempty"`
+}
+
 type RouteCommandOutcome string
 
 const (

@@ -92,3 +92,17 @@ func RemoveLegacyInstallation() error {
 	}
 	return RemoveLegacyMachineCA(context.Background())
 }
+
+// RemoveLegacyInstallationForParent resolves the unelevated TunnelBoard user's
+// profile from the verified parent PID, so over-the-shoulder UAC credentials do
+// not redirect legacy CA cleanup into the administrator's profile.
+func RemoveLegacyInstallationForParent(parentPID uint32) error {
+	if err := RemoveLegacyService(); err != nil {
+		return err
+	}
+	appData, err := parentProcessAppData(parentPID)
+	if err != nil {
+		return err
+	}
+	return RemoveLegacyMachineCAForAppData(context.Background(), appData)
+}

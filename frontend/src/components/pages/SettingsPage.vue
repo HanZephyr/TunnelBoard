@@ -11,6 +11,7 @@ import {
   OpenConfigDir,
 	StageRestoreCommand,
 	CommitRestoreCommand,
+	PreviewRestoredNetworkActivation,
 	ActivateRestoredNetwork,
   StageImportCommand,
   CommitImportCommand,
@@ -61,6 +62,7 @@ const updateCheckDialog = reactive({
   releaseNotes: '',
   message: ''
 })
+const restoreActivationConfirm = reactive({ visible: false, fingerprint: '' })
 
 async function loadUpdatePreference() {
   updatePreferencePhase.value = 'loading'
@@ -467,10 +469,34 @@ async function onActivateRestoredNetwork() {
 	if (isActivatingRestore.value) return
 	isActivatingRestore.value = true
 	try {
-		await callBackend(ActivateRestoredNetwork)
-		restoreState.quarantined = false
-		emit('notify', t('settings.backup.restoreActivated'))
-		emit('vault-changed')
+		const preview = await callBackend(PreviewRestoredNetworkActivation)
+		if (preview?.caTrustNeeded) {
+			restoreActivationConfirm.fingerprint = preview.caFingerprint || ''
+			restoreActivationConfirm.visible = true
+			return
+		}
+		await activateRestoredNetworkWithFingerprint('')
+	} catch (err) {
+		emit('notify', errorMessage(err))
+	} finally {
+		isActivatingRestore.value = false
+	}
+}
+
+async function activateRestoredNetworkWithFingerprint(fingerprint) {
+	await callBackend(ActivateRestoredNetwork, { confirmedCAFingerprint: fingerprint })
+	restoreState.quarantined = false
+	restoreActivationConfirm.visible = false
+	restoreActivationConfirm.fingerprint = ''
+	emit('notify', t('settings.backup.restoreActivated'))
+	emit('vault-changed')
+}
+
+async function confirmRestoreActivation() {
+	if (isActivatingRestore.value) return
+	isActivatingRestore.value = true
+	try {
+		await activateRestoredNetworkWithFingerprint(restoreActivationConfirm.fingerprint)
 	} catch (err) {
 		emit('notify', errorMessage(err))
 	} finally {
@@ -904,6 +930,17 @@ async function onActivateRestoredNetwork() {
             >
               {{ t('app.common.close') }}
             </button>
+    </template>
+  </BaseDialog>
+  <BaseDialog :visible="restoreActivationConfirm.visible" :title="t('routes.confirmations.caTrustTitle')" :busy="isActivatingRestore" @close="restoreActivationConfirm.visible = false">
+    <p class="action-dialog-message">{{ t('routes.confirmations.caTrustMessage') }}</p>
+    <div class="inline-notice" role="note">
+      <span>{{ t('routes.confirmations.caFingerprintLabel') }}</span>
+      <code class="font-mono text-break">{{ restoreActivationConfirm.fingerprint }}</code>
+    </div>
+    <template #footer>
+      <button type="button" class="btn btn-outline-secondary" :disabled="isActivatingRestore" @click="restoreActivationConfirm.visible = false">{{ t('app.common.cancel') }}</button>
+      <button type="button" class="btn btn-warning" :disabled="isActivatingRestore" @click="confirmRestoreActivation">{{ t('app.common.confirm') }}</button>
     </template>
   </BaseDialog>
 </template>

@@ -557,11 +557,18 @@ func (a *App) CommitRestoreCommand(request biz.RestoreCommitRequest) (biz.Restor
 	return a.application.CommitRestore(context.Background(), request)
 }
 
-func (a *App) ActivateRestoredNetwork() error {
+func (a *App) PreviewRestoredNetworkActivation() (application.RestoreActivationPreview, error) {
+	if err := a.ensureReady(); err != nil {
+		return application.RestoreActivationPreview{}, err
+	}
+	return a.application.PreviewRestoredNetworkActivation(context.Background())
+}
+
+func (a *App) ActivateRestoredNetwork(command application.ActivateRestoredNetworkCommand) error {
 	if err := a.ensureReady(); err != nil {
 		return err
 	}
-	return a.application.ActivateRestoredNetwork(context.Background())
+	return a.application.ActivateRestoredNetwork(context.Background(), command)
 }
 
 // SaveImportKeyFileCommand 只用 token/keyID 选择后端暂存私钥；私钥字节不进入 WebView。

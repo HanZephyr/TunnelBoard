@@ -240,6 +240,7 @@ type SessionHelperOptions struct {
 	Protocol            string
 	Environment         Environment
 	VerifyParent        func(parentPID uint32) error
+	LegacyMigration     func(parentPID uint32) error
 	SkipLegacyMigration bool
 }
 
@@ -259,7 +260,11 @@ func RunSessionHelper(options SessionHelperOptions) error {
 		return fmt.Errorf("helper: verify parent process: %w", err)
 	}
 	if !options.SkipLegacyMigration {
-		if err := RemoveLegacyInstallation(); err != nil {
+		migration := options.LegacyMigration
+		if migration == nil {
+			migration = RemoveLegacyInstallationForParent
+		}
+		if err := migration(options.ParentPID); err != nil {
 			return fmt.Errorf("helper: remove legacy service before starting session: %w", err)
 		}
 	}

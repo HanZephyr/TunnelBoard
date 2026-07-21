@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 // 调用方必须让用户明确确认后把该域名放入 confirmedDomains 重试（CONTEXT.md:63）。
 var (
 	ErrDomainConfirmationRequired = errors.New("biz: domain override requires explicit confirmation")
+	ErrCAConfirmationRequired     = errors.New("biz: current-user CA trust requires explicit fingerprint confirmation")
 	ErrRouteRecoveryPending       = errors.New("biz: interrupted route transaction requires explicit recovery")
 )
 
@@ -126,14 +128,22 @@ func (b *RouterBiz) ApplyRoute(routeID int, confirmedDomains []string) (RouteApp
 	if target.HostsEnabled && route.NeedsConfirmation(target.Domain) && !containsFold(confirmedDomains, target.Domain) {
 		return RouteApplyResult{}, fmt.Errorf("%w: %s", ErrDomainConfirmationRequired, target.Domain)
 	}
-	return b.applySystemLocked()
+	return b.applySystemLocked("")
 }
 
 // ReconcileRoutes 按 Vault 当前状态全量重推系统（删除 Route/Forward 后的清理不需要域名确认）。
 func (b *RouterBiz) ReconcileRoutes() (RouteApplyResult, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.applySystemLocked()
+	return b.applySystemLocked("")
+}
+
+// ReconcileRoutesWithCATrust 仅在调用方已经向用户展示并确认了当前 CA 的
+// 完整 SHA-256 指纹后使用。指纹在任何副作用发生前重新计算并精确匹配。
+func (b *RouterBiz) ReconcileRoutesWithCATrust(confirmedFingerprint string) (RouteApplyResult, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.applySystemLocked(confirmedFingerprint)
 }
 
 // RemoveRoute 删除 Route 并重推系统（hosts 记录随之撤销；最后一个 Caddy Route 移除后停止 Caddy 并撤 CA）。
@@ -143,17 +153,26 @@ func (b *RouterBiz) RemoveRoute(routeID int) (RouteApplyResult, error) {
 	if err := b.catalog.DeleteWebRoute(routeID); err != nil {
 		return RouteApplyResult{}, err
 	}
-	return b.applySystemLocked()
+	return b.applySystemLocked("")
 }
 
 // applySystem 是统一的系统重推流程：快照 → hosts → Caddy → CA；失败逆序回滚。
-func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) {
+func (b *RouterBiz) applySystemLocked(confirmedCAFingerprint string) (result RouteApplyResult, retErr error) {
 	if err := b.validatePendingJournalLocked(); err != nil {
 		return RouteApplyResult{}, err
 	}
 	data, err := b.store.Load()
 	if err != nil {
 		return RouteApplyResult{}, err
+	}
+	if hasCaddyEnabledRoute(data) {
+		preview, err := b.previewDesiredLocked(data, 0)
+		if err != nil {
+			return RouteApplyResult{}, err
+		}
+		if preview.CATrustNeeded && !strings.EqualFold(strings.TrimSpace(confirmedCAFingerprint), preview.CAFingerprint) {
+			return RouteApplyResult{}, fmt.Errorf("%w: %s", ErrCAConfirmationRequired, preview.CAFingerprint)
+		}
 	}
 	if data.Prefs.CATrustedSHA256 != "" {
 		if _, err := b.store.Update(func(current *model.VaultData) error {
