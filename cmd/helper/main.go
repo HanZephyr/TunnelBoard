@@ -14,6 +14,13 @@ import (
 )
 
 func main() {
+	if handled, err := runSelfCheck(os.Args[1:], os.Stdout); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	sessionHelper := flag.Bool("session-helper", false, "run as an elevated application-session helper")
 	pipePath := flag.String("pipe", "", "parent-created random named pipe")
 	parentPID := flag.Uint("parent-pid", 0, "parent TunnelBoard process id")

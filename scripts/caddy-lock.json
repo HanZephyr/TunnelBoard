@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "version": "2.11.4",
+  "license_url": "https://github.com/caddyserver/caddy/blob/v2.11.4/LICENSE",
+  "targets": {
+    "windows-amd64": {
+      "os": "windows",
+      "arch": "amd64",
+      "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_windows_amd64.zip",
+      "archive_format": "zip",
+      "archive_member": "caddy.exe",
+      "archive_size": 17559418,
+      "max_download_bytes": 19000000,
+      "archive_sha256": "1708333f79e274c7697285afe6d592ab39314e0b131e9ec6bea08ad27df62ebf",
+      "binary_sha256": "5cb9ab71e5756ce72840b8234177a2f40c8b4ab47a806b8e841e2b784e9df62b"
+    },
+    "darwin-amd64": {
+      "os": "darwin",
+      "arch": "amd64",
+      "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_mac_amd64.tar.gz",
+      "archive_format": "tar.gz",
+      "archive_member": "caddy",
+      "archive_size": 17631734,
+      "max_download_bytes": 19000000,
+      "archive_sha256": "34bc9e5cceee8d67844ef51da624f5b79e8d070f27236e050c3f0066a2dba534",
+      "binary_sha256": "4900f5717695c2685e79a51fe4da87d897fd2feb4b19fd8c0c8ac425355e3cc9"
+    },
+    "darwin-arm64": {
+      "os": "darwin",
+      "arch": "arm64",
+      "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_mac_arm64.tar.gz",
+      "archive_format": "tar.gz",
+      "archive_member": "caddy",
+      "archive_size": 16448366,
+      "max_download_bytes": 18000000,
+      "archive_sha256": "9efb0af2d6cf09cfb5053c0e51721b9b3d4956d346234f39368d943d25a3c9a7",
+      "binary_sha256": "e9ebf99dfd4b72259debe1830c83e86c63fb89a88e28b4e7c5e78a35fa76c92d"
+    },
+    "linux-amd64": {
+      "os": "linux",
+      "arch": "amd64",
+      "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_linux_amd64.tar.gz",
+      "archive_format": "tar.gz",
+      "archive_member": "caddy",
+      "archive_size": 17238873,
+      "max_download_bytes": 19000000,
+      "archive_sha256": "527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9",
+      "binary_sha256": "b7105518e3ed1c0761f232e44fc09345535533c9cb0abf0e12809416c7ac64d9"
+    }
+  }
+}

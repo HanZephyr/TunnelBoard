@@ -80,6 +80,7 @@ func NewApp() *App {
 	}
 	caTrust := helper.NewCurrentUserCATrustAt(platformDataDir)
 	helperOperator := helper.NewOperator()
+	helper.SetExpectedBinarySHA256(helperBundleSHA256)
 	caddyAdapter := caddy.New(platformDataDir)
 	caddyAdapter.ExpectedSHA256 = caddyBundleSHA256
 	caddyAdapter.Output = diag.NewSourceWriter(logStore, diag.LogCaddy)
