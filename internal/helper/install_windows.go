@@ -3,90 +3,209 @@
 package helper
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
-	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
-	"time"
+	"syscall"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
-// HelperBinaryName 是与主程序同目录交付的 helper 可执行文件名。
 const HelperBinaryName = "tunnelboard-helper.exe"
-
-// HelperBinaryEnvVar 允许在开发/测试中覆盖 helper 二进制路径。
 const HelperBinaryEnvVar = "TUNNELBOARD_HELPER_PATH"
 
-// EnsureInstalled 确认 helper 服务可用：先 Ping；不可达则经 UAC 提升安装并轮询等待上线。
-// 主程序本身绝不以管理员运行，提升只发生在 helper 的 -install 子进程。
-func (c *Client) EnsureInstalled() error {
-	if _, err := c.Ping(); err == nil {
-		return nil
-	}
-	if err := elevateInstall(); err != nil {
-		return err
-	}
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		if _, err := c.Ping(); err == nil {
-			return nil
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("helper: service did not come up within 30s after install")
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
-}
+var ErrAuthorizationCancelled = errors.New("helper: user cancelled administrator authorization")
 
-// elevateInstall 以 runas 提升执行 helper 的 -install（触发一次 UAC 并等待结束）。
-// 当前（普通权限）用户的 SID 显式传给提权进程：管道 DACL 按它授权，
-// 覆盖标准用户借管理员凭据安装的场景（提权进程自身账户并非安装者）。
-func elevateInstall() error {
+func launchElevatedSessionHelper(pipePath string, parentPID uint32, protocol string) (elevatedProcess, error) {
 	exe, err := helperBinaryPath()
 	if err != nil {
+		return nil, err
+	}
+	if err := verifyAuthenticode(exe); err != nil {
+		return nil, fmt.Errorf("helper: verify helper signature: %w", err)
+	}
+	parameters := windowsCommandLine(
+		"--session-helper",
+		"--pipe", pipePath,
+		"--parent-pid", strconv.FormatUint(uint64(parentPID), 10),
+		"--protocol", protocol,
+	)
+	process, err := shellExecuteRunAs(exe, parameters)
+	if err != nil {
+		if errors.Is(err, syscall.Errno(windows.ERROR_CANCELLED)) {
+			return nil, ErrAuthorizationCancelled
+		}
+		return nil, fmt.Errorf("helper: launch elevated session helper: %w", err)
+	}
+	return process, nil
+}
+
+func helperBinaryPath() (string, error) {
+	if path := strings.TrimSpace(os.Getenv(HelperBinaryEnvVar)); path != "" {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return "", err
+		}
+		info, err := os.Stat(absolute)
+		if err != nil || info.IsDir() {
+			return "", fmt.Errorf("helper: %s=%s is not a usable file", HelperBinaryEnvVar, path)
+		}
+		return absolute, nil
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("helper: resolve application executable: %w", err)
+	}
+	path := filepath.Join(filepath.Dir(executable), HelperBinaryName)
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return "", fmt.Errorf("helper: %s not found beside application", path)
+	}
+	return path, nil
+}
+
+func windowsCommandLine(args ...string) string {
+	escaped := make([]string, len(args))
+	for index, argument := range args {
+		escaped[index] = syscall.EscapeArg(argument)
+	}
+	return strings.Join(escaped, " ")
+}
+
+type shellExecuteInfo struct {
+	Size       uint32
+	Mask       uint32
+	HWND       uintptr
+	Verb       *uint16
+	File       *uint16
+	Parameters *uint16
+	Directory  *uint16
+	Show       int32
+	Instance   windows.Handle
+	IDList     uintptr
+	Class      *uint16
+	ClassKey   windows.Handle
+	HotKey     uint32
+	Icon       windows.Handle
+	Process    windows.Handle
+}
+
+const seeMaskNoCloseProcess = 0x00000040
+
+var procShellExecuteExW = windows.NewLazySystemDLL("shell32.dll").NewProc("ShellExecuteExW")
+
+func shellExecuteRunAs(executable, parameters string) (*windowsElevatedProcess, error) {
+	verb, err := windows.UTF16PtrFromString("runas")
+	if err != nil {
+		return nil, err
+	}
+	file, err := windows.UTF16PtrFromString(executable)
+	if err != nil {
+		return nil, err
+	}
+	params, err := windows.UTF16PtrFromString(parameters)
+	if err != nil {
+		return nil, err
+	}
+	info := shellExecuteInfo{
+		Size:       uint32(unsafe.Sizeof(shellExecuteInfo{})),
+		Mask:       seeMaskNoCloseProcess,
+		Verb:       verb,
+		File:       file,
+		Parameters: params,
+		Show:       windows.SW_HIDE,
+	}
+	result, _, callErr := procShellExecuteExW.Call(uintptr(unsafe.Pointer(&info)))
+	if result == 0 {
+		if callErr != nil && callErr != syscall.Errno(0) {
+			return nil, callErr
+		}
+		return nil, errors.New("ShellExecuteExW failed")
+	}
+	if info.Process == 0 {
+		return nil, errors.New("ShellExecuteExW returned no process handle")
+	}
+	pid, err := windows.GetProcessId(info.Process)
+	if err != nil {
+		_ = windows.CloseHandle(info.Process)
+		return nil, fmt.Errorf("helper: get elevated process id: %w", err)
+	}
+	return &windowsElevatedProcess{handle: info.Process, pid: pid}, nil
+}
+
+type windowsElevatedProcess struct {
+	handle windows.Handle
+	pid    uint32
+}
+
+func (p *windowsElevatedProcess) PID() uint32 { return p.pid }
+
+func (p *windowsElevatedProcess) Wait(ctx context.Context) error {
+	done := make(chan error, 1)
+	go func() {
+		_, err := windows.WaitForSingleObject(p.handle, windows.INFINITE)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (p *windowsElevatedProcess) Close() error {
+	if p.handle == 0 {
+		return nil
+	}
+	err := windows.CloseHandle(p.handle)
+	p.handle = 0
+	return err
+}
+
+func verifyParentProcess(parentPID uint32) error {
+	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, parentPID)
+	if err != nil {
 		return err
 	}
-	u, err := user.Current()
+	defer windows.CloseHandle(handle)
+	buffer := make([]uint16, 32768)
+	size := uint32(len(buffer))
+	if err := windows.QueryFullProcessImageName(handle, 0, &buffer[0], &size); err != nil {
+		return err
+	}
+	path := windows.UTF16ToString(buffer[:size])
+	if !strings.EqualFold(filepath.Base(path), "tunnelboard.exe") {
+		return fmt.Errorf("unexpected parent executable %q", filepath.Base(path))
+	}
+	return verifyAuthenticode(path)
+}
+
+func verifyAuthenticode(path string) error {
+	pathUTF16, err := windows.UTF16PtrFromString(path)
 	if err != nil {
-		return fmt.Errorf("helper: resolve current user: %w", err)
+		return err
 	}
-	cmd := exec.Command("powershell", elevatedInstallArgs(exe, u.Uid)...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("helper: elevated install failed: %w: %s", err, strings.TrimSpace(string(out)))
+	fileInfo := windows.WinTrustFileInfo{
+		Size:     uint32(unsafe.Sizeof(windows.WinTrustFileInfo{})),
+		FilePath: pathUTF16,
 	}
-	return nil
-}
-
-// elevatedInstallArgs 构造 PowerShell 命令行。ArgumentList 必须整体为带引号的字符串数组：
-// 不加引号时 PowerShell 会把 -owner 解析为 Start-Process 自身的命名参数
-// （NamedParameterNotFound，issue #1 修复后的实际复现错误）。
-func elevatedInstallArgs(exe, ownerSID string) []string {
-	ps := fmt.Sprintf("Start-Process -Verb RunAs -Wait -FilePath '%s' -ArgumentList '-install','-owner','%s'",
-		escapePSSingleQuoted(exe), escapePSSingleQuoted(ownerSID))
-	return []string{"-NoProfile", "-WindowStyle", "Hidden", "-Command", ps}
-}
-
-// escapePSSingleQuoted 转义 PowerShell 单引号字符串内的单引号。
-func escapePSSingleQuoted(s string) string {
-	return strings.ReplaceAll(s, "'", "''")
-}
-
-// helperBinaryPath 定位 helper 二进制：环境变量覆盖优先，否则与主程序同目录。
-func helperBinaryPath() (string, error) {
-	if p := strings.TrimSpace(os.Getenv(HelperBinaryEnvVar)); p != "" {
-		if _, err := os.Stat(p); err != nil {
-			return "", fmt.Errorf("helper: %s=%s not usable: %w", HelperBinaryEnvVar, p, err)
-		}
-		return p, nil
+	data := windows.WinTrustData{
+		Size:                            uint32(unsafe.Sizeof(windows.WinTrustData{})),
+		UIChoice:                        windows.WTD_UI_NONE,
+		RevocationChecks:                windows.WTD_REVOKE_NONE,
+		UnionChoice:                     windows.WTD_CHOICE_FILE,
+		StateAction:                     windows.WTD_STATEACTION_VERIFY,
+		ProvFlags:                       windows.WTD_CACHE_ONLY_URL_RETRIEVAL,
+		FileOrCatalogOrBlobOrSgnrOrCert: unsafe.Pointer(&fileInfo),
 	}
-	exe, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("helper: resolve executable: %w", err)
-	}
-	p := filepath.Join(filepath.Dir(exe), HelperBinaryName)
-	if _, err := os.Stat(p); err != nil {
-		return "", fmt.Errorf("helper: %s not found beside app: %w", p, err)
-	}
-	return p, nil
+	verifyErr := windows.WinVerifyTrustEx(windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, &data)
+	data.StateAction = windows.WTD_STATEACTION_CLOSE
+	closeErr := windows.WinVerifyTrustEx(windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, &data)
+	return errors.Join(verifyErr, closeErr)
 }

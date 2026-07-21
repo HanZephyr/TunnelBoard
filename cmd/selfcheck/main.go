@@ -7,9 +7,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,21 +33,22 @@ func main() {
 	domain := flag.String("domain", "tunnelboard-smoke.test", "smoke test domain")
 	port := flag.Int("port", 8099, "local upstream port for caddy stage")
 	datadir := flag.String("datadir", "", "caddy adapter data dir (caddy stages)")
-	cafile := flag.String("cafile", "", "root CA PEM path (ca stages)")
 	_ = flag.CommandLine.Parse(args)
 
 	var err error
 	switch stageName {
 	case "ping":
 		err = stagePing()
+	case "helper-session-apply":
+		err = stageHelperSessionApply(*domain)
 	case "hosts-apply":
 		err = stageHosts(*domain, true)
 	case "hosts-remove":
 		err = stageHosts(*domain, false)
 	case "trust-ca":
-		err = stageCA(*cafile, true)
+		err = stageCA(*datadir, true)
 	case "untrust-ca":
-		err = stageCA(*cafile, false)
+		err = stageCA(*datadir, false)
 	case "caddy-start":
 		err = stageCaddyStart(*datadir, *domain, *port)
 	case "caddy-stop":
@@ -65,9 +63,8 @@ func main() {
 	fmt.Println("SMOKE-OK", stageName)
 }
 
-// callOK 发送一个特权请求并把非 OK 应答转为错误。
-func callOK(req helper.Request) error {
-	resp, err := helper.NewClient().Call(req)
+func callOKWith(client *helper.Client, req helper.Request) error {
+	resp, err := client.Call(req)
 	if err != nil {
 		return err
 	}
@@ -77,8 +74,25 @@ func callOK(req helper.Request) error {
 	return nil
 }
 
+func stageHelperSessionApply(domain string) error {
+	client := helper.NewClient()
+	defer client.Close(context.Background())
+	version, err := client.Ping()
+	if err != nil {
+		return err
+	}
+	fmt.Println("helper version:", version)
+	if err := stageHostsWithClient(client, domain, true); err != nil {
+		return err
+	}
+	// 第二次执行验证同一 selfcheck 应用生命周期内复用现有 Helper，不再 UAC。
+	return stageHostsWithClient(client, domain, true)
+}
+
 func stagePing() error {
-	version, err := helper.NewClient().Ping()
+	client := helper.NewClient()
+	defer client.Close(context.Background())
+	version, err := client.Ping()
 	if err != nil {
 		return err
 	}
@@ -88,6 +102,12 @@ func stagePing() error {
 
 // stageHosts 在保留现有受托管条目的前提下加入/移除冒烟域名，并回读验证。
 func stageHosts(domain string, add bool) error {
+	client := helper.NewClient()
+	defer client.Close(context.Background())
+	return stageHostsWithClient(client, domain, add)
+}
+
+func stageHostsWithClient(client *helper.Client, domain string, add bool) error {
 	content, err := os.ReadFile(helper.SystemHostsPath())
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read hosts: %w", err)
@@ -101,7 +121,7 @@ func stageHosts(domain string, add bool) error {
 	if add {
 		entries = append(entries, route.HostEntry{Domain: domain, IP: "127.0.0.1"})
 	}
-	if err := callOK(helper.Request{Op: helper.OpApplyManagedHosts, Hosts: entries}); err != nil {
+	if err := callOKWith(client, helper.Request{Op: helper.OpApplyManagedHosts, Hosts: entries}); err != nil {
 		return err
 	}
 
@@ -124,28 +144,19 @@ func stageHosts(domain string, add bool) error {
 	return nil
 }
 
-func stageCA(cafile string, trust bool) error {
-	der, fp, err := readCAFingerprint(cafile)
-	if err != nil {
+func stageCA(datadir string, trust bool) error {
+	if strings.TrimSpace(datadir) == "" {
+		return errors.New("-datadir is required")
+	}
+	trustStore := helper.NewCurrentUserCATrustAt(datadir)
+	if trust {
+		identity, err := trustStore.EnsureCurrentCaddyCATrusted(context.Background())
+		if err == nil {
+			fmt.Println("current-user CA:", identity.SHA256)
+		}
 		return err
 	}
-	if trust {
-		return callOK(helper.Request{Op: helper.OpTrustLocalCA, CertDER: der, CertSHA256: fp})
-	}
-	return callOK(helper.Request{Op: helper.OpUntrustLocalCA, CertSHA256: fp})
-}
-
-func readCAFingerprint(path string) (der []byte, fp string, err error) {
-	data, err := os.ReadFile(strings.TrimSpace(path))
-	if err != nil {
-		return nil, "", fmt.Errorf("read ca file: %w", err)
-	}
-	block, _ := pem.Decode(data)
-	if block == nil {
-		return nil, "", fmt.Errorf("ca file %s is not valid PEM", path)
-	}
-	sum := sha256.Sum256(block.Bytes)
-	return block.Bytes, hex.EncodeToString(sum[:]), nil
+	return trustStore.RemoveCurrentCaddyCA(context.Background())
 }
 
 func stageCaddyStart(datadir, domain string, port int) error {

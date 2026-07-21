@@ -31,12 +31,9 @@ def sha256(path: Path) -> str:
 
 
 def stop_running_instances() -> None:
-    """打包前自动退出运行中的实例：主程序与 detached Caddy 强制终止（无未保存状态，
-    服务由 go build 的 rename 输出语义覆盖，一般无需停）；失败均忽略（可能未在运行）。"""
-    for image in ["tunnelboard.exe", "caddy.exe"]:
+    """打包前自动退出运行中的实例与会话 Helper；失败均忽略（可能未在运行）。"""
+    for image in ["tunnelboard.exe", "caddy.exe", "tunnelboard-helper.exe"]:
         subprocess.run(["taskkill", "/F", "/IM", image], capture_output=True)
-    subprocess.run(["sc.exe", "stop", "TunnelBoardHelper"], capture_output=True)
-    subprocess.run(["taskkill", "/F", "/IM", "tunnelboard-helper.exe"], capture_output=True)
     time.sleep(1)
 
 
@@ -52,7 +49,7 @@ def assert_unlocked(path: Path) -> None:
             f"文件被占用：{path}\n"
             "请先释放后再打包：\n"
             "  - 若 tunnelboard.exe：托盘图标右键 → 退出（关窗只是隐藏到托盘）\n"
-            "  - 若 tunnelboard-helper.exe：管理员终端执行 sc.exe stop TunnelBoardHelper"
+            "  - 若 tunnelboard-helper.exe：先退出 TunnelBoard；会话 Helper 会随父进程结束"
         )
         sys.exit(hint)
 
