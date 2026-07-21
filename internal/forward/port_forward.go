@@ -642,48 +642,37 @@ func (f *LocalForward) runKeepAliveProbe(
 	report func(err error),
 ) bool {
 	timeout := keepAliveRequestTimeout(interval)
-	type keepAliveResult struct {
-		latency time.Duration
-		err     error
-	}
-	result := make(chan keepAliveResult, 1)
-
+	ctx, cancel := context.WithCancel(context.Background())
+	watchDone := make(chan struct{})
 	go func() {
-		latency, err := TestSSHHostLatency(client)
-		result <- keepAliveResult{latency: latency, err: err}
+		select {
+		case <-clientDone:
+			cancel()
+		case <-stop:
+			cancel()
+		case <-watchDone:
+		}
 	}()
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	select {
-	case <-clientDone:
-		return false
-	case <-stop:
-		return false
-	case probe := <-result:
-		if probe.err == nil {
-			f.setLastLatency(probe.latency)
-			slog.Debug("forward keepalive probe ok", "forward_id", f.forward.ID, "name", f.forward.Name)
-			return true
-		}
-		if f.isStopping() {
-			return false
-		}
-		report(fmt.Errorf("keepalive failed: %w", probe.err))
-		slog.Warn("forward keepalive failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", probe.err)
-		_ = client.Close()
-		return false
-	case <-timer.C:
-		if f.isStopping() {
-			return false
-		}
-		timeoutErr := fmt.Errorf("keepalive timeout after %s", timeout)
-		report(timeoutErr)
-		slog.Warn("forward keepalive timeout", "forward_id", f.forward.ID, "name", f.forward.Name, "timeout", timeout.String())
-		_ = client.Close()
+	latency, err := probeSSH(ctx, client, timeout)
+	close(watchDone)
+	cancel()
+	if errors.Is(err, context.Canceled) || f.isStopping() {
 		return false
 	}
+	if err == nil {
+		f.setLastLatency(latency)
+		slog.Debug("forward keepalive probe ok", "forward_id", f.forward.ID, "name", f.forward.Name)
+		return true
+	}
+	if errors.Is(err, ErrKeepAliveTimeout) {
+		report(fmt.Errorf("keepalive timeout after %s: %w", timeout, err))
+		slog.Warn("forward keepalive timeout", "forward_id", f.forward.ID, "name", f.forward.Name, "timeout", timeout.String())
+	} else {
+		report(fmt.Errorf("keepalive failed: %w", err))
+		slog.Warn("forward keepalive failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", err)
+	}
+	_ = client.Close()
+	return false
 }
 
 func (f *LocalForward) stopSignal() <-chan struct{} {

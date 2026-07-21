@@ -1,9 +1,11 @@
 package forward
 
 import (
-	"sort"
+	"context"
 	"fmt"
 	"net"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,19 +43,20 @@ func poolKeepAliveInterval(host model.SSHHost) time.Duration {
 // 一代连接 = client + closeAll + 其 watcher / keepalive goroutine；重拨换代后
 // 旧代的 release 只减引用，不会误关新一代连接（代际以 client 同一性判定）。
 type poolEntry struct {
-	mu       sync.Mutex
-	client   sshClient
-	closeAll func() // 幂等关闭当前一代：停 keepalive + Close
-	dead     bool
-	refs     int
+	mu         sync.Mutex
+	client     sshClient
+	closeAll   func() // 幂等关闭当前一代：停 keepalive + Close
+	dead       bool
+	refs       int
+	generation uint64
 }
 
 // watch 等待连接层终结：Wait 返回后仅当仍是同一代连接时标记 dead 并触发
 // closeAll（Close 对已死连接幂等），让 keepalive goroutine 及时退出。
-func (e *poolEntry) watch(client sshClient, closeAll func()) {
+func (e *poolEntry) watch(client sshClient, generation uint64, closeAll func()) {
 	_ = client.Wait()
 	e.mu.Lock()
-	same := e.client == client
+	same := e.client == client && e.generation == generation
 	if same {
 		e.dead = true
 	}
@@ -65,19 +68,19 @@ func (e *poolEntry) watch(client sshClient, closeAll func()) {
 
 // keepAliveLoop 池级 keepalive：周期探测首跳，失败即标记 dead 并关闭；
 // 重拨由后续 acquire 单飞完成。与 LocalForward 的探测循环共用 sendKeepAliveRequest。
-func (e *poolEntry) keepAliveLoop(client sshClient, interval time.Duration, stop <-chan struct{}, closeAll func()) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+func (e *poolEntry) keepAliveLoop(client sshClient, generation uint64, interval, timeout time.Duration, stop <-chan struct{}, closeAll func()) {
 	for {
+		timer := time.NewTimer(interval)
 		select {
 		case <-stop:
+			timer.Stop()
 			return
-		case <-ticker.C:
-			if _, err := sendKeepAliveRequest(client); err == nil {
+		case <-timer.C:
+			if _, err := probeSSH(context.Background(), client, timeout); err == nil {
 				continue
 			}
 			e.mu.Lock()
-			same := e.client == client
+			same := e.client == client && e.generation == generation
 			if same {
 				e.dead = true
 			}
@@ -87,6 +90,35 @@ func (e *poolEntry) keepAliveLoop(client sshClient, interval time.Duration, stop
 			}
 			return
 		}
+	}
+}
+
+// ConnectionIdentity 是不含秘密材料的真实 SSH transport 身份。
+// Password/口令变化由 CredentialRevision 表达，避免把可猜测摘要变成离线 oracle。
+type ConnectionIdentity struct {
+	Host               string
+	Port               int
+	User               string
+	AuthType           string
+	KeyPath            string
+	AgentSocketPath    string
+	KeepAliveInterval  int
+	Timeout            int
+	HostKeyAlgorithms  string
+	CredentialRevision uint64
+}
+
+func SSHConnectionIdentity(host model.SSHHost) ConnectionIdentity {
+	port := host.Port
+	if port == 0 {
+		port = 22
+	}
+	return ConnectionIdentity{
+		Host: strings.ToLower(strings.TrimSpace(host.Host)), Port: port,
+		User: strings.TrimSpace(host.User), AuthType: strings.ToLower(strings.TrimSpace(host.AuthType)),
+		KeyPath: strings.TrimSpace(host.KeyPath), AgentSocketPath: strings.TrimSpace(host.AgentSocketPath),
+		KeepAliveInterval: host.KeepAliveIntervalMs, Timeout: host.TimeoutMs,
+		HostKeyAlgorithms: strings.TrimSpace(host.HostKeyAlgorithms), CredentialRevision: host.CredentialRevision,
 	}
 }
 
@@ -116,18 +148,21 @@ func (e *poolEntry) release(client sshClient) {
 // 拨号、标记 dead、release 归零关闭都在 entry.mu 下串行，goroutine
 // （watcher / keepalive）只在放锁后触发 closeAll。
 type SSHConnPool struct {
-	mu      sync.Mutex
-	entries map[int]*poolEntry
-	dial    poolDialer
+	mu             sync.Mutex
+	entries        map[int]map[ConnectionIdentity]*poolEntry
+	dial           poolDialer
+	nextGeneration uint64
+	probeTimeout   func(time.Duration) time.Duration
 }
 
 // NewSSHConnPool 创建以 dialSSH 为首跳拨号实现的连接池。
 func NewSSHConnPool() *SSHConnPool {
 	return &SSHConnPool{
-		entries: make(map[int]*poolEntry),
+		entries: make(map[int]map[ConnectionIdentity]*poolEntry),
 		dial: func(host model.SSHHost, verifier HostKeyVerifier) (sshClient, error) {
 			return dialSSH(host, verifier)
 		},
+		probeTimeout: keepAliveRequestTimeout,
 	}
 }
 
@@ -143,10 +178,16 @@ func newSSHConnPoolWithDial(dial poolDialer) *SSHConnPool {
 // 传给当前调用者，重试节奏由 LocalForward 的退避循环决定。
 func (p *SSHConnPool) acquire(host model.SSHHost, verifier HostKeyVerifier) (*poolEntry, sshClient, error) {
 	p.mu.Lock()
-	entry, ok := p.entries[host.ID]
+	identity := SSHConnectionIdentity(host)
+	byIdentity := p.entries[host.ID]
+	if byIdentity == nil {
+		byIdentity = make(map[ConnectionIdentity]*poolEntry)
+		p.entries[host.ID] = byIdentity
+	}
+	entry, ok := byIdentity[identity]
 	if !ok {
 		entry = &poolEntry{}
-		p.entries[host.ID] = entry
+		byIdentity[identity] = entry
 	}
 	p.mu.Unlock()
 
@@ -170,8 +211,14 @@ func (p *SSHConnPool) acquire(host model.SSHHost, verifier HostKeyVerifier) (*po
 		entry.client = client
 		entry.closeAll = closeAll
 		entry.dead = false
-		go entry.watch(client, closeAll)
-		go entry.keepAliveLoop(client, poolKeepAliveInterval(host), stop, closeAll)
+		p.mu.Lock()
+		p.nextGeneration++
+		generation := p.nextGeneration
+		p.mu.Unlock()
+		entry.generation = generation
+		interval := poolKeepAliveInterval(host)
+		go entry.watch(client, generation, closeAll)
+		go entry.keepAliveLoop(client, generation, interval, p.probeTimeout(interval), stop, closeAll)
 		if oldClose != nil {
 			// 上一代连接已死：停掉其 keepalive goroutine，Close 为幂等兜底。
 			oldClose()
@@ -239,9 +286,11 @@ func (p *SSHConnPool) DialChain(hosts []model.SSHHost, verifier HostKeyVerifier)
 // 之后的 acquire 会按单飞逻辑重拨。
 func (p *SSHConnPool) CloseAll() {
 	p.mu.Lock()
-	entries := make([]*poolEntry, 0, len(p.entries))
-	for _, entry := range p.entries {
-		entries = append(entries, entry)
+	var entries []*poolEntry
+	for _, byIdentity := range p.entries {
+		for _, entry := range byIdentity {
+			entries = append(entries, entry)
+		}
 	}
 	p.mu.Unlock()
 
@@ -266,10 +315,12 @@ type PoolStat struct {
 // Stats 返回全部共享连接条目的快照（按 HostID 升序）；无并发副作用。
 func (p *SSHConnPool) Stats() []PoolStat {
 	p.mu.Lock()
-	byID := make(map[int]*poolEntry, len(p.entries))
+	byID := make(map[int][]*poolEntry, len(p.entries))
 	ids := make([]int, 0, len(p.entries))
-	for id, e := range p.entries {
-		byID[id] = e
+	for id, entries := range p.entries {
+		for _, e := range entries {
+			byID[id] = append(byID[id], e)
+		}
 		ids = append(ids, id)
 	}
 	p.mu.Unlock()
@@ -277,10 +328,14 @@ func (p *SSHConnPool) Stats() []PoolStat {
 	sort.Ints(ids)
 	out := make([]PoolStat, 0, len(ids))
 	for _, id := range ids {
-		e := byID[id]
-		e.mu.Lock()
-		out = append(out, PoolStat{HostID: id, Refs: e.refs, Alive: e.client != nil && !e.dead})
-		e.mu.Unlock()
+		stat := PoolStat{HostID: id}
+		for _, e := range byID[id] {
+			e.mu.Lock()
+			stat.Refs += e.refs
+			stat.Alive = stat.Alive || (e.client != nil && !e.dead)
+			e.mu.Unlock()
+		}
+		out = append(out, stat)
 	}
 	return out
 }
