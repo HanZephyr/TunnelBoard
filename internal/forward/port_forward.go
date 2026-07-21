@@ -209,10 +209,6 @@ func (f *LocalForward) Start() error {
 	done := f.done
 	f.mu.Unlock()
 
-	if latency, latencyErr := TestSSHHostLatency(client); latencyErr == nil {
-		f.setLastLatency(latency)
-	}
-
 	if mode == "remote" {
 		go f.serveRemote(done)
 	} else {

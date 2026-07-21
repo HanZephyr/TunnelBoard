@@ -80,7 +80,7 @@ func TestSSHHostLatency(client *ssh.Client) (time.Duration, error) {
 	if client == nil {
 		return 0, fmt.Errorf("ssh client is nil")
 	}
-	return sendKeepAliveRequest(client)
+	return probeSSH(context.Background(), client, 5*time.Second)
 }
 
 // TestSSHHostConnection verifies SSH handshake/auth against the SSH host.
