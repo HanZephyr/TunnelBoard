@@ -37,3 +37,9 @@ test('Vault revision 保持为不透明哈希并按事件序号拒绝旧快照',
   assert.equal(store.state.phase, 'stale')
   assert.equal(store.state.snapshot, null)
 })
+
+test('Snapshot 保留后端 SSH Host 安全默认值', async () => {
+  const store = createAppSnapshotStore()
+  await store.refresh(async () => ({ sshHostDefaults: { port: 2202, timeoutMs: 9000 } }))
+  assert.deepEqual(store.state.snapshot.sshHostDefaults, { port: 2202, timeoutMs: 9000 })
+})

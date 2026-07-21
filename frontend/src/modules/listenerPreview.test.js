@@ -22,3 +22,10 @@ test('新 generation 的结果不会被旧结果覆盖', async () => {
   assert.equal(preview.state.status, 'available')
   assert.equal(preview.state.port, 9001)
 })
+
+test('通信失败进入 unknown 而不伪装成端口冲突', async () => {
+  const preview = createListenerPreview()
+  await preview.check({ host: '127.0.0.1', port: 9000 }, async () => { throw new Error('backend unavailable') })
+  assert.equal(preview.state.status, 'unknown')
+  assert.equal(preview.state.message, 'backend unavailable')
+})

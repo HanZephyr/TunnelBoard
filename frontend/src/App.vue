@@ -93,6 +93,7 @@ const sshHosts = ref([])
 const forwards = ref([])
 const webRoutes = ref([])
 const routeStatuses = ref([])
+const sshHostDefaults = ref({ port: 22, authType: 'ssh_key', keepAliveIntervalMs: 5000, timeoutMs: 5000 })
 const vaultRevision = ref('')
 const snapshotStore = createAppSnapshotStore()
 const snapshotPhase = ref('loading')
@@ -107,6 +108,7 @@ async function loadVault() {
       ...catalog,
       vaultRevision: raw?.revisions?.vault || raw?.Revisions?.Vault || raw?.vaultRevision || 0,
       eventSequence: raw?.eventSequence || raw?.EventSequence || 0,
+      sshHostDefaults: raw?.sshHostDefaults || raw?.SSHHostDefaults || {},
       routeStatuses: Array.isArray(raw?.routes) ? raw.routes : Array.isArray(raw?.Routes) ? raw.Routes : raw?.routeStatuses || []
     }
   })
@@ -120,6 +122,7 @@ async function loadVault() {
     forwards.value = Array.isArray(data?.forwards) ? data.forwards : []
     webRoutes.value = Array.isArray(data?.webRoutes) ? data.webRoutes : []
     routeStatuses.value = Array.isArray(data?.routeStatuses) ? data.routeStatuses : []
+    sshHostDefaults.value = data?.sshHostDefaults || sshHostDefaults.value
     vaultRevision.value = String(data?.vaultRevision || '')
   }
 }
@@ -298,6 +301,7 @@ onBeforeUnmount(() => {
           ref="forwardsPageRef"
           :folders="folders"
           :ssh-hosts="sshHosts"
+          :ssh-host-defaults="sshHostDefaults"
           :forwards="forwards"
           :configuration-locked="snapshotPhase !== 'ready'"
           :vault-revision="vaultRevision"
@@ -309,6 +313,7 @@ onBeforeUnmount(() => {
           v-if="activePage === 'hosts' && hasSnapshot"
           ref="hostsPageRef"
           :ssh-hosts="sshHosts"
+          :ssh-host-defaults="sshHostDefaults"
           :forwards="forwards"
           :configuration-locked="snapshotPhase !== 'ready'"
           :vault-revision="vaultRevision"

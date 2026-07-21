@@ -379,14 +379,14 @@ function routeAppliedView(route) {
     applied: ['running', 'routes.status.applied'],
     hosts_only: ['running', 'routes.status.hostsOnly'],
     pending: ['reconnecting', 'routes.status.pending'],
-    conflict: ['busy', 'routes.status.portConflict'],
-    error: ['stopped', 'routes.status.error'],
+    conflict: ['error', 'routes.status.portConflict'],
+    error: ['error', 'routes.status.error'],
     unknown: ['reconnecting', 'routes.status.unknown'],
-    cleanup_pending: ['busy', 'routes.status.cleanupPending'],
-    quarantined: ['busy', 'routes.status.quarantined']
+    cleanup_pending: ['reconnecting', 'routes.status.cleanupPending'],
+    quarantined: ['reconnecting', 'routes.status.quarantined']
   }
   if (states[state]) return { status: states[state][0], label: t(states[state][1]) }
-  if (status.portConflict) return { status: 'busy', label: t('routes.status.portConflict') }
+  if (status.portConflict) return { status: 'error', label: t('routes.status.portConflict') }
   if (route.caddyEnabled && status.caddyRunning) return { status: 'running', label: t('routes.status.applied') }
   if (route.hostsEnabled && status.hostsApplied) return { status: 'running', label: t('routes.status.hostsOnly') }
   if (!route.hostsEnabled && !route.caddyEnabled) return { status: 'stopped', label: t('routes.status.notDesired') }

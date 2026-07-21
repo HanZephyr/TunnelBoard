@@ -32,6 +32,7 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  sshHostDefaults: { type: Object, default: () => ({}) },
   forwards: {
     type: Array,
     default: () => []
@@ -720,9 +721,9 @@ function chainLabel(forward) {
 
 <template>
   <section class="page-fade forwards-page">
-    <aside class="folder-rail">
+    <aside class="folder-rail" aria-labelledby="forward-folders-title">
       <div class="folder-rail-head">
-        <h2 class="folder-rail-title">{{ t('forwards.foldersTitle') }}</h2>
+        <h2 id="forward-folders-title" class="folder-rail-title">{{ t('forwards.foldersTitle') }}</h2>
         <button
           type="button"
           class="btn icon-ghost-btn"
@@ -757,7 +758,7 @@ function chainLabel(forward) {
                   type="button"
                   class="folder-action-btn"
                   :title="t('forwards.newSubfolder')"
-                  :aria-label="t('forwards.newSubfolder')"
+                  :aria-label="t('forwards.newSubfolderFor', { name: folder.name })"
                   :disabled="configurationLocked"
                   @click="openFolderDialog(folder.id)"
                 >
@@ -767,7 +768,7 @@ function chainLabel(forward) {
                   type="button"
                   class="folder-action-btn danger"
                   :title="t('app.common.delete')"
-                  :aria-label="t('app.common.delete')"
+                  :aria-label="t('forwards.deleteFolderNamed', { name: folder.name })"
                   @click="deleteFolder(folder)"
                 >
                   <i class="bi bi-trash3" aria-hidden="true"></i>
@@ -783,7 +784,7 @@ function chainLabel(forward) {
                     <span class="folder-count">{{ folderForwardCount(child.id) }}</span>
                   </button>
                   <span class="folder-actions">
-                    <button type="button" class="folder-action-btn danger" :title="t('app.common.delete')" :aria-label="t('app.common.delete')" @click="deleteFolder(child)">
+                    <button type="button" class="folder-action-btn danger" :title="t('app.common.delete')" :aria-label="t('forwards.deleteFolderNamed', { name: child.name })" @click="deleteFolder(child)">
                       <i class="bi bi-trash3" aria-hidden="true"></i>
                     </button>
                   </span>
@@ -985,6 +986,7 @@ function chainLabel(forward) {
     :form="forwardForm"
     :folders="folderOptions"
     :ssh-hosts="sshHosts"
+    :ssh-host-defaults="sshHostDefaults"
     :vault-revision="vaultRevision"
     :validation-error="forwardValidationError"
     @close="forwardModalOpen = false"

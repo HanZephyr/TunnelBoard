@@ -46,6 +46,7 @@ const releasePageUrl = ref(DEFAULT_RELEASES_PAGE_URL)
 const autoRunEnabled = ref(false)
 const updateCheckEnabled = ref(false)
 const updatePreferencePhase = ref('loading')
+const updatePreferenceError = ref('')
 const configPath = ref('')
 const isCheckingUpdates = ref(false)
 const updateCheckDialog = reactive({
@@ -56,20 +57,27 @@ const updateCheckDialog = reactive({
   message: ''
 })
 
-onMounted(async () => {
-  try {
-    autoRunEnabled.value = await callBackend(GetAutoRunEnabled)
-  } catch (_) {
-    autoRunEnabled.value = false
-  }
+async function loadUpdatePreference() {
+  updatePreferencePhase.value = 'loading'
+  updatePreferenceError.value = ''
+  updateCheckEnabled.value = false
   try {
     updateCheckEnabled.value = (await callBackend(GetUpdateCheckEnabled)) === true
     updatePreferencePhase.value = 'ready'
   } catch (error) {
     updateCheckEnabled.value = false
     updatePreferencePhase.value = 'error'
-    emit('notify', errorMessage(error))
+    updatePreferenceError.value = errorMessage(error)
   }
+}
+
+onMounted(async () => {
+  try {
+    autoRunEnabled.value = await callBackend(GetAutoRunEnabled)
+  } catch (_) {
+    autoRunEnabled.value = false
+  }
+  await loadUpdatePreference()
   try {
     configPath.value = await callBackend(GetConfigPath)
   } catch (_) {
@@ -174,7 +182,7 @@ async function checkForUpdates() {
     updateCheckDialog.mode = 'error'
     updateCheckDialog.latestVersion = ''
     updateCheckDialog.releaseNotes = ''
-    updateCheckDialog.message = errorMessage(err, 'Failed to check updates from GitHub Releases API.')
+    updateCheckDialog.message = errorMessage(err, t('settings.updateCheckFailed'))
     updateCheckDialog.visible = true
     emit('update-outcome', { status: 'failed', message: updateCheckDialog.message })
   } finally {
@@ -485,7 +493,15 @@ async function onRestoreBackup() {
           <div class="config-row align-items-center">
             <div>
               <div class="config-name">{{ t('settings.automaticUpdateChecks') }}</div>
-              <div class="config-desc">{{ t('settings.automaticUpdateChecksDesc') }}</div>
+              <div id="updatePreferenceDescription" class="config-desc">
+                <template v-if="updatePreferencePhase === 'loading'">{{ t('settings.updatePreferenceLoading') }}</template>
+                <template v-else-if="updatePreferencePhase === 'error'">{{ t('settings.updatePreferenceLoadFailed') }}</template>
+                <template v-else>{{ updateCheckEnabled ? t('settings.automaticUpdateChecksEnabled') : t('settings.automaticUpdateChecksDisabled') }}</template>
+              </div>
+              <div v-if="updatePreferencePhase === 'error'" class="config-desc text-danger mt-1" role="alert">
+                <span>{{ updatePreferenceError }}</span>
+                <button type="button" class="btn btn-sm btn-outline-danger ms-2" @click="loadUpdatePreference">{{ t('settings.updatePreferenceRetry') }}</button>
+              </div>
             </div>
             <div class="form-check form-switch m-0">
               <input
@@ -493,6 +509,7 @@ async function onRestoreBackup() {
                 class="form-check-input"
                 type="checkbox"
                 role="switch"
+                aria-describedby="updatePreferenceDescription"
                 :checked="updateCheckEnabled"
                 :disabled="configurationLocked || updatePreferencePhase !== 'ready'"
                 @change="onUpdateCheckChange"
