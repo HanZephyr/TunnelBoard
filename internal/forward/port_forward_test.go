@@ -1,9 +1,12 @@
 package forward
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"errors"
+	"net"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -14,6 +17,44 @@ import (
 
 	"golang.org/x/crypto/ssh"
 )
+
+func TestLocalForwardStopClosesActiveConnections(t *testing.T) {
+	left, right := net.Pipe()
+	done := make(chan struct{})
+	close(done)
+	f := &LocalForward{
+		forward: model.Forward{ID: 1, Name: "active"},
+		started: true, done: done, keepStop: make(chan struct{}),
+		activeConns: map[net.Conn]struct{}{left: {}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := f.Stop(ctx); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	_ = right.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	buf := make([]byte, 1)
+	if _, err := right.Read(buf); err == nil {
+		t.Fatal("peer must observe closed active connection")
+	}
+	_ = right.Close()
+}
+
+func TestLocalForwardStopHonorsContextDeadline(t *testing.T) {
+	done := make(chan struct{})
+	close(done)
+	f := &LocalForward{
+		forward: model.Forward{ID: 1, Name: "blocked"},
+		started: true, done: done, keepStop: make(chan struct{}),
+	}
+	f.wg.Add(1)
+	defer f.wg.Done()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if err := f.Stop(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Stop err = %v, want deadline exceeded", err)
+	}
+}
 
 func TestReconnectPolicyConstants(t *testing.T) {
 	if initReconnectWait != 500*time.Millisecond {

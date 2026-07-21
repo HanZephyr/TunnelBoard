@@ -51,19 +51,30 @@ type RuntimeEvent struct {
 	Err  error
 }
 
-// ChainDialer 是 LocalForward 的拨号接缝：返回末跳客户端、整链关闭函数与
-// "首跳是否池共享"标记；shared=true 时 forward 自身的 keepalive 探测跳过
-// （池已做），仅保留 client.Wait() 断线发现。
-type ChainDialer func(hosts []model.SSHHost, verifier HostKeyVerifier) (client *ssh.Client, closeChain func(), shared bool, err error)
+type ChainDialer func(hosts []model.SSHHost, verifier HostKeyVerifier) (ChainLease, error)
 
 // defaultChainDialer 保持历史行为：每条 Forward 独占拨号（shared=false）。
 // 经 dialChain 变量转发，保留测试注入 fake 驱动重连路径的接缝。
-func defaultChainDialer(hosts []model.SSHHost, verifier HostKeyVerifier) (*ssh.Client, func(), bool, error) {
+func defaultChainDialer(hosts []model.SSHHost, verifier HostKeyVerifier) (ChainLease, error) {
 	client, closeChain, err := dialChain(hosts, verifier)
 	if err != nil {
-		return nil, nil, false, err
+		return nil, err
 	}
-	return client, closeChain, false, nil
+	lease := &chainLease{
+		terminal: client, probe: keepAliveInterval(hosts[len(hosts)-1]) > 0,
+		interval: keepAliveInterval(hosts[len(hosts)-1]),
+		timeout:  keepAliveRequestTimeout(keepAliveInterval(hosts[len(hosts)-1])),
+		release:  closeChain, abort: closeChain,
+	}
+	lease.rebuild = func(ctx context.Context) (ChainLease, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+			return defaultChainDialer(hosts, verifier)
+		}
+	}
+	return lease, nil
 }
 
 type LocalForward struct {
@@ -77,14 +88,18 @@ type LocalForward struct {
 	stopping    bool
 	runErr      error
 	client      *ssh.Client
-	clientClose func()
+	lease       ChainLease
 	listener    net.Listener
 	done        chan struct{}
 	events      chan RuntimeEvent
 	keepStop    chan struct{}
 	lastLatency time.Duration
 	stopOnce    sync.Once
+	stopDone    chan struct{}
 	wg          sync.WaitGroup
+	activeConns map[net.Conn]struct{}
+	runCtx      context.Context
+	runCancel   context.CancelFunc
 }
 
 func NewLocalForward(fw model.Forward, hosts []model.SSHHost, verifier HostKeyVerifier, dialer ChainDialer) *LocalForward {
@@ -115,6 +130,9 @@ func (f *LocalForward) Start() error {
 	f.done = make(chan struct{})
 	f.events = make(chan RuntimeEvent, 8)
 	f.keepStop = make(chan struct{})
+	f.activeConns = make(map[net.Conn]struct{})
+	f.runCtx, f.runCancel = context.WithCancel(context.Background())
+	f.stopDone = make(chan struct{})
 	f.mu.Unlock()
 
 	slog.Info(
@@ -126,15 +144,22 @@ func (f *LocalForward) Start() error {
 		"timeout_ms", f.lastHost().TimeoutMs,
 	)
 
-	client, closeChain, shared, err := f.dialer(f.hosts, f.verifier)
+	lease, err := f.dialer(f.hosts, f.verifier)
 	if err != nil {
 		f.setRunErr(err)
 		slog.Error("forward initial dial failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", err)
 		return err
 	}
+	client := lease.Terminal()
+	if client == nil {
+		lease.Release()
+		err = errors.New("forward: chain lease has no terminal ssh client")
+		f.setRunErr(err)
+		return err
+	}
 	if mode == "local" {
 		if err := probeRemoteDial(client, f.forward.RemoteHost, f.forward.RemotePort); err != nil {
-			closeChain()
+			lease.Release()
 			f.setRunErr(err)
 			slog.Error(
 				"forward initial remote probe failed",
@@ -144,7 +169,7 @@ func (f *LocalForward) Start() error {
 		}
 	} else if mode == "dynamic" {
 		if err := probeDynamicForwardCapability(client); err != nil {
-			closeChain()
+			lease.Release()
 			f.setRunErr(err)
 			slog.Error("forward dynamic probe failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", err)
 			return err
@@ -155,7 +180,7 @@ func (f *LocalForward) Start() error {
 	if mode == "remote" {
 		ln, err = f.bindRemoteListener(client)
 		if err != nil {
-			closeChain()
+			lease.Release()
 			f.setRunErr(err)
 			slog.Error("forward remote listen failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", err)
 			return err
@@ -168,7 +193,7 @@ func (f *LocalForward) Start() error {
 		localAddr := net.JoinHostPort(localHost, strconv.Itoa(f.forward.LocalPort))
 		ln, err = net.Listen("tcp", localAddr)
 		if err != nil {
-			closeChain()
+			lease.Release()
 			runErr := fmt.Errorf("listen %s failed: %w", localAddr, err)
 			f.setRunErr(runErr)
 			slog.Error("forward listen failed", "forward_id", f.forward.ID, "name", f.forward.Name, "addr", localAddr, "err", runErr)
@@ -178,7 +203,7 @@ func (f *LocalForward) Start() error {
 
 	f.mu.Lock()
 	f.client = client
-	f.clientClose = closeChain
+	f.lease = lease
 	f.listener = ln
 	f.lastLatency = 0
 	done := f.done
@@ -193,7 +218,7 @@ func (f *LocalForward) Start() error {
 	} else {
 		go f.serveLocal(done)
 	}
-	go f.monitorClientLifecycle(client, shared)
+	go f.monitorClientLifecycle(lease)
 	return nil
 }
 
@@ -201,47 +226,63 @@ func (f *LocalForward) Stop(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var stopErr error
 	f.stopOnce.Do(func() {
 		slog.Info("forward stop requested", "forward_id", f.forward.ID, "name", f.forward.Name)
 		f.mu.Lock()
 		f.stopping = true
 		ln := f.listener
 		c := f.client
-		closeClient := f.clientClose
+		lease := f.lease
 		done := f.done
 		keepStop := f.keepStop
+		runCancel := f.runCancel
+		active := make([]net.Conn, 0, len(f.activeConns))
+		for conn := range f.activeConns {
+			active = append(active, conn)
+		}
 		f.listener = nil
 		f.client = nil
-		f.clientClose = nil
+		f.lease = nil
+		if f.stopDone == nil {
+			f.stopDone = make(chan struct{})
+		}
+		stopDone := f.stopDone
 		f.mu.Unlock()
 
 		if keepStop != nil {
 			close(keepStop)
 		}
-		if closeClient != nil {
-			closeClient()
+		if runCancel != nil {
+			runCancel()
+		}
+		if lease != nil {
+			lease.Release()
 		} else if c != nil {
 			_ = c.Close()
 		}
 		if ln != nil {
 			_ = ln.Close()
 		}
-		waitDone := make(chan struct{})
+		for _, conn := range active {
+			_ = conn.Close()
+		}
 		go func() {
 			if done != nil {
 				<-done
 			}
 			f.wg.Wait()
-			close(waitDone)
+			close(stopDone)
 		}()
-		select {
-		case <-waitDone:
-		case <-ctx.Done():
-			stopErr = fmt.Errorf("forward stop timeout: %w", ctx.Err())
-		}
 	})
-	return stopErr
+	f.mu.Lock()
+	stopDone := f.stopDone
+	f.mu.Unlock()
+	select {
+	case <-stopDone:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("forward stop timeout: %w", ctx.Err())
+	}
 }
 
 func (f *LocalForward) Done() <-chan struct{} {
@@ -341,6 +382,11 @@ func (f *LocalForward) serveRemote(done chan struct{}) {
 }
 
 func (f *LocalForward) handleConn(localConn net.Conn) {
+	if !f.trackConn(localConn) {
+		_ = localConn.Close()
+		return
+	}
+	defer f.untrackConn(localConn)
 	f.mu.Lock()
 	client := f.client
 	f.mu.Unlock()
@@ -368,6 +414,12 @@ func (f *LocalForward) handleLocalConn(localConn net.Conn, client *ssh.Client) {
 		_ = localConn.Close()
 		return
 	}
+	if !f.trackConn(remoteConn) {
+		_ = localConn.Close()
+		_ = remoteConn.Close()
+		return
+	}
+	defer f.untrackConn(remoteConn)
 
 	bridge(localConn, remoteConn)
 }
@@ -385,6 +437,12 @@ func (f *LocalForward) handleDynamicConn(localConn net.Conn, client *ssh.Client)
 		_ = localConn.Close()
 		return
 	}
+	if !f.trackConn(remoteConn) {
+		_ = localConn.Close()
+		_ = remoteConn.Close()
+		return
+	}
+	defer f.untrackConn(remoteConn)
 
 	if err := writeSOCKS5Reply(localConn, socksReplySucceeded); err != nil {
 		_ = remoteConn.Close()
@@ -406,14 +464,39 @@ func (f *LocalForward) handleRemoteConn(remoteConn net.Conn) {
 		_ = remoteConn.Close()
 		return
 	}
+	if !f.trackConn(localConn) {
+		_ = remoteConn.Close()
+		_ = localConn.Close()
+		return
+	}
+	defer f.untrackConn(localConn)
 	bridge(remoteConn, localConn)
 }
 
-func (f *LocalForward) monitorClientLifecycle(client *ssh.Client, shared bool) {
+func (f *LocalForward) trackConn(conn net.Conn) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.stopping {
+		return false
+	}
+	if f.activeConns == nil {
+		f.activeConns = make(map[net.Conn]struct{})
+	}
+	f.activeConns[conn] = struct{}{}
+	return true
+}
+
+func (f *LocalForward) untrackConn(conn net.Conn) {
+	f.mu.Lock()
+	delete(f.activeConns, conn)
+	f.mu.Unlock()
+}
+
+func (f *LocalForward) monitorClientLifecycle(lease ChainLease) {
 	defer f.closeEvents()
 
 	for {
-		disconnectErr := f.waitClientLoss(client, shared)
+		disconnectErr := lease.WaitLoss(f.runContext())
 		if disconnectErr == nil || f.isStopping() {
 			return
 		}
@@ -423,102 +506,31 @@ func (f *LocalForward) monitorClientLifecycle(client *ssh.Client, shared bool) {
 			Type: RuntimeEventDisconnected,
 			Err:  disconnectErr,
 		})
-		f.setClient(nil, nil)
+		f.clearTerminal(lease)
 
-		reconnectedClient, reconnectClose, reconnectShared, reconnectErr := f.reconnectWithBackoff()
+		reconnectedLease, reconnectErr := f.reconnectWithBackoff(lease)
 		if reconnectErr != nil {
 			f.setRunErr(fmt.Errorf("%v: %w", disconnectErr, reconnectErr))
 			slog.Error("forward reconnect failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", reconnectErr)
 			f.closeListener()
 			return
 		}
-		if reconnectedClient == nil {
+		if reconnectedLease == nil {
 			return
 		}
 		f.emitEvent(RuntimeEvent{
 			Type: RuntimeEventReconnected,
 		})
 		slog.Info("forward reconnected", "forward_id", f.forward.ID, "name", f.forward.Name)
-		f.setClient(reconnectedClient, reconnectClose)
-		client = reconnectedClient
-		shared = reconnectShared
+		f.setLease(reconnectedLease)
+		lease = reconnectedLease
 	}
 }
 
-// waitClientLoss 等待当前连接断开。shared=true（首跳来自连接池）时跳过
-// forward 自身的 keepalive 探测（池已按首跳间隔探测），仅保留 client.Wait()
-// 断线发现路径。
-func (f *LocalForward) waitClientLoss(client *ssh.Client, shared bool) error {
-	if client == nil {
-		return nil
-	}
+func (f *LocalForward) reconnectWithBackoff(current ChainLease) (ChainLease, error) {
 	stop := f.stopSignal()
 	if stop == nil {
-		return nil
-	}
-
-	lost := make(chan error, 1)
-	clientDone := make(chan struct{})
-	var once sync.Once
-
-	report := func(err error) {
-		if err == nil {
-			err = errors.New("ssh connection closed")
-		}
-		once.Do(func() {
-			select {
-			case lost <- err:
-			default:
-			}
-		})
-	}
-
-	go func() {
-		err := client.Wait()
-		if err != nil {
-			report(fmt.Errorf("ssh connection closed: %w", err))
-			return
-		}
-		report(nil)
-	}()
-
-	interval := keepAliveInterval(f.lastHost())
-	if !shared && interval > 0 {
-		go func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-			if !f.runKeepAliveProbe(client, stop, clientDone, interval, report) {
-				return
-			}
-			for {
-				select {
-				case <-clientDone:
-					return
-				case <-stop:
-					return
-				case <-ticker.C:
-					if !f.runKeepAliveProbe(client, stop, clientDone, interval, report) {
-						return
-					}
-				}
-			}
-		}()
-	}
-
-	select {
-	case err := <-lost:
-		close(clientDone)
-		return err
-	case <-stop:
-		close(clientDone)
-		return nil
-	}
-}
-
-func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), bool, error) {
-	stop := f.stopSignal()
-	if stop == nil {
-		return nil, nil, false, nil
+		return nil, nil
 	}
 
 	deadline := time.Now().Add(reconnectTimeout)
@@ -533,26 +545,33 @@ func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), bool, error)
 		}
 
 		if !waitOrStop(minDuration(wait, remaining), stop) {
-			return nil, nil, false, nil
+			return nil, nil
 		}
 		attempt++
 		slog.Info("forward reconnect attempt", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "wait", wait.String())
 
-		client, closeChain, shared, err := f.dialer(f.hosts, f.verifier)
+		ctx := f.runContext()
+		lease, err := current.Rebuild(ctx)
 		if err == nil {
-			if normalizeForwardMode(f.forward.Mode) == "remote" {
-				ln, listenErr := f.bindRemoteListener(client)
-				if listenErr != nil {
-					closeChain()
-					lastErr = listenErr
-					slog.Warn("forward remote listen rebind failed", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "err", listenErr)
-					wait = nextReconnectWait(wait)
-					continue
+			client := lease.Terminal()
+			if client == nil {
+				lease.Release()
+				err = errors.New("forward: rebuilt chain lease has no terminal ssh client")
+			} else {
+				if normalizeForwardMode(f.forward.Mode) == "remote" {
+					ln, listenErr := f.bindRemoteListener(client)
+					if listenErr != nil {
+						lease.Release()
+						lastErr = listenErr
+						slog.Warn("forward remote listen rebind failed", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "err", listenErr)
+						wait = nextReconnectWait(wait)
+						continue
+					}
+					f.replaceListener(ln)
 				}
-				f.replaceListener(ln)
+				slog.Info("forward reconnect succeeded", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt)
+				return lease, nil
 			}
-			slog.Info("forward reconnect succeeded", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt)
-			return client, closeChain, shared, nil
 		}
 
 		lastErr = err
@@ -560,7 +579,7 @@ func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), bool, error)
 		// 失败（端口冲突）不算终态，走上面的 continue 继续退避。
 		if IsTerminalError(err) {
 			slog.Error("forward reconnect hit terminal error", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "err", err)
-			return nil, nil, false, err
+			return nil, err
 		}
 		slog.Warn("forward reconnect failed", "forward_id", f.forward.ID, "name", f.forward.Name, "attempt", attempt, "err", err)
 		wait = nextReconnectWait(wait)
@@ -569,7 +588,7 @@ func (f *LocalForward) reconnectWithBackoff() (*ssh.Client, func(), bool, error)
 	if lastErr == nil {
 		lastErr = errors.New("reconnect timeout")
 	}
-	return nil, nil, false, fmt.Errorf("reconnect timeout after %s: %w", reconnectTimeout, lastErr)
+	return nil, fmt.Errorf("reconnect timeout after %s: %w", reconnectTimeout, lastErr)
 }
 
 func nextReconnectWait(current time.Duration) time.Duration {
@@ -634,63 +653,39 @@ func keepAliveRequestTimeout(interval time.Duration) time.Duration {
 	return timeout
 }
 
-func (f *LocalForward) runKeepAliveProbe(
-	client *ssh.Client,
-	stop <-chan struct{},
-	clientDone <-chan struct{},
-	interval time.Duration,
-	report func(err error),
-) bool {
-	timeout := keepAliveRequestTimeout(interval)
-	ctx, cancel := context.WithCancel(context.Background())
-	watchDone := make(chan struct{})
-	go func() {
-		select {
-		case <-clientDone:
-			cancel()
-		case <-stop:
-			cancel()
-		case <-watchDone:
-		}
-	}()
-	latency, err := probeSSH(ctx, client, timeout)
-	close(watchDone)
-	cancel()
-	if errors.Is(err, context.Canceled) || f.isStopping() {
-		return false
-	}
-	if err == nil {
-		f.setLastLatency(latency)
-		slog.Debug("forward keepalive probe ok", "forward_id", f.forward.ID, "name", f.forward.Name)
-		return true
-	}
-	if errors.Is(err, ErrKeepAliveTimeout) {
-		report(fmt.Errorf("keepalive timeout after %s: %w", timeout, err))
-		slog.Warn("forward keepalive timeout", "forward_id", f.forward.ID, "name", f.forward.Name, "timeout", timeout.String())
-	} else {
-		report(fmt.Errorf("keepalive failed: %w", err))
-		slog.Warn("forward keepalive failed", "forward_id", f.forward.ID, "name", f.forward.Name, "err", err)
-	}
-	_ = client.Close()
-	return false
-}
-
 func (f *LocalForward) stopSignal() <-chan struct{} {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.keepStop
 }
 
-func (f *LocalForward) setClient(client *ssh.Client, closeFn func()) {
+func (f *LocalForward) setLease(next ChainLease) {
 	f.mu.Lock()
-	oldClose := f.clientClose
-	defer f.mu.Unlock()
-	f.client = client
-	f.clientClose = closeFn
+	old := f.lease
+	f.client = next.Terminal()
+	f.lease = next
 	f.lastLatency = 0
-	if oldClose != nil {
-		go oldClose()
+	f.mu.Unlock()
+	if old != nil && old != next {
+		go old.Release()
 	}
+}
+
+func (f *LocalForward) clearTerminal(current ChainLease) {
+	f.mu.Lock()
+	if f.lease == current {
+		f.client = nil
+	}
+	f.mu.Unlock()
+}
+
+func (f *LocalForward) runContext() context.Context {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.runCtx == nil {
+		return context.Background()
+	}
+	return f.runCtx
 }
 
 func (f *LocalForward) setLastLatency(latency time.Duration) {

@@ -93,7 +93,7 @@ func NewRuntimeBiz(store VaultStore) *RuntimeBiz {
 		states:  map[int]RuntimeStatus{},
 	}
 	b.newRun = func(fw model.Forward, hosts []model.SSHHost, verifier forward.HostKeyVerifier) runHandle {
-		return forward.NewLocalForward(fw, hosts, verifier, b.pool.DialChain)
+		return forward.NewLocalForward(fw, hosts, verifier, b.pool.LeaseChain)
 	}
 	return b
 }
@@ -282,6 +282,7 @@ func (b *RuntimeBiz) Stop(id int) error {
 		st.Status = RuntimeStateError
 		st.LastError = err.Error()
 		b.states[id] = st
+		go b.finishStopInBackground(id, generation, run)
 		return err
 	}
 	delete(b.runs, id)
@@ -392,6 +393,10 @@ func (b *RuntimeBiz) watch(id int, generation uint64, run runHandle) {
 				b.mu.Unlock()
 				return
 			}
+			if b.runs[id].phase == runStopping {
+				b.mu.Unlock()
+				return
+			}
 			delete(b.runs, id)
 			if err := run.Err(); err != nil {
 				st := b.states[id]
@@ -408,6 +413,19 @@ func (b *RuntimeBiz) watch(id int, generation uint64, run runHandle) {
 			return
 		}
 	}
+}
+
+func (b *RuntimeBiz) finishStopInBackground(id int, generation uint64, run runHandle) {
+	if err := run.Stop(context.Background()); err != nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.isCurrentLocked(id, generation, run) {
+		return
+	}
+	delete(b.runs, id)
+	b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateStopped}
 }
 
 func (b *RuntimeBiz) handleEvent(id int, generation uint64, run runHandle, ev forward.RuntimeEvent) {

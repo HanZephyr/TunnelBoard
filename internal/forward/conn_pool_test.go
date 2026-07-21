@@ -122,6 +122,40 @@ func TestSSHConnPool_ConnectionIdentityChangeCreatesNewGeneration(t *testing.T) 
 	releaseB()
 }
 
+func TestSSHConnPool_OldGenerationAbortDoesNotCloseNewGeneration(t *testing.T) {
+	dialer := &fakePoolDialer{}
+	pool := newSSHConnPoolWithDial(dialer.dial)
+	host := poolTestHosts()[0]
+	_, releaseA, _, err := pool.dialChain([]model.SSHHost{host}, nil)
+	if err != nil {
+		t.Fatalf("dial A: %v", err)
+	}
+	abortA := pool.captureGenerationAbort(host)
+	releaseA()
+	_, releaseB, _, err := pool.dialChain([]model.SSHHost{host}, nil)
+	if err != nil {
+		t.Fatalf("dial B: %v", err)
+	}
+	defer releaseB()
+	abortA()
+	if dialer.client(1).isClosed() {
+		t.Fatal("old generation abort must not close the replacement client")
+	}
+}
+
+func TestSSHConnectionIdentityUsesCredentialRevisionWithoutSecret(t *testing.T) {
+	host := poolTestHosts()[0]
+	identityA := SSHConnectionIdentity(host)
+	host.Password = "different secret"
+	if identityB := SSHConnectionIdentity(host); identityB != identityA {
+		t.Fatal("secret plaintext must not be part of ConnectionIdentity")
+	}
+	host.CredentialRevision++
+	if identityB := SSHConnectionIdentity(host); identityB == identityA {
+		t.Fatal("CredentialRevision change must rotate ConnectionIdentity")
+	}
+}
+
 // kill 模拟连接死亡：Wait 以给定错误返回（不经过 Close）。
 func (c *fakeSSHClient) kill(err error) {
 	c.mu.Lock()
