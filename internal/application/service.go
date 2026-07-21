@@ -64,6 +64,12 @@ type RoutePort interface {
 	PreviewDesired(model.VaultData, int) (biz.RoutePreview, error)
 	NeutralizeRoutes(context.Context) error
 	ReconcileRoutes() (biz.RouteApplyResult, error)
+	ResumeCaddy() error
+}
+
+type StartupNetworkResult struct {
+	Skipped       bool           `json:"skipped"`
+	ForwardErrors map[int]string `json:"forwardErrors,omitempty"`
 }
 
 type RestorePort interface {
@@ -210,6 +216,42 @@ func (s *Service) LegacyMutation(ctx context.Context, mutate func() error) error
 	}
 	s.sequence.Add(1)
 	return nil
+}
+
+// StartupNetwork serializes automatic network restoration with configuration mutations.
+// Recovery state is rechecked under the mutation gate so a delayed startup goroutine cannot
+// escape restore quarantine or enter an active maintenance transaction.
+func (s *Service) StartupNetwork(ctx context.Context) (StartupNetworkResult, error) {
+	if err := ctx.Err(); err != nil {
+		return StartupNetworkResult{}, err
+	}
+	if s.maintenance.Load() {
+		return StartupNetworkResult{}, ErrMaintenance
+	}
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
+	if s.maintenance.Load() {
+		return StartupNetworkResult{}, ErrMaintenance
+	}
+	quarantined, pending, err := s.recovery.State()
+	if err != nil {
+		return StartupNetworkResult{}, err
+	}
+	if quarantined || pending {
+		return StartupNetworkResult{Skipped: true}, nil
+	}
+	errorsByID, runtimeErr := s.runtime.StartAutoStart()
+	result := StartupNetworkResult{ForwardErrors: map[int]string{}}
+	for id, startErr := range errorsByID {
+		if startErr != nil {
+			result.ForwardErrors[id] = startErr.Error()
+		}
+	}
+	if len(result.ForwardErrors) == 0 {
+		result.ForwardErrors = nil
+	}
+	routeErr := s.routes.ResumeCaddy()
+	return result, errors.Join(runtimeErr, routeErr)
 }
 
 func (s *Service) StartForwards(ctx context.Context, ids []int) map[int]string {

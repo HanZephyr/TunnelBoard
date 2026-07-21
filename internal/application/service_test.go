@@ -63,15 +63,23 @@ type fakeRuntime struct {
 	retired      int
 	resumed      int
 	starts       int
+	startErrors  map[int]error
 	stops        int
+	autoStarts   int
 }
 
 func (f *fakeRuntime) Snapshot() ([]biz.RuntimeStatus, error) {
 	return []biz.RuntimeStatus{{ForwardID: 1, Status: biz.RuntimeStateRunning}}, nil
 }
-func (f *fakeRuntime) Start(int) error                        { f.starts++; return nil }
-func (f *fakeRuntime) Stop(int) error                         { f.stops++; return nil }
-func (f *fakeRuntime) StartAutoStart() (map[int]error, error) { return nil, nil }
+func (f *fakeRuntime) Start(id int) error {
+	f.starts++
+	return f.startErrors[id]
+}
+func (f *fakeRuntime) Stop(int) error { f.stops++; return nil }
+func (f *fakeRuntime) StartAutoStart() (map[int]error, error) {
+	f.autoStarts++
+	return nil, nil
+}
 func (f *fakeRuntime) Suspend(_ context.Context, ids []int) (biz.RuntimeSuspendPlan, error) {
 	f.operations = append(f.operations, "suspend")
 	f.suspended = append([]int(nil), ids...)
@@ -113,6 +121,7 @@ type fakeRoutes struct {
 	reconciles int
 	result     biz.RouteApplyResult
 	err        error
+	resumes    int
 }
 
 func (*fakeRoutes) RouteStatus() ([]biz.RouteStatusItem, error) { return nil, nil }
@@ -140,6 +149,7 @@ func (f *fakeRoutes) ReconcileRoutes() (biz.RouteApplyResult, error) {
 	f.reconciles++
 	return f.result, f.err
 }
+func (f *fakeRoutes) ResumeCaddy() error { f.resumes++; return f.err }
 
 type fakeRestore struct{}
 
@@ -164,10 +174,14 @@ func (b *blockingRestore) CommitRestore(context.Context, biz.RestoreCommitReques
 	return biz.RestoreCommitResult{Quarantined: true}, nil
 }
 
-type fakeRecovery struct{}
+type fakeRecovery struct {
+	quarantined bool
+	pending     bool
+	err         error
+}
 
-func (fakeRecovery) State() (bool, bool, error) { return false, false, nil }
-func (fakeRecovery) ClearQuarantine() error     { return nil }
+func (f fakeRecovery) State() (bool, bool, error) { return f.quarantined, f.pending, f.err }
+func (fakeRecovery) ClearQuarantine() error       { return nil }
 
 type updateRecovery struct {
 	quarantined bool
@@ -207,6 +221,50 @@ func (f *fakeUpdates) Check(ctx context.Context, version string) (updater.Result
 
 func newService(store *memStore, runtime *fakeRuntime) *application.Service {
 	return application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
+}
+
+func TestStartupNetworkRunsBehindRecoveryGate(t *testing.T) {
+	for _, recovery := range []fakeRecovery{{quarantined: true}, {pending: true}} {
+		runtime := &fakeRuntime{}
+		routes := &fakeRoutes{}
+		service := application.NewService(application.Dependencies{
+			Store: &memStore{data: model.VaultData{Version: 1}}, Catalog: biz.NewCatalogBiz(&memStore{}),
+			Runtime: runtime, Routes: routes, Restore: fakeRestore{}, Recovery: recovery,
+		})
+		result, err := service.StartupNetwork(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.Skipped || runtime.autoStarts != 0 || routes.resumes != 0 {
+			t.Fatalf("startup escaped recovery gate: result=%+v runtime=%+v routes=%+v", result, runtime, routes)
+		}
+	}
+}
+
+func TestStartupNetworkCannotEnterDuringRestoreMaintenance(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	runtime := &fakeRuntime{}
+	routes := &fakeRoutes{}
+	store := &memStore{data: model.VaultData{Version: 1}}
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: routes,
+		Restore: &blockingRestore{entered: entered, release: release}, Recovery: fakeRecovery{},
+	})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = service.CommitRestore(context.Background(), biz.RestoreCommitRequest{Confirmed: true})
+	}()
+	<-entered
+	if _, err := service.StartupNetwork(context.Background()); !errors.Is(err, application.ErrMaintenance) {
+		t.Fatalf("StartupNetwork error = %v, want ErrMaintenance", err)
+	}
+	if runtime.autoStarts != 0 || routes.resumes != 0 {
+		t.Fatalf("startup effects ran during restore: runtime=%+v routes=%+v", runtime, routes)
+	}
+	close(release)
+	<-done
 }
 
 func TestSnapshotNeverSerializesSSHSecrets(t *testing.T) {

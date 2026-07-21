@@ -147,17 +147,15 @@ func (a *App) startup(ctx context.Context) {
 			return
 		}
 		go func() {
-			if errs, err := a.runtime.StartAutoStart(); err != nil {
-				slog.Error("auto start forwards failed", "err", err)
-			} else {
-				for id, startErr := range errs {
-					slog.Error("auto start forward failed", "forward_id", id, "err", startErr)
+			result, err := a.application.StartupNetwork(ctx)
+			if err != nil {
+				if !errors.Is(err, application.ErrMaintenance) {
+					slog.Error("automatic network startup failed", "err", err)
 				}
+				return
 			}
-		}()
-		go func() {
-			if err := a.router.ResumeCaddy(); err != nil {
-				slog.Error("resume caddy failed", "err", err)
+			for id, message := range result.ForwardErrors {
+				slog.Error("auto start forward failed", "forward_id", id, "err", message)
 			}
 		}()
 	}
