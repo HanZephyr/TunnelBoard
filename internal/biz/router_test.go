@@ -2,12 +2,11 @@ package biz_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -111,6 +110,35 @@ func (f *fakeCaddyAdapter) RootCACert(time.Duration) ([]byte, error) {
 	return f.rootCA, f.rootCAErr
 }
 
+type fakeCATrust struct {
+	state       helper.CATrustState
+	identity    helper.CAIdentity
+	ensureCalls int
+	removeCalls int
+	ensureErr   error
+}
+
+func newFakeCATrust() *fakeCATrust {
+	return &fakeCATrust{state: helper.CAConfirmationRequired, identity: helper.CAIdentity{SHA256: strings.Repeat("a", 64)}}
+}
+
+func (f *fakeCATrust) EnsureCurrentCaddyCATrusted(context.Context) (helper.CAIdentity, error) {
+	f.ensureCalls++
+	if f.ensureErr != nil {
+		return helper.CAIdentity{}, f.ensureErr
+	}
+	f.state = helper.CATrusted
+	return f.identity, nil
+}
+func (f *fakeCATrust) RemoveCurrentCaddyCA(context.Context) error {
+	f.removeCalls++
+	f.state = helper.CAConfirmationRequired
+	return nil
+}
+func (f *fakeCATrust) Status(context.Context) (helper.CATrustStatus, error) {
+	return helper.CATrustStatus{State: f.state, Identity: f.identity}, nil
+}
+
 // routerFixture 组装共享同一 fakeStore 的 catalog 与 router。
 type routerFixture struct {
 	store     *fakeStore
@@ -118,6 +146,7 @@ type routerFixture struct {
 	router    *biz.RouterBiz
 	helper    *fakeHelperClient
 	caddy     *fakeCaddyAdapter
+	caTrust   *fakeCATrust
 	hosts     string
 	caddyJSON string
 }
@@ -128,11 +157,12 @@ func newRouterFixture(t *testing.T) *routerFixture {
 	catalog := biz.NewCatalogBiz(fs)
 	fh := &fakeHelperClient{}
 	fc := &fakeCaddyAdapter{}
+	caTrust := newFakeCATrust()
 	dir := t.TempDir()
 	hostsPath := filepath.Join(dir, "hosts")
 	caddyConfigPath := filepath.Join(dir, "caddy.json")
-	r := biz.NewRouterBiz(fs, catalog, fh, fc, hostsPath, caddyConfigPath)
-	return &routerFixture{store: fs, catalog: catalog, router: r, helper: fh, caddy: fc, hosts: hostsPath, caddyJSON: caddyConfigPath}
+	r := biz.NewRouterBiz(fs, catalog, fh, caTrust, fc, hostsPath, caddyConfigPath)
+	return &routerFixture{store: fs, catalog: catalog, router: r, helper: fh, caddy: fc, caTrust: caTrust, hosts: hostsPath, caddyJSON: caddyConfigPath}
 }
 
 func (f *routerFixture) seedForward(t *testing.T, mode string, port int) model.Forward {
@@ -224,22 +254,12 @@ func TestApplyRouteCaddyTrustFlow(t *testing.T) {
 	if len(fx.caddy.reloads) != 1 {
 		t.Fatalf("reloads = %d, want 1", len(fx.caddy.reloads))
 	}
-	sum := sha256.Sum256([]byte("fake-der"))
-	var trustReq *helper.Request
-	for i := range fx.helper.calls {
-		if fx.helper.calls[i].Op == helper.OpTrustLocalCA {
-			trustReq = &fx.helper.calls[i]
-		}
-	}
-	if trustReq == nil {
-		t.Fatalf("TrustLocalCA not called: %+v", fx.helper.calls)
-	}
-	if trustReq.CertSHA256 != hex.EncodeToString(sum[:]) {
-		t.Fatalf("trusted fp = %q, want %q", trustReq.CertSHA256, hex.EncodeToString(sum[:]))
+	if fx.caTrust.ensureCalls != 1 {
+		t.Fatalf("CurrentUser CA ensure calls = %d, want 1", fx.caTrust.ensureCalls)
 	}
 	data, _ := fx.store.Load()
-	if data.Prefs.CATrustedSHA256 != hex.EncodeToString(sum[:]) {
-		t.Fatalf("pref not persisted: %+v", data.Prefs)
+	if data.Prefs.CATrustedSHA256 != "" {
+		t.Fatalf("machine-local CA fact must not enter Vault: %+v", data.Prefs)
 	}
 }
 
@@ -299,6 +319,7 @@ func TestRemoveRouteStopsCaddyAndUntrusts(t *testing.T) {
 	fx := newRouterFixture(t)
 	fw := fx.seedForward(t, "local", 8080)
 	fx.caddy.running = true
+	fx.caTrust.state = helper.CATrusted
 	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
 	if err != nil {
 		t.Fatal(err)
@@ -316,14 +337,8 @@ func TestRemoveRouteStopsCaddyAndUntrusts(t *testing.T) {
 	if fx.caddy.stopCalls != 1 {
 		t.Fatalf("caddy stop calls = %d, want 1", fx.caddy.stopCalls)
 	}
-	var untrusted bool
-	for _, c := range fx.helper.calls {
-		if c.Op == helper.OpUntrustLocalCA && c.CertSHA256 == "deadbeef" {
-			untrusted = true
-		}
-	}
-	if !untrusted {
-		t.Fatalf("UntrustLocalCA not called: %+v", fx.helper.calls)
+	if fx.caTrust.removeCalls != 1 {
+		t.Fatalf("CurrentUser CA remove calls = %d, want 1", fx.caTrust.removeCalls)
 	}
 	data, _ := fx.store.Load()
 	if data.Prefs.CATrustedSHA256 != "" {
@@ -346,6 +361,7 @@ func TestRouteStatusReflectsSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	fx.caddy.running = true
+	fx.caTrust.state = helper.CATrusted
 	if _, err := fx.store.Update(func(d *model.VaultData) error {
 		d.Prefs.CATrustedSHA256 = "deadbeef"
 		return nil
@@ -543,54 +559,19 @@ func TestResumeCaddyPortConflict(t *testing.T) {
 	}
 }
 
-// CA 未信任：helper 可达时补信任；不可达时只记录不失败。
-func TestResumeCaddyTrustsCAOnlyWhenHelperReachable(t *testing.T) {
-	newFixtureWithRoute := func(t *testing.T) *routerFixture {
-		fx := newRouterFixture(t)
-		fw := fx.seedForward(t, "local", 8080)
-		fx.caddy.rootCA = []byte("fake-der")
-		if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true}); err != nil {
-			t.Fatal(err)
-		}
-		return fx
+// 启动恢复绝不替用户作出新的根 CA 信任决定。
+func TestResumeCaddyDefersCurrentUserCAConfirmation(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	if _, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true}); err != nil {
+		t.Fatal(err)
 	}
-
-	t.Run("helper 可达补信任", func(t *testing.T) {
-		fx := newFixtureWithRoute(t)
-		if err := fx.router.ResumeCaddy(); err != nil {
-			t.Fatalf("ResumeCaddy: %v", err)
-		}
-		var trusted bool
-		for _, c := range fx.helper.calls {
-			if c.Op == helper.OpTrustLocalCA {
-				trusted = true
-			}
-		}
-		if !trusted {
-			t.Fatalf("TrustLocalCA not called: %+v", fx.helper.calls)
-		}
-		data, _ := fx.store.Load()
-		if data.Prefs.CATrustedSHA256 == "" {
-			t.Fatal("pref should record trusted fingerprint")
-		}
-	})
-
-	t.Run("helper 不可达不失败", func(t *testing.T) {
-		fx := newFixtureWithRoute(t)
-		fx.helper.pingErr = errors.New("pipe not found")
-		if err := fx.router.ResumeCaddy(); err != nil {
-			t.Fatalf("unreachable helper must not fail resume: %v", err)
-		}
-		for _, c := range fx.helper.calls {
-			if c.Op == helper.OpTrustLocalCA {
-				t.Fatal("must not trust when helper unreachable")
-			}
-		}
-		data, _ := fx.store.Load()
-		if data.Prefs.CATrustedSHA256 != "" {
-			t.Fatal("pref should stay empty")
-		}
-	})
+	if err := fx.router.ResumeCaddy(); err != nil {
+		t.Fatalf("ResumeCaddy: %v", err)
+	}
+	if fx.caTrust.ensureCalls != 0 {
+		t.Fatalf("startup must not trust a new CA, calls=%d", fx.caTrust.ensureCalls)
+	}
 }
 
 func TestRouteCoordinatorSerializesAndPersistsAppliedState(t *testing.T) {

@@ -36,7 +36,6 @@ type CaddyAdapter interface {
 	Apply(ctx context.Context, revision string, config []byte) (caddycore.ApplyResult, error)
 	Stop(ctx context.Context) error
 	Status(ctx context.Context) caddycore.Status
-	RootCACert(timeout time.Duration) ([]byte, error)
 }
 
 // RouteApplyResult 报告一次系统应用的副作用面；443 冲突不算错误，
@@ -74,6 +73,7 @@ type RouterBiz struct {
 	store          VaultStore
 	catalog        *CatalogBiz
 	helper         HelperClient
+	caTrust        helper.LocalCATrust
 	caddy          CaddyAdapter
 	hostsPath      string // 只读快照用；写入只经 helper
 	caddyConfigPth string // 回滚时恢复上一份配置
@@ -82,11 +82,12 @@ type RouterBiz struct {
 }
 
 // NewRouterBiz 组装本地路由 Module；所有系统副作用经注入接缝完成，可在测试中全内存验证。
-func NewRouterBiz(store VaultStore, catalog *CatalogBiz, helperClient HelperClient, caddyAdapter CaddyAdapter, hostsPath, caddyConfigPath string) *RouterBiz {
+func NewRouterBiz(store VaultStore, catalog *CatalogBiz, helperClient HelperClient, caTrust helper.LocalCATrust, caddyAdapter CaddyAdapter, hostsPath, caddyConfigPath string) *RouterBiz {
 	return &RouterBiz{
 		store:          store,
 		catalog:        catalog,
 		helper:         helperClient,
+		caTrust:        caTrust,
 		caddy:          caddyAdapter,
 		hostsPath:      hostsPath,
 		caddyConfigPth: caddyConfigPath,
@@ -143,6 +144,15 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 	if err != nil {
 		return RouteApplyResult{}, err
 	}
+	if data.Prefs.CATrustedSHA256 != "" {
+		if _, err := b.store.Update(func(current *model.VaultData) error {
+			current.Prefs.CATrustedSHA256 = ""
+			return nil
+		}); err != nil {
+			return RouteApplyResult{}, fmt.Errorf("migrate legacy CA trust state: %w", err)
+		}
+		data.Prefs.CATrustedSHA256 = ""
+	}
 	entries, _ := route.PlanHosts(data)
 	caddyConfig, err := route.CompileCaddy(data)
 	if err != nil {
@@ -165,7 +175,10 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 	if err := b.state.saveJournal(journal); err != nil {
 		return RouteApplyResult{}, err
 	}
-	caFingerprint := data.Prefs.CATrustedSHA256
+	caFingerprint := ""
+	if caStatus, statusErr := b.caTrust.Status(context.Background()); statusErr == nil && caStatus.State == helper.CATrusted {
+		caFingerprint = caStatus.Identity.SHA256
+	}
 	defer func() {
 		status := RouteStatusApplied
 		if result.PortConflict != "" {
@@ -207,8 +220,8 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 	prevRunning := b.caddy.Status(context.Background()).Owned
 
 	// 需要特权操作的场景：写 hosts、信任/撤销 CA；否则完全无需 helper。
-	needHelper := len(entries) > 0 || len(prevEntries) > 0 || len(caddyConfig) > 0 || data.Prefs.CATrustedSHA256 != ""
-	slog.Info("route apply planned", "hosts_entries", len(entries), "caddy_enabled", len(caddyConfig) > 0, "ca_trusted", data.Prefs.CATrustedSHA256 != "")
+	needHelper := len(entries) > 0 || len(prevEntries) > 0
+	slog.Info("route apply planned", "hosts_entries", len(entries), "caddy_enabled", len(caddyConfig) > 0, "ca_trusted", caFingerprint != "")
 	if needHelper {
 		if err := b.helper.EnsureInstalled(); err != nil {
 			slog.Error("privileged helper unavailable", "err", err)
@@ -243,15 +256,12 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 			}
 			slog.Info("caddy stopped (no enabled routes)")
 		}
-		if data.Prefs.CATrustedSHA256 != "" {
-			if err := b.callHelper(helper.Request{Op: helper.OpUntrustLocalCA, CertSHA256: data.Prefs.CATrustedSHA256}); err != nil {
+		if caFingerprint != "" {
+			if err := b.caTrust.RemoveCurrentCaddyCA(context.Background()); err != nil {
 				slog.Error("untrust local ca failed", "err", err)
 				return result, fmt.Errorf("untrust local ca: %w", err)
 			}
 			slog.Info("local ca untrusted")
-			if err := b.setCATrusted(""); err != nil {
-				return result, err
-			}
 			caFingerprint = ""
 		}
 		if err := advanceJournal("neutralized"); err != nil {
@@ -286,27 +296,22 @@ func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) 
 		return result, err
 	}
 
-	if data.Prefs.CATrustedSHA256 == "" {
-		der, err := b.caddy.RootCACert(b.caWaitTimeout)
+	caStatus, err := b.caTrust.Status(context.Background())
+	if err != nil {
+		return result, fmt.Errorf("query current-user ca: %w", err)
+	}
+	if caStatus.State != helper.CATrusted {
+		identity, err := b.caTrust.EnsureCurrentCaddyCATrusted(context.Background())
 		if err != nil {
-			b.rollbackCaddy(prevRunning, prevConfig)
-			b.rollbackHosts(prevEntries, hostsChanged)
-			slog.Error("read local ca failed", "err", err)
-			return result, fmt.Errorf("read local ca: %w", err)
-		}
-		sum := sha256.Sum256(der)
-		fp := hex.EncodeToString(sum[:])
-		if err := b.callHelper(helper.Request{Op: helper.OpTrustLocalCA, CertDER: der, CertSHA256: fp}); err != nil {
 			b.rollbackCaddy(prevRunning, prevConfig)
 			b.rollbackHosts(prevEntries, hostsChanged)
 			slog.Error("trust local ca failed", "err", err)
 			return result, fmt.Errorf("trust local ca: %w", err)
 		}
-		slog.Info("local ca trusted", "sha256_prefix", fp[:12])
-		if err := b.setCATrusted(fp); err != nil {
-			return result, err
-		}
-		caFingerprint = fp
+		caFingerprint = identity.SHA256
+		slog.Info("local ca trusted", "sha256_prefix", identity.SHA256[:12])
+	} else {
+		caFingerprint = caStatus.Identity.SHA256
 	}
 	if err := advanceJournal("ca_applied"); err != nil {
 		return result, err
@@ -345,27 +350,16 @@ func (b *RouterBiz) ResumeCaddy() error {
 		slog.Info("caddy resumed at startup")
 	}
 
-	if data.Prefs.CATrustedSHA256 != "" {
-		return nil
-	}
-	// CA 未信任：仅在 helper 可达（服务已装）时补信任，绝不触发提权安装。
-	if _, err := b.helper.Ping(); err != nil {
-		slog.Warn("helper unreachable at resume, local ca stays untrusted until manual apply", "err", err)
-		return nil
-	}
-	der, err := b.caddy.RootCACert(b.caWaitTimeout)
+	caStatus, err := b.caTrust.Status(context.Background())
 	if err != nil {
-		slog.Error("read local ca at resume failed", "err", err)
+		return fmt.Errorf("query current-user ca at resume: %w", err)
+	}
+	if caStatus.State == helper.CATrusted {
 		return nil
 	}
-	sum := sha256.Sum256(der)
-	fp := hex.EncodeToString(sum[:])
-	if err := b.callHelper(helper.Request{Op: helper.OpTrustLocalCA, CertDER: der, CertSHA256: fp}); err != nil {
-		slog.Error("trust local ca at resume failed", "err", err)
-		return nil
-	}
-	slog.Info("local ca trusted at resume", "sha256_prefix", fp[:12])
-	return b.setCATrusted(fp)
+	// 启动恢复不替用户作出新的根证书信任决定；下一次显式 Apply 再登记当前用户 CA。
+	slog.Info("current-user ca confirmation required; defer until explicit route apply")
+	return nil
 }
 
 // RouteStatus 汇总每条 Route 的系统生效状态。
@@ -383,7 +377,8 @@ func (b *RouterBiz) RouteStatus() ([]RouteStatusItem, error) {
 	caddyStatus := b.caddy.Status(context.Background())
 	running := caddyStatus.Owned
 	portConflict := !running && strings.Contains(strings.ToLower(caddyStatus.LastError), "443")
-	caTrusted := data.Prefs.CATrustedSHA256 != ""
+	caStatus, caErr := b.caTrust.Status(context.Background())
+	caTrusted := caErr == nil && caStatus.State == helper.CATrusted
 
 	items := make([]RouteStatusItem, 0, len(data.WebRoutes))
 	for _, r := range data.WebRoutes {
@@ -417,7 +412,8 @@ func (b *RouterBiz) PreviewRoute(routeID int) (RoutePreview, error) {
 		}
 	}
 	// Preview 保持纯读：端口冲突由 Supervisor 在 Commit/Apply 时按真实启动结果分类。
-	preview.CATrustNeeded = data.Prefs.CATrustedSHA256 == "" && hasCaddyEnabledRoute(data)
+	caStatus, caErr := b.caTrust.Status(context.Background())
+	preview.CATrustNeeded = hasCaddyEnabledRoute(data) && (caErr != nil || caStatus.State != helper.CATrusted)
 	return preview, nil
 }
 
@@ -439,14 +435,6 @@ func (b *RouterBiz) callHelper(req helper.Request) error {
 		return errors.New(resp.Error)
 	}
 	return nil
-}
-
-func (b *RouterBiz) setCATrusted(fp string) error {
-	_, err := b.store.Update(func(d *model.VaultData) error {
-		d.Prefs.CATrustedSHA256 = fp
-		return nil
-	})
-	return err
 }
 
 func (b *RouterBiz) rollbackHosts(prevEntries []route.HostEntry, hostsChanged bool) {

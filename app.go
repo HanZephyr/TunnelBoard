@@ -33,17 +33,18 @@ import (
 // App 是 Wails 的唯一绑定入口（应用 Module）：把目录与配置 Module、Vault
 // 和应用偏好转换为 UI 可用的结果，不承载业务规则。
 type App struct {
-	ctx      context.Context
-	store    *vault.Store
-	catalog  *biz.CatalogBiz
-	runtime  *biz.RuntimeBiz
-	router   *biz.RouterBiz
-	backup   *biz.BackupBiz
-	diagBuf  *diag.RingBuffer
-	logStore diag.LogStore
-	caddy    *caddy.Adapter
-	updater  *updater.Service
-	initErr  error
+	ctx         context.Context
+	store       *vault.Store
+	catalog     *biz.CatalogBiz
+	runtime     *biz.RuntimeBiz
+	router      *biz.RouterBiz
+	backup      *biz.BackupBiz
+	diagBuf     *diag.RingBuffer
+	logStore    diag.LogStore
+	caddy       *caddy.Adapter
+	updater     *updater.Service
+	initErr     error
+	helperClose func(context.Context) error
 
 	trayMu   sync.Mutex
 	trayShow *systray.MenuItem
@@ -72,16 +73,23 @@ func NewApp() *App {
 	diagBuf := diag.NewRingBuffer(slog.NewTextHandler(logWriter, nil), 2000)
 	slog.SetDefault(slog.New(diag.NewSafeLogHandler(diagBuf)))
 	catalog := biz.NewCatalogBiz(store)
-	caddyAdapter := caddy.New(store.Dir())
+	platformDataDir, platformErr := helper.CurrentUserDataDir()
+	if platformErr != nil {
+		_ = logStore.Close()
+		return &App{initErr: platformErr, store: store, diagBuf: diagBuf}
+	}
+	caTrust := helper.NewCurrentUserCATrustAt(platformDataDir)
+	helperOperator := helper.NewOperator()
+	caddyAdapter := caddy.New(platformDataDir)
 	caddyAdapter.ExpectedSHA256 = caddyBundleSHA256
 	caddyAdapter.Output = diag.NewSourceWriter(logStore, diag.LogCaddy)
-	return &App{
+	app := &App{
 		store:   store,
 		catalog: catalog,
 		runtime: biz.NewRuntimeBiz(store),
 		router: biz.NewRouterBiz(
-			store, catalog, helper.NewOperator(), caddyAdapter,
-			helper.SystemHostsPath(), filepath.Join(store.Dir(), "caddy.json"),
+			store, catalog, helperOperator, caTrust, caddyAdapter,
+			helper.SystemHostsPath(), filepath.Join(platformDataDir, "caddy.json"),
 		),
 		backup:   biz.NewBackupBiz(store),
 		diagBuf:  diagBuf,
@@ -89,6 +97,10 @@ func NewApp() *App {
 		caddy:    caddyAdapter,
 		updater:  updater.NewDefaultService(),
 	}
+	if closer, ok := helperOperator.(interface{ Close(context.Context) error }); ok {
+		app.helperClose = closer.Close
+	}
+	return app
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -125,6 +137,13 @@ func (a *App) shutdown(ctx context.Context) {
 		if err := a.caddy.Stop(stopCtx); err != nil {
 			slog.Error("stop caddy on shutdown failed", "err", err)
 		}
+	}
+	if a.helperClose != nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := a.helperClose(closeCtx); err != nil {
+			slog.Error("close privileged helper session failed", "err", err)
+		}
+		cancel()
 	}
 	if a.logStore != nil {
 		_ = a.logStore.Close()
