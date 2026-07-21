@@ -43,9 +43,11 @@ func TestLocalForwardStopClosesActiveConnections(t *testing.T) {
 func TestLocalForwardStopHonorsContextDeadline(t *testing.T) {
 	done := make(chan struct{})
 	close(done)
+	aborted := make(chan struct{}, 1)
 	f := &LocalForward{
 		forward: model.Forward{ID: 1, Name: "blocked"},
 		started: true, done: done, keepStop: make(chan struct{}),
+		lease: &chainLease{abort: func() { aborted <- struct{}{} }},
 	}
 	f.wg.Add(1)
 	defer f.wg.Done()
@@ -53,6 +55,11 @@ func TestLocalForwardStopHonorsContextDeadline(t *testing.T) {
 	defer cancel()
 	if err := f.Stop(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Stop err = %v, want deadline exceeded", err)
+	}
+	select {
+	case <-aborted:
+	default:
+		t.Fatal("Stop deadline must abort the captured SSH connection generation")
 	}
 }
 
