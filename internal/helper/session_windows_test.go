@@ -20,6 +20,31 @@ func (p *inProcessElevatedProcess) PID() uint32                { return p.pid }
 func (p *inProcessElevatedProcess) Wait(context.Context) error { return nil }
 func (p *inProcessElevatedProcess) Close() error               { return nil }
 
+type blockingPrivilegedSession struct{}
+
+func (blockingPrivilegedSession) Ensure(context.Context) error { return nil }
+func (blockingPrivilegedSession) Call(context.Context, Request) (Response, error) {
+	return Response{OK: true}, nil
+}
+func (blockingPrivilegedSession) Close(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestWindowsClientCloseAddsDeadlineWhenCallerHasNone(t *testing.T) {
+	client := &Client{Timeout: 30 * time.Millisecond, session: blockingPrivilegedSession{}}
+	done := make(chan error, 1)
+	go func() { done <- client.Close(context.Background()) }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "deadline") {
+			t.Fatalf("err = %v, want bounded deadline", err)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("Client.Close must not wait forever without a caller deadline")
+	}
+}
+
 func TestWindowsSessionUsesRandomPipeExactPIDAndPersistentConnection(t *testing.T) {
 	hostsPath := filepath.Join(t.TempDir(), "hosts")
 	var mu sync.Mutex

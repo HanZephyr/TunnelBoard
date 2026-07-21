@@ -39,6 +39,11 @@ func (c *Client) Ping() (string, error) {
 }
 
 func (c *Client) Close(ctx context.Context) error {
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		bounded, cancel := context.WithTimeout(ctx, c.timeout())
+		defer cancel()
+		ctx = bounded
+	}
 	return c.session.Close(ctx)
 }
 
