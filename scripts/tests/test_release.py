@@ -176,6 +176,23 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn("Linux: not delivered", workflow)
         self.assertNotIn("build-linux:", workflow)
 
+    def test_windows_installer_removes_legacy_service_before_copying_files(self) -> None:
+        installer = (ROOT / "scripts" / "windows-installer.nsi").read_text(encoding="utf-8")
+        cleanup = installer.find("--cleanup-legacy-service")
+        copy_payload = installer.find('File /r "${SOURCE_DIR}\\*.*"')
+        self.assertGreaterEqual(cleanup, 0, "installer must invoke the fixed legacy-service cleanup command")
+        self.assertGreater(copy_payload, cleanup, "legacy SYSTEM service must be removed before replacing payload files")
+        self.assertIn("Abort", installer[cleanup:copy_payload], "cleanup failure must stop the upgrade")
+
+    def test_windows_uninstaller_removes_current_user_ca_before_deleting_helper(self) -> None:
+        installer = (ROOT / "scripts" / "windows-installer.nsi").read_text(encoding="utf-8")
+        uninstall = installer.index('Section "Uninstall"')
+        cleanup = installer.find("--cleanup-current-user-ca", uninstall)
+        delete_helper = installer.find('Delete "$INSTDIR\\tunnelboard-helper.exe"', uninstall)
+        self.assertGreaterEqual(cleanup, 0, "uninstaller must offer the fixed current-user CA cleanup")
+        self.assertGreater(delete_helper, cleanup, "CA and its private key must be removed before deleting the cleanup binary")
+        self.assertIn("Abort", installer[cleanup:delete_helper], "failed trust cleanup must not silently orphan a root CA")
+
 
 if __name__ == "__main__":
     unittest.main()

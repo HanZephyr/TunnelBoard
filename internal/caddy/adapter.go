@@ -371,7 +371,55 @@ func (a *Adapter) Reload(config []byte) error {
 	return err
 }
 
+// PrepareRootCA validates the complete candidate configuration so Caddy can
+// provision the current user's local authority before the application asks
+// the user to trust it. It never starts a listener or creates an owned
+// process; the returned DER is the exact identity shown by Route Preview.
+func (a *Adapter) PrepareRootCA(ctx context.Context, routeConfig []byte) ([]byte, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if len(routeConfig) == 0 {
+		return nil, errors.New("caddy: empty config cannot prepare root CA")
+	}
+	validationConfig, err := injectValidationAdmin(routeConfig)
+	if err != nil {
+		return nil, err
+	}
+	bin, err := a.Locate()
+	if err != nil {
+		return nil, a.failLocked(err)
+	}
+	if bin != strings.TrimSpace(os.Getenv(EnvPathOverride)) {
+		if err := a.VerifySHA256(bin); err != nil {
+			return nil, a.failLocked(err)
+		}
+	}
+	if err := prepareRuntimeDir(a.runtimeDir); err != nil {
+		return nil, a.failLocked(err)
+	}
+	env := append(os.Environ(), "XDG_DATA_HOME="+a.DataDir)
+	candidate, err := a.writeCandidate(validationConfig)
+	if err != nil {
+		return nil, a.failLocked(err)
+	}
+	defer os.Remove(candidate)
+	var validation bytes.Buffer
+	if err := a.ValidateConfig(ctx, bin, candidate, a.DataDir, env, &validation); err != nil {
+		return nil, a.failLocked(fmt.Errorf("caddy: prepare root CA: %w: %s", err, strings.TrimSpace(validation.String())))
+	}
+	der, err := a.rootCACert(2 * time.Second)
+	if err != nil {
+		return nil, a.failLocked(err)
+	}
+	return der, nil
+}
+
 func (a *Adapter) RootCACert(timeout time.Duration) ([]byte, error) {
+	return a.rootCACert(timeout)
+}
+
+func (a *Adapter) rootCACert(timeout time.Duration) ([]byte, error) {
 	path := filepath.Join(a.DataDir, "caddy", "pki", "authorities", "local", "root.crt")
 	deadline := time.Now().Add(timeout)
 	for {

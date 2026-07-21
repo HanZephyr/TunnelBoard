@@ -117,6 +117,7 @@ const dnsConfirm = reactive({
   hostsRecords: [],
   domains: [],
   caTrustNeeded: false,
+  caFingerprint: '',
   busy: false
 })
 
@@ -126,6 +127,7 @@ function openRouteConfirm(preview) {
   dnsConfirm.hostsRecords = Array.isArray(preview?.hostsRecords) ? preview.hostsRecords : []
   dnsConfirm.domains = Array.isArray(preview?.requiresConfirmation) ? preview.requiresConfirmation : []
   dnsConfirm.caTrustNeeded = !!preview?.caTrustNeeded
+  dnsConfirm.caFingerprint = preview?.caFingerprint || ''
   dnsConfirm.visible = true
 }
 
@@ -135,6 +137,7 @@ function resetRouteConfirm() {
   dnsConfirm.hostsRecords = []
   dnsConfirm.domains = []
   dnsConfirm.caTrustNeeded = false
+  dnsConfirm.caFingerprint = ''
 }
 
 function cancelRouteConfirm() {
@@ -546,6 +549,10 @@ async function confirmDeleteRoute() {
   <BaseDialog :visible="dnsConfirm.visible" :title="dnsConfirm.domains.length ? t('routes.confirmations.dnsOverrideTitle') : t('routes.confirmations.caTrustTitle')" :busy="dnsConfirm.busy" @close="cancelRouteConfirm">
         <p v-if="dnsConfirm.domains.length" class="action-dialog-message">{{ t('routes.confirmations.dnsOverrideMessage', { domains: dnsConfirm.domains.join(', ') }) }}</p>
         <p v-if="dnsConfirm.caTrustNeeded" class="action-dialog-message">{{ t('routes.confirmations.caTrustMessage') }}</p>
+        <div v-if="dnsConfirm.caTrustNeeded && dnsConfirm.caFingerprint" class="inline-notice" role="note">
+          <span>{{ t('routes.confirmations.caFingerprintLabel') }}</span>
+          <code class="font-mono text-break">{{ dnsConfirm.caFingerprint }}</code>
+        </div>
         <table v-if="dnsConfirm.hostsRecords.length" class="table table-sm align-middle mt-2 mb-2">
           <thead>
             <tr>

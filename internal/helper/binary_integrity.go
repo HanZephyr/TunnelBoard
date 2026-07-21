@@ -24,6 +24,12 @@ func SetExpectedBinarySHA256(expected string) {
 	bundledHelperPin.Unlock()
 }
 
+func expectedBinarySHA256() string {
+	bundledHelperPin.RLock()
+	defer bundledHelperPin.RUnlock()
+	return bundledHelperPin.sha256
+}
+
 // VerifyBundledBinary 确认即将提权的 Helper 字节恰好属于当前主程序发行。
 func VerifyBundledBinary(path string) error {
 	bundledHelperPin.RLock()

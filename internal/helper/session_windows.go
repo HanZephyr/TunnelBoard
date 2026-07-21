@@ -259,7 +259,7 @@ func RunSessionHelper(options SessionHelperOptions) error {
 		return fmt.Errorf("helper: verify parent process: %w", err)
 	}
 	if !options.SkipLegacyMigration {
-		if err := RemoveLegacyService(); err != nil {
+		if err := RemoveLegacyInstallation(); err != nil {
 			return fmt.Errorf("helper: remove legacy service before starting session: %w", err)
 		}
 	}

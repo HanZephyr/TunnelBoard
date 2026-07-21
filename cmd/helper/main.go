@@ -5,6 +5,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -15,6 +16,22 @@ import (
 
 func main() {
 	if handled, err := runSelfCheck(os.Args[1:], os.Stdout); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if handled, err := runLegacyCleanup(os.Args[1:], helper.RemoveLegacyInstallation); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if handled, err := runCurrentUserCleanup(os.Args[1:], func() error {
+		return helper.RemoveCurrentUserCAAndPrivateKeys(context.Background())
+	}); handled {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -43,4 +60,20 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// runLegacyCleanup 只接受安装器使用的无参数固定迁移命令。它不会安装、启动
+// 或重配任何服务，也不接受服务名、路径等调用方输入。
+func runLegacyCleanup(args []string, cleanup func() error) (bool, error) {
+	if len(args) != 1 || args[0] != "--cleanup-legacy-service" {
+		return false, nil
+	}
+	return true, cleanup()
+}
+
+func runCurrentUserCleanup(args []string, cleanup func() error) (bool, error) {
+	if len(args) != 1 || args[0] != "--cleanup-current-user-ca" {
+		return false, nil
+	}
+	return true, cleanup()
 }

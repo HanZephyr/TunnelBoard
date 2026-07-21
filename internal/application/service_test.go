@@ -88,10 +88,12 @@ func (f *fakeRuntime) PreflightHostChange(_ context.Context, _ model.SSHHost, _ 
 }
 
 type fakeRoutes struct {
-	applied    biz.RouteAppliedState
-	reconciles int
-	result     biz.RouteApplyResult
-	err        error
+	applied       biz.RouteAppliedState
+	reconciles    int
+	result        biz.RouteApplyResult
+	err           error
+	caFingerprint string
+	caTrusted     bool
 }
 
 func (*fakeRoutes) RouteStatus() ([]biz.RouteStatusItem, error) { return nil, nil }
@@ -101,7 +103,7 @@ func (f *fakeRoutes) AppliedState() (biz.RouteAppliedState, error) {
 	}
 	return f.applied, nil
 }
-func (*fakeRoutes) PreviewDesired(data model.VaultData, routeID int) (biz.RoutePreview, error) {
+func (f *fakeRoutes) PreviewDesired(data model.VaultData, routeID int) (biz.RoutePreview, error) {
 	entries, _ := route.PlanHosts(data)
 	preview := biz.RoutePreview{HostsRecords: entries}
 	for _, candidate := range data.WebRoutes {
@@ -109,7 +111,11 @@ func (*fakeRoutes) PreviewDesired(data model.VaultData, routeID int) (biz.RouteP
 			preview.RequiresConfirmation = []string{candidate.Domain}
 		}
 		if candidate.CaddyEnabled {
-			preview.CATrustNeeded = true
+			preview.CATrustNeeded = !f.caTrusted
+			if f.caFingerprint == "" {
+				f.caFingerprint = strings.Repeat("a", 64)
+			}
+			preview.CAFingerprint = f.caFingerprint
 		}
 	}
 	return preview, nil
@@ -601,6 +607,9 @@ func TestRouteChangeKeepsSavedDesiredWhenReconcileFails(t *testing.T) {
 	if !preview.CATrustNeeded {
 		t.Fatal("enabling caddy must request current-user CA confirmation")
 	}
+	if preview.CAFingerprint != strings.Repeat("a", 64) {
+		t.Fatalf("CA fingerprint=%q", preview.CAFingerprint)
+	}
 	result, err := service.CommitRouteChange(context.Background(), application.CommitRouteChangeCommand{Token: preview.Token, ConfirmedDomains: preview.RequiresConfirmation, ConfirmCATrust: true})
 	if err != nil {
 		t.Fatal(err)
@@ -613,6 +622,31 @@ func TestRouteChangeKeepsSavedDesiredWhenReconcileFails(t *testing.T) {
 	}
 	if routes.reconciles != 1 || result.AcceptedRevision == snapshot.Revisions.Vault {
 		t.Fatalf("reconciles=%d accepted=%q", routes.reconciles, result.AcceptedRevision)
+	}
+}
+
+func TestCommitRouteChangeRejectsChangedCAIdentity(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	routes := &fakeRoutes{caFingerprint: strings.Repeat("a", 64), caTrusted: true}
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: routes, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
+	snapshot, _ := service.GetSnapshot(context.Background())
+	preview, err := service.PreviewRouteChange(context.Background(), application.RouteChangeIntent{ExpectedRevision: snapshot.Revisions.Vault, Action: application.RouteChangeSetFlag, RouteID: 1, Flag: application.RouteFlagCaddyEnabled, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes.caFingerprint = strings.Repeat("b", 64)
+	if preview.CATrustNeeded {
+		t.Fatal("fixture must cover a CA that was trusted during Preview")
+	}
+	result, err := service.CommitRouteChange(context.Background(), application.CommitRouteChangeCommand{Meta: application.CommandMeta{CommandID: "changed-ca"}, Token: preview.Token, ConfirmedDomains: preview.RequiresConfirmation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != application.RouteOutcomeRejected || result.Error == nil || result.Error.Code != "stale_ca_identity" {
+		t.Fatalf("result=%+v", result)
+	}
+	if store.updates != 0 || routes.reconciles != 0 {
+		t.Fatalf("changed CA caused side effects: updates=%d reconciles=%d", store.updates, routes.reconciles)
 	}
 }
 

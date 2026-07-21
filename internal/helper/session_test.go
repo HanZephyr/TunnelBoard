@@ -3,8 +3,10 @@ package helper_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/HanZephyr/TunnelBoard/internal/helper"
 )
@@ -38,6 +40,23 @@ type fakeSessionBackend struct {
 	mu          sync.Mutex
 	connections []*fakeSessionConnection
 	starts      int
+}
+
+type failingConnectionWithBlockingClose struct{}
+
+func (failingConnectionWithBlockingClose) Call(context.Context, helper.Request) (helper.Response, error) {
+	return helper.Response{}, errors.New("pipe disconnected")
+}
+
+func (failingConnectionWithBlockingClose) Close(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+type fixedConnectionBackend struct{ conn helper.SessionConnection }
+
+func (b fixedConnectionBackend) Start(context.Context) (helper.SessionConnection, error) {
+	return b.conn, nil
 }
 
 func (b *fakeSessionBackend) Start(context.Context) (helper.SessionConnection, error) {
@@ -92,5 +111,24 @@ func TestPrivilegedSessionDropsBrokenConnectionAndCanReauthorize(t *testing.T) {
 	}
 	if backend.starts != 2 {
 		t.Fatalf("starts = %d, want 2", backend.starts)
+	}
+}
+
+func TestPrivilegedSessionBoundsBrokenConnectionCleanup(t *testing.T) {
+	session := helper.NewPrivilegedSession(fixedConnectionBackend{conn: failingConnectionWithBlockingClose{}})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := session.Call(ctx, helper.Request{Op: helper.OpPing})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "pipe disconnected") {
+			t.Fatalf("Call error = %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("broken connection cleanup blocked past its internal deadline")
 	}
 }

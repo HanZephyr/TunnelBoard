@@ -18,6 +18,7 @@ import (
 )
 
 type windowsCurrentUserRootStore struct{}
+type windowsLocalMachineRootStore struct{}
 
 // NewCurrentUserCATrust 返回固定使用当前 Windows 用户 LocalAppData 与
 // CurrentUser\Root 的 CA Module；不会访问 LocalMachine\Root，也不会触发 UAC。
@@ -93,12 +94,45 @@ func openCurrentUserRoot() (windows.Handle, error) {
 	return store, nil
 }
 
+func openLocalMachineRoot() (windows.Handle, error) {
+	name, err := windows.UTF16PtrFromString("ROOT")
+	if err != nil {
+		return 0, err
+	}
+	store, err := windows.CertOpenStore(
+		windows.CERT_STORE_PROV_SYSTEM_W,
+		0,
+		0,
+		windows.CERT_SYSTEM_STORE_LOCAL_MACHINE|windows.CERT_STORE_OPEN_EXISTING_FLAG,
+		uintptr(unsafe.Pointer(name)),
+	)
+	if err != nil {
+		return 0, fmt.Errorf("helper: open LocalMachine Root: %w", err)
+	}
+	return store, nil
+}
+
+func (windowsLocalMachineRootStore) ContainsSHA256(ctx context.Context, fingerprint string) (bool, error) {
+	return visitRoot(ctx, fingerprint, false, openLocalMachineRoot)
+}
+func (windowsLocalMachineRootStore) AddDER(context.Context, []byte) error {
+	return errors.New("helper: adding machine roots is forbidden")
+}
+func (windowsLocalMachineRootStore) RemoveSHA256(ctx context.Context, fingerprint string) error {
+	_, err := visitRoot(ctx, fingerprint, true, openLocalMachineRoot)
+	return err
+}
+
 // visitCurrentUserRoot 逐张比较 DER 的 SHA-256；delete=true 时只删除精确匹配证书。
 func visitCurrentUserRoot(ctx context.Context, fingerprint string, deleteMatch bool) (bool, error) {
+	return visitRoot(ctx, fingerprint, deleteMatch, openCurrentUserRoot)
+}
+
+func visitRoot(ctx context.Context, fingerprint string, deleteMatch bool, open func() (windows.Handle, error)) (bool, error) {
 	if len(fingerprint) != sha256.Size*2 {
 		return false, errors.New("helper: invalid certificate fingerprint")
 	}
-	store, err := openCurrentUserRoot()
+	store, err := open()
 	if err != nil {
 		return false, err
 	}
