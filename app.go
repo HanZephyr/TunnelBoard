@@ -265,6 +265,14 @@ func (a *App) MoveForward(forwardID, targetFolderID int) error {
 	return a.catalog.MoveForward(forwardID, targetFolderID)
 }
 
+// MoveForwards 把多条 Forward 作为一个 Vault 事务移动到目标文件夹。
+func (a *App) MoveForwards(forwardIDs []int, targetFolderID int) error {
+	if err := a.ensureReady(); err != nil {
+		return err
+	}
+	return a.catalog.MoveForwards(forwardIDs, targetFolderID)
+}
+
 // SaveSSHHost 新建（ID 为 0）或更新 SSH 主机。
 func (a *App) SaveSSHHost(host model.SSHHost) (model.SSHHost, error) {
 	if err := a.ensureReady(); err != nil {

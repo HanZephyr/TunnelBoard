@@ -210,12 +210,35 @@ func indexForward(forwards []model.Forward, id int) int {
 
 // MoveForward 把指定 Forward 移到目标文件夹（0 无意义：Forward 必须归属文件夹）。
 func (b *CatalogBiz) MoveForward(forwardID, targetFolderID int) error {
+	return b.MoveForwards([]int{forwardID}, targetFolderID)
+}
+
+// MoveForwards 在一次 Vault Update 中移动全部 Forward。任何 ID 或目标文件夹
+// 无效都会使 mutate 返回错误，因此不会出现部分移动。
+func (b *CatalogBiz) MoveForwards(forwardIDs []int, targetFolderID int) error {
+	if len(forwardIDs) == 0 {
+		return fmt.Errorf("at least one forward is required")
+	}
 	_, err := b.store.Update(func(d *model.VaultData) error {
-		idx := indexForward(d.Forwards, forwardID)
-		if idx < 0 {
-			return fmt.Errorf("forward %d not found", forwardID)
+		if indexFolder(d.Folders, targetFolderID) < 0 {
+			return fmt.Errorf("%w: folder %d", model.ErrRefMissing, targetFolderID)
 		}
-		d.Forwards[idx].FolderID = targetFolderID
+		indexes := make([]int, 0, len(forwardIDs))
+		seen := make(map[int]bool, len(forwardIDs))
+		for _, id := range forwardIDs {
+			if seen[id] {
+				return fmt.Errorf("forward %d is duplicated", id)
+			}
+			seen[id] = true
+			idx := indexForward(d.Forwards, id)
+			if idx < 0 {
+				return fmt.Errorf("forward %d not found", id)
+			}
+			indexes = append(indexes, idx)
+		}
+		for _, idx := range indexes {
+			d.Forwards[idx].FolderID = targetFolderID
+		}
 		return d.Validate()
 	})
 	return err
