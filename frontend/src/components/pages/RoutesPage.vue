@@ -14,6 +14,7 @@ import IconActionButton from '../common/IconActionButton.vue'
 import StatusChip from '../common/StatusChip.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
 import RouteModal from '../modals/RouteModal.vue'
+import BaseDialog from '../common/BaseDialog.vue'
 
 const props = defineProps({
   forwards: {
@@ -23,7 +24,8 @@ const props = defineProps({
   webRoutes: {
     type: Array,
     default: () => []
-  }
+  },
+  configurationLocked: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['vault-changed', 'notify'])
@@ -53,6 +55,7 @@ function upstreamDetail(route) {
 
 // ---- 系统状态（GetRouteStatus 轮询合并）----
 const statusMap = ref({})
+const statusPhase = ref('checking')
 let statusTimer = null
 
 function statusOf(routeId) {
@@ -60,6 +63,7 @@ function statusOf(routeId) {
 }
 
 async function refreshStatus() {
+  if (!Object.keys(statusMap.value).length) statusPhase.value = 'checking'
   try {
     const items = await callBackend(GetRouteStatus)
     const next = {}
@@ -67,8 +71,9 @@ async function refreshStatus() {
       next[item.routeId] = item
     }
     statusMap.value = next
+    statusPhase.value = 'ready'
   } catch (_) {
-    /* 后端暂不可用时保留现有状态，下一轮轮询再试 */
+    statusPhase.value = Object.keys(statusMap.value).length ? 'stale' : 'unknown'
   }
 }
 
@@ -169,6 +174,7 @@ function defaultRouteForm() {
 }
 
 function openNewRoute() {
+  if (props.configurationLocked) return
   if (!localForwards.value.length) {
     emit('notify', t('routes.notify.needForward'))
     return
@@ -182,6 +188,7 @@ function openNewRoute() {
 defineExpose({ openNewRoute })
 
 function editRoute(route) {
+  if (props.configurationLocked) return
   editingRouteId.value = route.id
   Object.assign(routeForm, {
     domain: route.domain,
@@ -204,6 +211,7 @@ function validateRoutePayload(payload) {
 }
 
 async function saveRoute() {
+  if (props.configurationLocked) return
   const payload = {
     id: editingRouteId.value || 0,
     forwardId: Number(routeForm.forwardId),
@@ -231,6 +239,7 @@ async function saveRoute() {
 
 // ---- 表格内开关：保存（带全部字段）→ 预览 / 确认 / 应用 ----
 const pendingRouteIds = ref(new Set())
+const routeMutationBusy = computed(() => pendingRouteIds.value.size > 0 || dnsConfirm.busy)
 
 function setRoutePending(routeId, pending) {
   const next = new Set(pendingRouteIds.value)
@@ -242,15 +251,19 @@ function setRoutePending(routeId, pending) {
   pendingRouteIds.value = next
 }
 
-async function toggleRouteFlag(route, field) {
+async function toggleRouteFlag(route, field, event) {
+  if (props.configurationLocked) {
+    event.target.checked = !!route[field]
+    return
+  }
   if (pendingRouteIds.value.has(route.id)) return
   setRoutePending(route.id, true)
   const payload = {
     id: route.id,
     forwardId: route.forwardId,
     domain: route.domain,
-    hostsEnabled: field === 'hostsEnabled' ? !route.hostsEnabled : !!route.hostsEnabled,
-    caddyEnabled: field === 'caddyEnabled' ? !route.caddyEnabled : !!route.caddyEnabled,
+    hostsEnabled: field === 'hostsEnabled' ? !!event.target.checked : !!route.hostsEnabled,
+    caddyEnabled: field === 'caddyEnabled' ? !!event.target.checked : !!route.caddyEnabled,
     upstreamScheme: route.upstreamScheme || 'http',
     tlsSni: route.tlsSni || ''
   }
@@ -262,11 +275,35 @@ async function toggleRouteFlag(route, field) {
     emit('vault-changed')
     await previewAndApply(route.id)
   } catch (err) {
+    event.target.checked = !!route[field]
     emit('notify', errorMessage(err))
   } finally {
     setRoutePending(route.id, false)
     void refreshStatus()
   }
+}
+
+function routeAppliedView(route) {
+  const status = statusOf(route.id)
+  if (statusPhase.value === 'checking') return { status: 'reconnecting', label: t('routes.status.checking') }
+  if (!status || statusPhase.value === 'unknown') return { status: 'reconnecting', label: t('routes.status.unknown') }
+  const state = status.state || status.status
+  const states = {
+    applied: ['running', 'routes.status.applied'],
+    hosts_only: ['running', 'routes.status.hostsOnly'],
+    pending: ['reconnecting', 'routes.status.pending'],
+    conflict: ['busy', 'routes.status.portConflict'],
+    error: ['stopped', 'routes.status.error'],
+    unknown: ['reconnecting', 'routes.status.unknown'],
+    cleanup_pending: ['busy', 'routes.status.cleanupPending'],
+    quarantined: ['busy', 'routes.status.quarantined']
+  }
+  if (states[state]) return { status: states[state][0], label: t(states[state][1]) }
+  if (status.portConflict) return { status: 'busy', label: t('routes.status.portConflict') }
+  if (route.caddyEnabled && status.caddyRunning) return { status: 'running', label: t('routes.status.applied') }
+  if (route.hostsEnabled && status.hostsApplied) return { status: 'running', label: t('routes.status.hostsOnly') }
+  if (!route.hostsEnabled && !route.caddyEnabled) return { status: 'stopped', label: t('routes.status.notDesired') }
+  return { status: 'reconnecting', label: t('routes.status.unknown') }
 }
 
 // ---- Route 删除（后端负责撤销 hosts / Caddy）----
@@ -276,6 +313,7 @@ const deleteDialog = reactive({
 })
 
 function deleteRoute(route) {
+  if (props.configurationLocked) return
   deleteDialog.route = route
   deleteDialog.visible = true
 }
@@ -307,6 +345,7 @@ async function confirmDeleteRoute() {
           class="btn icon-ghost-btn"
           :title="t('routes.newRoute')"
           :aria-label="t('routes.newRoute')"
+          :disabled="configurationLocked || routeMutationBusy"
           @click="openNewRoute"
         >
           <i class="bi bi-plus-lg" aria-hidden="true"></i>
@@ -316,7 +355,7 @@ async function confirmDeleteRoute() {
       <div v-if="!sortedRoutes.length" class="empty-state">
         <i class="bi bi-globe2 empty-state-icon" aria-hidden="true"></i>
         <p class="empty-state-text">{{ t('routes.empty') }}</p>
-        <button type="button" class="btn btn-primary header-action-btn" @click="openNewRoute">
+        <button type="button" class="btn btn-primary header-action-btn" :disabled="configurationLocked || routeMutationBusy" @click="openNewRoute">
           <i class="bi bi-plus-lg" aria-hidden="true"></i>{{ t('app.header.newRoute') }}
         </button>
       </div>
@@ -334,6 +373,7 @@ async function confirmDeleteRoute() {
                 button-class="icon-ghost-btn"
                 :title="t('app.common.edit')"
                 :aria-label="t('app.common.edit')"
+                :disabled="configurationLocked || routeMutationBusy"
                 @click="editRoute(route)"
               />
               <IconActionButton
@@ -341,6 +381,7 @@ async function confirmDeleteRoute() {
                 button-class="icon-ghost-btn danger"
                 :title="t('app.common.delete')"
                 :aria-label="t('app.common.delete')"
+                :disabled="configurationLocked || routeMutationBusy"
                 @click="deleteRoute(route)"
               />
             </div>
@@ -357,9 +398,10 @@ async function confirmDeleteRoute() {
                     type="checkbox"
                     class="form-check-input"
                     :checked="route.hostsEnabled"
-                    :disabled="pendingRouteIds.has(route.id)"
+                    :disabled="configurationLocked || routeMutationBusy"
+                    :aria-busy="pendingRouteIds.has(route.id)"
                     :aria-label="t('routes.table.hosts')"
-                    @change="toggleRouteFlag(route, 'hostsEnabled')"
+                    @change="toggleRouteFlag(route, 'hostsEnabled', $event)"
                   />
                 </span>
               </span>
@@ -370,48 +412,27 @@ async function confirmDeleteRoute() {
                     type="checkbox"
                     class="form-check-input"
                     :checked="route.caddyEnabled"
-                    :disabled="pendingRouteIds.has(route.id)"
+                    :disabled="configurationLocked || routeMutationBusy"
+                    :aria-busy="pendingRouteIds.has(route.id)"
                     :aria-label="t('routes.table.caddy')"
-                    @change="toggleRouteFlag(route, 'caddyEnabled')"
+                    @change="toggleRouteFlag(route, 'caddyEnabled', $event)"
                   />
                 </span>
               </span>
             </div>
             <div class="route-card-status">
-              <StatusChip
-                v-if="route.hostsEnabled"
-                :status="statusOf(route.id)?.hostsApplied ? 'running' : 'stopped'"
-                :label="
-                  statusOf(route.id)?.hostsApplied
-                    ? t('routes.status.hostsApplied')
-                    : t('routes.status.hostsNotApplied')
-                "
-              />
-              <StatusChip
-                v-if="route.caddyEnabled"
-                :status="statusOf(route.id)?.caddyRunning ? 'running' : 'stopped'"
-                :label="
-                  statusOf(route.id)?.caddyRunning
-                    ? t('routes.status.caddyRunning')
-                    : t('routes.status.caddyStopped')
-                "
-              />
-              <span v-if="statusOf(route.id)?.portConflict" class="status-badge busy">
-                <i class="bi bi-exclamation-triangle me-1" aria-hidden="true"></i>{{ t('routes.status.portConflict') }}
-              </span>
+              <StatusChip :status="routeAppliedView(route).status" :label="routeAppliedView(route).label" />
               <i
                 v-if="statusOf(route.id)?.caTrusted"
                 class="bi bi-shield-lock-fill ca-trusted-icon"
                 :title="t('routes.status.caTrusted')"
                 aria-hidden="true"
               ></i>
-              <span v-if="!route.hostsEnabled && !route.caddyEnabled && !statusOf(route.id)?.portConflict">
-                {{ t('app.common.none') }}
-              </span>
             </div>
           </div>
         </div>
       </div>
+      <span class="visually-hidden" aria-live="polite">{{ routeMutationBusy ? t('routes.status.pending') : '' }}</span>
     </div>
   </section>
 
@@ -433,12 +454,7 @@ async function confirmDeleteRoute() {
     @close="deleteDialog.visible = false"
   />
 
-  <div v-if="dnsConfirm.visible" class="overlay">
-    <div class="dialog-card compact-dialog">
-      <div class="dialog-head">
-        <h3 class="dialog-title">{{ t('routes.confirmations.dnsOverrideTitle') }}</h3>
-      </div>
-      <div class="dialog-body">
+  <BaseDialog :visible="dnsConfirm.visible" :title="t('routes.confirmations.dnsOverrideTitle')" :busy="dnsConfirm.busy" @close="closeDnsConfirm">
         <p class="action-dialog-message">{{ t('routes.confirmations.dnsOverrideMessage', { domains: dnsConfirm.domains.join(', ') }) }}</p>
         <table class="table table-sm align-middle mt-2 mb-2">
           <thead>
@@ -458,15 +474,13 @@ async function confirmDeleteRoute() {
           <i class="bi bi-exclamation-triangle" aria-hidden="true"></i>
           <span>{{ t('routes.confirmations.dnsOverrideWarning') }}</span>
         </div>
-      </div>
-      <div class="dialog-footer">
+    <template #footer>
         <button type="button" class="btn btn-outline-secondary" :disabled="dnsConfirm.busy" @click="closeDnsConfirm">
           {{ t('app.common.cancel') }}
         </button>
         <button type="button" class="btn btn-warning" :disabled="dnsConfirm.busy" @click="confirmDnsOverride">
           {{ t('routes.confirmations.dnsOverrideConfirm') }}
         </button>
-      </div>
-    </div>
-  </div>
+    </template>
+  </BaseDialog>
 </template>

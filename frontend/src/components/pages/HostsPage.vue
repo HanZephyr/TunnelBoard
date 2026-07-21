@@ -2,7 +2,9 @@
 import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { DeleteSelection, SaveSSHHost } from '../../../wailsjs/go/main/App'
-import { callBackend, errorMessage, isValidPort } from '../../utils/backend'
+import { callBackend, errorMessage } from '../../utils/backend'
+import { createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
+import { createApplicationClient } from '../../utils/applicationClient'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
@@ -16,12 +18,14 @@ const props = defineProps({
   forwards: {
     type: Array,
     default: () => []
-  }
+  },
+  configurationLocked: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['vault-changed', 'notify'])
 
 const { t } = useI18n()
+const application = createApplicationClient()
 
 const sortedHosts = computed(() => [...props.sshHosts].sort((a, b) => a.id - b.id))
 
@@ -90,28 +94,12 @@ async function handleConfirm() {
 const hostModalOpen = ref(false)
 const editingHostId = ref(null)
 const hostValidationError = ref('')
-const hostForm = reactive(defaultHostForm())
-
-function defaultHostForm() {
-  return {
-    name: '',
-    host: '',
-    port: 22,
-    user: '',
-    authType: 'ssh_key',
-    keyPath: '',
-    agentSocketPath: '',
-    password: '',
-    keepAliveIntervalMs: 5000,
-    timeoutMs: 5000,
-    hostKeyAlgorithms: '',
-    notes: ''
-  }
-}
+const hostForm = reactive(createSSHHostDraft())
 
 function openNewHost() {
+  if (props.configurationLocked) return
   editingHostId.value = null
-  Object.assign(hostForm, defaultHostForm())
+  Object.assign(hostForm, createSSHHostDraft())
   hostValidationError.value = ''
   hostModalOpen.value = true
 }
@@ -119,66 +107,33 @@ function openNewHost() {
 defineExpose({ openNewHost })
 
 function editHost(host) {
+  if (props.configurationLocked) return
   editingHostId.value = host.id
-  Object.assign(hostForm, defaultHostForm(), {
-    name: host.name,
-    host: host.host,
-    port: host.port,
-    user: host.user,
-    authType: host.authType || 'ssh_key',
-    keyPath: host.keyPath || '',
-    agentSocketPath: host.agentSocketPath || '',
-    password: host.password || '',
-    keepAliveIntervalMs: host.keepAliveIntervalMs ?? 0,
-    timeoutMs: host.timeoutMs ?? 0,
-    hostKeyAlgorithms: host.hostKeyAlgorithms || '',
-    notes: host.notes || ''
-  })
+  Object.assign(hostForm, createSSHHostDraft({ ...host, hasSecret: host.hasSecret === true || !!host.password }))
   hostValidationError.value = ''
   hostModalOpen.value = true
 }
 
-function buildHostPayload() {
-  const authType = hostForm.authType
-  return {
-    id: editingHostId.value || 0,
-    name: hostForm.name.trim(),
-    host: hostForm.host.trim(),
-    port: Number(hostForm.port),
-    user: hostForm.user.trim(),
-    authType,
-    keyPath: authType === 'ssh_key' ? hostForm.keyPath.trim() : '',
-    agentSocketPath: authType === 'ssh_agent' ? hostForm.agentSocketPath.trim() : '',
-    password: authType === 'password' || authType === 'ssh_key' ? hostForm.password : '',
-    keepAliveIntervalMs: Number(hostForm.keepAliveIntervalMs) || 0,
-    timeoutMs: Number(hostForm.timeoutMs) || 0,
-    hostKeyAlgorithms: hostForm.hostKeyAlgorithms.trim(),
-    notes: hostForm.notes.trim()
-  }
-}
-
-function validateHostPayload(payload) {
-  if (!payload.name) return t('hosts.errors.nameRequired')
-  if (!payload.host) return t('hosts.errors.hostRequired')
-  if (!payload.user) return t('hosts.errors.userRequired')
-  if (!isValidPort(payload.port)) return t('hosts.errors.portRange')
-  if (payload.authType === 'ssh_key' && !payload.keyPath) return t('hosts.errors.keyPathRequired')
-  if (payload.authType === 'password' && !payload.password) return t('hosts.errors.passwordRequired')
-  return ''
+function validationMessage(code) {
+  return code ? t(`hosts.errors.${code}`) : ''
 }
 
 async function saveHost() {
-  const payload = buildHostPayload()
-  const error = validateHostPayload(payload)
+  if (props.configurationLocked) return
+  hostForm.id = editingHostId.value || 0
+  const command = toSaveSSHHostCommand(hostForm)
+  const error = validationMessage(validateSSHHostDraft(hostForm))
   if (error) {
     hostValidationError.value = error
     return
   }
   try {
-    const saved = await callBackend(SaveSSHHost, payload)
+    const original = props.sshHosts.find((host) => host.id === command.host.id)
+    const result = await application.saveSSHHost(command, (payload) => callBackend(SaveSSHHost, payload), original)
+    const saved = result?.host || result
     hostModalOpen.value = false
     emit('vault-changed')
-    emit('notify', t('hosts.notify.saved', { name: saved?.name || payload.name }))
+    emit('notify', t('hosts.notify.saved', { name: saved?.name || command.host.name }))
   } catch (err) {
     hostValidationError.value = errorMessage(err)
   }
@@ -186,6 +141,7 @@ async function saveHost() {
 
 // ---- 删除（被 Forward 引用时后端拒绝，展示错误提示）----
 function deleteHost(host) {
+  if (props.configurationLocked) return
   openConfirm({
     title: t('hosts.confirmations.deleteHostTitle'),
     message: t('hosts.confirmations.deleteHost', { name: host.name }),
@@ -228,7 +184,7 @@ function deleteHost(host) {
       <div v-if="!sortedHosts.length" class="empty-state">
         <i class="bi bi-hdd-network empty-state-icon" aria-hidden="true"></i>
         <p class="empty-state-text">{{ t('hosts.empty') }}</p>
-        <button type="button" class="btn btn-primary header-action-btn" @click="openNewHost">
+        <button type="button" class="btn btn-primary header-action-btn" :disabled="configurationLocked" @click="openNewHost">
           <i class="bi bi-plus-lg" aria-hidden="true"></i>{{ t('app.header.newHost') }}
         </button>
       </div>
@@ -243,6 +199,7 @@ function deleteHost(host) {
                 button-class="icon-ghost-btn"
                 :title="t('app.common.edit')"
                 :aria-label="t('app.common.edit')"
+                :disabled="configurationLocked"
                 @click="editHost(host)"
               />
               <IconActionButton
@@ -250,6 +207,7 @@ function deleteHost(host) {
                 button-class="icon-ghost-btn danger"
                 :title="t('app.common.delete')"
                 :aria-label="t('app.common.delete')"
+                :disabled="configurationLocked"
                 @click="deleteHost(host)"
               />
             </div>

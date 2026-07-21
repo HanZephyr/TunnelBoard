@@ -37,6 +37,17 @@
             "moveDown": "下移",
             "remove": "移除",
             "none": "--"
+        },
+        "snapshot": {
+            "loading": "正在加载应用数据…",
+            "loadFailed": "应用数据加载失败，未显示空数据",
+            "stale": "当前显示的是上次成功读取的数据，配置修改已暂停。",
+            "retry": "重试"
+        },
+        "update": {
+            "available": "发现新版本",
+            "latestVersion": "最新版本：{version}",
+            "openRelease": "打开下载页"
         }
     },
     "overview": {
@@ -94,6 +105,7 @@
         "stopSelected": "停止",
         "selectedCount": "已选 {count} 项",
         "moveToPlaceholder": "移动到…",
+        "moveSelected": "移动",
         "deleteSelected": "删除",
         "clearSelection": "取消选择",
         "clearSelection": "清除选择",
@@ -119,7 +131,8 @@
             "description": "描述",
             "descriptionPlaceholder": "可选",
             "newHostToggle": "新建主机",
-            "newHostSave": "保存并加入"
+            "newHostSave": "保存并加入",
+            "newHostPersists": "保存主机是独立操作；即使随后取消 Forward，该主机仍会保留。"
         },
         "errors": {
             "nameRequired": "名称不能为空。",
@@ -190,6 +203,10 @@
             "keyPathPlaceholder": "~/.ssh/id_rsa",
             "password": "密码",
             "passwordPlaceholder": "输入密码",
+            "secretAction": "凭据处理方式",
+            "keepSecret": "保留已保存凭据",
+            "replaceSecret": "替换凭据",
+            "clearSecret": "清除凭据",
             "keyPassphrase": "私钥口令",
             "keyPassphrasePlaceholder": "可选（私钥口令）",
             "agentSocketPath": "Agent Socket 路径（可选）",
@@ -312,7 +329,16 @@
             "caddyRunning": "Caddy 运行中",
             "caddyStopped": "Caddy 未运行",
             "portConflict": "443 端口冲突",
-            "caTrusted": "本地 CA 已信任"
+            "caTrusted": "本地 CA 已信任",
+            "checking": "正在核对系统状态",
+            "unknown": "系统状态未知",
+            "applied": "hosts 与 Caddy 已生效",
+            "hostsOnly": "仅 hosts 已生效",
+            "pending": "配置已保存，等待应用",
+            "error": "应用失败",
+            "cleanupPending": "等待清理旧状态",
+            "quarantined": "恢复隔离中",
+            "notDesired": "未启用"
         },
         "modal": {
             "newTitle": "新建 Web 路由",
