@@ -24,6 +24,7 @@ import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime'
 import { callBackend, errorMessage } from '../../utils/backend'
 import { ensureLocaleMessages } from '../../i18n'
 import BaseDialog from '../common/BaseDialog.vue'
+import ConfirmDialog from '../common/ConfirmDialog.vue'
 import { DEFAULT_RELEASES_PAGE_URL, officialReleaseUrl } from '../../modules/releaseUrl'
 import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
 
@@ -38,7 +39,9 @@ const props = defineProps({
   },
 	configurationLocked: { type: Boolean, default: false },
 	vaultRevision: { type: String, default: '' },
-	recoveryState: { type: Object, default: () => ({}) }
+	recoveryState: { type: Object, default: () => ({}) },
+  forwards: { type: Array, default: () => [] },
+  webRoutes: { type: Array, default: () => [] }
 })
 
 const emit = defineEmits(['theme-change', 'notify', 'vault-changed', 'update-outcome'])
@@ -251,6 +254,7 @@ const restoreState = reactive({
 const isStagingRestore = ref(false)
 const isRestoring = ref(false)
 const isActivatingRestore = ref(false)
+const activateRestoreConfirm = reactive({ visible: false })
 
 const previewCounts = computed(() => {
   const counts = importState.preview?.counts || {}
@@ -281,6 +285,19 @@ const canCommitRestore = computed(() => !!(restoreState.token && restoreState.pr
 const restorePreviewCounts = computed(() => {
 	const counts = restoreState.preview?.counts || {}
 	return previewCounts.value.map((item) => ({ ...item, value: counts[item.key] || 0 }))
+})
+
+const restoreActivationSummary = computed(() => {
+  const forwards = props.forwards.filter((item) => item.autoStart).length
+  const domains = props.webRoutes
+    .filter((item) => item.hostsEnabled || item.caddyEnabled)
+    .map((item) => item.domain)
+    .filter(Boolean)
+  return t('settings.backup.activateRestoreConfirmMessage', {
+    forwards,
+    routes: domains.length,
+    domains: domains.length ? domains.join(', ') : t('app.common.none')
+  })
 })
 
 async function onExportBackup() {
@@ -463,8 +480,14 @@ async function onCommitRestore() {
   }
 }
 
-async function onActivateRestoredNetwork() {
+function requestActivateRestoredNetwork() {
+	if (isActivatingRestore.value || props.recoveryState.journalPending) return
+	activateRestoreConfirm.visible = true
+}
+
+async function confirmActivateRestoredNetwork() {
 	if (isActivatingRestore.value) return
+	activateRestoreConfirm.visible = false
 	isActivatingRestore.value = true
 	try {
 		await callBackend(ActivateRestoredNetwork)
@@ -811,9 +834,12 @@ async function onActivateRestoredNetwork() {
           <div class="danger-zone">
             <div class="config-name">{{ t('settings.backup.restoreTitle') }} · {{ t('settings.backup.restoreDanger') }}</div>
 			<div class="config-desc mb-2">{{ t('settings.backup.restoreDesc') }}</div>
-			<div v-if="restoreState.quarantined || recoveryState.quarantined" class="alert alert-warning py-2" role="status">
+			<div v-if="recoveryState.journalPending" class="alert alert-danger py-2" role="alert">
+			  {{ t('settings.backup.restoreRecoveryPending') }}
+			</div>
+			<div v-else-if="restoreState.quarantined || recoveryState.quarantined" class="alert alert-warning py-2" role="status">
 			  <div>{{ t('settings.backup.restoreQuarantineNotice') }}</div>
-			  <button type="button" class="btn btn-sm btn-warning mt-2" :disabled="isActivatingRestore" @click="onActivateRestoredNetwork">
+			  <button type="button" class="btn btn-sm btn-warning mt-2" :disabled="isActivatingRestore || recoveryState.journalPending" @click="requestActivateRestoredNetwork">
 				{{ isActivatingRestore ? t('settings.backup.activatingRestore') : t('settings.backup.activateRestore') }}
 			  </button>
 			</div>
@@ -873,6 +899,17 @@ async function onActivateRestoredNetwork() {
       </div>
     </div>
   </section>
+
+  <ConfirmDialog
+    :visible="activateRestoreConfirm.visible"
+    :title="t('settings.backup.activateRestoreConfirmTitle')"
+    :message="restoreActivationSummary"
+    :confirm-label="t('settings.backup.activateRestore')"
+    confirm-class="btn-warning"
+    :busy="isActivatingRestore"
+    @confirm="confirmActivateRestoredNetwork"
+    @close="activateRestoreConfirm.visible = false"
+  />
 
   <BaseDialog :visible="updateCheckDialog.visible" :title="t('settings.updateResultTitle')" :busy="isCheckingUpdates" class="update-check-dialog-content" @close="closeUpdateCheckDialog">
           <p v-if="updateCheckDialog.mode === 'upToDate'" class="mb-0 update-check-dialog-text">

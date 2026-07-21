@@ -16,6 +16,10 @@ defineProps({
     type: Boolean,
     default: false
   },
+  latestVersion: {
+    type: String,
+    default: ''
+  },
   collapsed: {
     type: Boolean,
     default: false
@@ -75,7 +79,7 @@ defineEmits(['switch-page', 'open-update-details', 'toggle-collapse'])
           v-if="hasNewVersion"
           type="button"
           class="version-new-badge"
-          :aria-label="$t('app.update.available')"
+          :aria-label="$t('app.update.actionLabel', { version: latestVersion })"
           :title="$t('app.update.available')"
           @click="$emit('open-update-details')"
         >

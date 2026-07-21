@@ -2,9 +2,15 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
+function pageMount(source, key) {
+  return [...source.matchAll(/<PageLoader[\s\S]*?\/>/g)]
+    .map((match) => match[0])
+    .find((mount) => mount.includes(`:loader="pageLoaders.${key}"`)) || ''
+}
+
 test('根组件向 RoutesPage 传递 revision 和应用状态', async () => {
   const source = await readFile(new URL('./App.vue', import.meta.url), 'utf8')
-  const mount = source.match(/<RoutesPage[\s\S]*?\/>/)?.[0] || ''
+  const mount = pageMount(source, 'routes')
   assert.match(mount, /:route-statuses="routeStatuses"/)
   assert.match(mount, /:vault-revision="vaultRevision"/)
 })
@@ -55,7 +61,7 @@ test('高层命令结果先登记 revision 和 event sequence 再刷新', async 
   const source = await readFile(new URL('./App.vue', import.meta.url), 'utf8')
   assert.match(source, /function onVaultChanged[\s\S]*acceptRevision\(result\?\.acceptedRevision, result\?\.eventSequence\)[\s\S]*await loadVault/)
 	assert.equal((source.match(/@vault-changed="onVaultChanged"/g) || []).length, 4)
-	const settingsMount = source.match(/<SettingsPage[\s\S]*?\/>/)?.[0] || ''
+	const settingsMount = pageMount(source, 'settings')
 	assert.match(settingsMount, /:vault-revision="vaultRevision"/)
 })
 
@@ -72,4 +78,37 @@ test('完整还原使用预检、提交和隔离激活三阶段接口', async ()
 	assert.match(source, /ActivateRestoredNetwork/)
 	assert.match(source, /restoreState\.password = ''[\s\S]*restoreState\.confirmed = false/)
 	assert.doesNotMatch(source, /\bRestoreBackup\b/)
+})
+
+test('根 Snapshot 向状态页面传递 Runtime 和恢复能力事实', async () => {
+  const source = await readFile(new URL('./App.vue', import.meta.url), 'utf8')
+  assert.match(source, /raw\?\.runtime/)
+  assert.match(source, /raw\?\.capabilities/)
+  assert.equal((source.match(/:runtime-statuses="runtimeStatuses"/g) || []).length, 2)
+  assert.match(source, /configurationLocked/)
+})
+
+test('恢复隔离网络必须经过独立确认后才激活', async () => {
+  const source = await readFile(new URL('./components/pages/SettingsPage.vue', import.meta.url), 'utf8')
+  assert.match(source, /activateRestoreConfirm\.visible = true/)
+  assert.match(source, /ConfirmDialog/)
+  assert.match(source, /confirmActivateRestoredNetwork/)
+  assert.doesNotMatch(source, /@click="onActivateRestoredNetwork"/)
+})
+
+test('异步页面加载失败时保留重试和诊断入口', async () => {
+  const source = await readFile(new URL('./components/common/PageLoader.vue', import.meta.url), 'utf8')
+  assert.match(source, /phase === 'loading'/)
+  assert.match(source, /phase === 'error'/)
+  assert.match(source, /function retry/)
+  assert.match(source, /open-diagnostics/)
+})
+
+test('更新入口包含目标版本并通过根级 live region 去重播报', async () => {
+  const app = await readFile(new URL('./App.vue', import.meta.url), 'utf8')
+  const sidebar = await readFile(new URL('./components/layout/AppSidebar.vue', import.meta.url), 'utf8')
+  assert.match(app, /announcedUpdateVersion/)
+  assert.match(app, /aria-live="polite"/)
+  assert.match(app, /:latest-version="updateNotice\.state\.latestVersion"/)
+  assert.match(sidebar, /app\.update\.actionLabel/)
 })

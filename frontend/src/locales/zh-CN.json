@@ -44,9 +44,22 @@
             "stale": "当前显示的是上次成功读取的数据，配置修改已暂停。",
             "retry": "重试"
         },
+        "recovery": {
+            "pending": "上次还原事务仍需恢复，配置与网络变更已锁定。",
+            "quarantined": "还原出的网络配置仍处于隔离状态，尚未激活。",
+            "openSettings": "前往设置检查"
+        },
+        "pageLoader": {
+            "loading": "正在加载{page}…",
+            "loadFailed": "无法加载{page}",
+            "retry": "重试",
+            "diagnostics": "打开设置与诊断"
+        },
         "update": {
             "available": "发现新版本",
             "badge": "新",
+            "actionLabel": "发现新版本 {version}，查看更新详情",
+            "announcement": "发现新版本 {version}",
             "latestVersion": "最新版本：{version}",
             "openRelease": "打开下载页"
         }
@@ -331,7 +344,7 @@
 			"restorePreviewButton": "校验并预览",
 			"restoreStaging": "校验中…",
 			"restorePreviewReady": "备份校验通过，请核对内容后再确认替换。",
-            "restoreConfirm": "我已知晓将用备份内容替换当前全部数据",
+            "restoreConfirm": "我已知晓将用备份内容替换当前全部数据，并在我主动激活前保持网络配置隔离",
             "restoreButton": "完全还原",
             "restoring": "还原中…",
 			"restoreSuccess": "数据已替换为备份内容。",
@@ -339,7 +352,10 @@
 			"restoreQuarantineNotice": "还原后的 Route 和自动启动 Forward 仍被隔离，请检查配置后再激活网络。",
 			"activateRestore": "激活还原后的网络",
 			"activatingRestore": "激活中…",
-			"restoreActivated": "还原后的网络配置已激活。"
+			"restoreActivated": "还原后的网络配置已激活。",
+            "restoreRecoveryPending": "上次还原事务尚未恢复完成，恢复前不能修改配置或激活网络。",
+            "activateRestoreConfirmTitle": "确认激活还原后的网络？",
+            "activateRestoreConfirmMessage": "将启动 {forwards} 个自动启动 Forward，并应用 {routes} 条 Route。域名：{domains}"
         }
     },
     "routes": {
@@ -356,6 +372,7 @@
             "actions": "操作"
         },
         "status": {
+            "statusUnavailable": "Route 状态获取失败",
             "hostsApplied": "hosts 已生效",
             "hostsNotApplied": "hosts 未生效",
             "caddyRunning": "Caddy 运行中",

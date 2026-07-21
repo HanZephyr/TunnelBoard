@@ -1,10 +1,9 @@
-export function createUpdateNoticeStore() {
-  const state = { status: 'idle', latestVersion: '', releaseNotes: '', releasePageUrl: '', message: '' }
+export function createUpdateNoticeStore(state = { status: 'idle', latestVersion: '', releaseNotes: '', releasePageUrl: '', message: '' }) {
   return {
     state,
     accept(outcome = {}) {
-      if (state.status === 'available' && outcome.status !== 'available') return
-      state.status = outcome.status || 'idle'
+      if (state.status === 'available' && (outcome.status === 'failed' || outcome.status === 'skipped')) return
+      state.status = outcome.status === 'available' ? 'available' : 'idle'
       state.latestVersion = String(outcome.latestVersion || '')
       state.releaseNotes = String(outcome.releaseNotes || '')
       state.releasePageUrl = String(outcome.releasePageUrl || '')

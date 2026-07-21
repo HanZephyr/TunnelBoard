@@ -1,5 +1,5 @@
 <script setup>
-import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ApplyTrayLocale,
@@ -13,6 +13,7 @@ import AppSidebar from './components/layout/AppSidebar.vue'
 import AppTopHeader from './components/layout/AppTopHeader.vue'
 import OverviewPage from './components/pages/OverviewPage.vue'
 import BaseDialog from './components/common/BaseDialog.vue'
+import PageLoader from './components/common/PageLoader.vue'
 import { createAppSnapshotStore } from './stores/appSnapshotStore'
 import { createUpdatePreferenceStore } from './stores/updatePreferenceStore'
 import { createUpdateNoticeStore } from './stores/updateNoticeStore'
@@ -20,11 +21,13 @@ import { DEFAULT_RELEASES_PAGE_URL, officialReleaseUrl } from './modules/release
 import { createApplicationClient } from './utils/applicationClient'
 import './styles/app-shell.css'
 
-const ForwardsPage = defineAsyncComponent(() => import('./components/pages/ForwardsPage.vue'))
-const HostsPage = defineAsyncComponent(() => import('./components/pages/HostsPage.vue'))
-const LogsPage = defineAsyncComponent(() => import('./components/pages/LogsPage.vue'))
-const RoutesPage = defineAsyncComponent(() => import('./components/pages/RoutesPage.vue'))
-const SettingsPage = defineAsyncComponent(() => import('./components/pages/SettingsPage.vue'))
+const pageLoaders = {
+  forwards: () => import('./components/pages/ForwardsPage.vue'),
+  hosts: () => import('./components/pages/HostsPage.vue'),
+  logs: () => import('./components/pages/LogsPage.vue'),
+  routes: () => import('./components/pages/RoutesPage.vue'),
+  settings: () => import('./components/pages/SettingsPage.vue')
+}
 
 const { t, locale } = useI18n()
 
@@ -48,8 +51,16 @@ const appMeta = reactive({
 })
 const releasePageUrl = ref(DEFAULT_RELEASES_PAGE_URL)
 const hasNewVersion = ref(false)
+const updateAnnouncement = ref('')
+const announcedUpdateVersion = ref('')
 const updateDetailsVisible = ref(false)
-const updateNotice = createUpdateNoticeStore()
+const updateNotice = createUpdateNoticeStore(reactive({
+  status: 'idle',
+  latestVersion: '',
+  releaseNotes: '',
+  releasePageUrl: '',
+  message: ''
+}))
 const updatePreference = createUpdatePreferenceStore()
 const application = createApplicationClient()
 
@@ -91,9 +102,11 @@ const folders = ref([])
 const sshHosts = ref([])
 const forwards = ref([])
 const webRoutes = ref([])
+const runtimeStatuses = ref([])
 const routeStatuses = ref([])
 const sshHostDefaults = ref({ port: 22, authType: 'ssh_key', keepAliveIntervalMs: 5000, timeoutMs: 5000 })
 const recoveryState = ref({ quarantined: false, journalPending: false, maintenance: false })
+const capabilities = ref({ mutationAllowed: true })
 const vaultRevision = ref('')
 const snapshotStore = createAppSnapshotStore()
 const snapshotPhase = ref('loading')
@@ -110,6 +123,8 @@ async function loadVault() {
       eventSequence: raw?.eventSequence || raw?.EventSequence || 0,
       sshHostDefaults: raw?.sshHostDefaults || raw?.SSHHostDefaults || {},
 	  recovery: raw?.recovery || raw?.Recovery || {},
+      capabilities: raw?.capabilities || raw?.Capabilities || {},
+      runtimeStatuses: Array.isArray(raw?.runtime) ? raw.runtime : Array.isArray(raw?.Runtime) ? raw.Runtime : [],
       routeStatuses: Array.isArray(raw?.routes) ? raw.routes : Array.isArray(raw?.Routes) ? raw.Routes : raw?.routeStatuses || []
     }
   })
@@ -122,12 +137,22 @@ async function loadVault() {
     sshHosts.value = Array.isArray(data?.sshHosts) ? data.sshHosts : []
     forwards.value = Array.isArray(data?.forwards) ? data.forwards : []
     webRoutes.value = Array.isArray(data?.webRoutes) ? data.webRoutes : []
+    runtimeStatuses.value = Array.isArray(data?.runtimeStatuses) ? data.runtimeStatuses : []
     routeStatuses.value = Array.isArray(data?.routeStatuses) ? data.routeStatuses : []
     sshHostDefaults.value = data?.sshHostDefaults || sshHostDefaults.value
 	recoveryState.value = data?.recovery || recoveryState.value
+    capabilities.value = data?.capabilities || capabilities.value
     vaultRevision.value = String(data?.vaultRevision || '')
   }
 }
+
+const configurationLocked = computed(() =>
+  snapshotPhase.value !== 'ready' ||
+  recoveryState.value.quarantined === true ||
+  recoveryState.value.journalPending === true ||
+  recoveryState.value.maintenance === true ||
+  capabilities.value.mutationAllowed === false
+)
 
 async function onVaultChanged(result) {
   if (result?.acceptedRevision || result?.eventSequence) {
@@ -190,17 +215,27 @@ function onUpdateOutcome(outcome) {
   if (updateNotice.state.status === 'available') {
     hasNewVersion.value = true
     releasePageUrl.value = officialReleaseUrl(updateNotice.state.releasePageUrl)
+    if (updateNotice.state.latestVersion && announcedUpdateVersion.value !== updateNotice.state.latestVersion) {
+      announcedUpdateVersion.value = updateNotice.state.latestVersion
+      updateAnnouncement.value = t('app.update.announcement', { version: updateNotice.state.latestVersion })
+    }
+  } else {
+    hasNewVersion.value = false
+    releasePageUrl.value = DEFAULT_RELEASES_PAGE_URL
   }
 }
 
 async function checkForUpdatesSilently() {
   try {
 	const result = await application.checkForUpdates('startup')
-	if (result?.skipped) return
+	if (result?.skipped) {
+      onUpdateOutcome({ status: 'skipped' })
+      return
+    }
     if (result?.hasUpdate) {
-      hasNewVersion.value = true
-      releasePageUrl.value = officialReleaseUrl(result.releasePageUrl)
-      updateNotice.accept({ status: 'available', latestVersion: result.latestVersion, releaseNotes: result.releaseNotes, releasePageUrl: releasePageUrl.value })
+      onUpdateOutcome({ status: 'available', latestVersion: result.latestVersion, releaseNotes: result.releaseNotes, releasePageUrl: officialReleaseUrl(result.releasePageUrl) })
+    } else {
+      onUpdateOutcome({ status: 'up_to_date' })
     }
   } catch (error) {
     updateNotice.accept({ status: 'failed', message: String(error) })
@@ -262,11 +297,13 @@ onBeforeUnmount(() => {
       :active-page="activePage"
       :app-version="appMeta.version"
       :has-new-version="hasNewVersion"
+      :latest-version="updateNotice.state.latestVersion"
       :collapsed="sidebarCollapsed"
       @switch-page="switchPage"
       @open-update-details="updateDetailsVisible = true"
       @toggle-collapse="toggleSidebar"
     />
+    <span class="visually-hidden" aria-live="polite" aria-atomic="true">{{ updateAnnouncement }}</span>
 
     <section class="content-shell">
       <AppTopHeader
@@ -287,68 +324,96 @@ onBeforeUnmount(() => {
           {{ $t('app.snapshot.stale') }}
           <button type="button" class="btn btn-sm btn-outline-warning ms-2" @click="loadVault">{{ $t('app.snapshot.retry') }}</button>
         </div>
+        <div v-if="recoveryState.journalPending" class="alert alert-danger" role="alert">
+          {{ $t('app.recovery.pending') }}
+        </div>
+        <div v-else-if="recoveryState.quarantined" class="alert alert-warning" role="status">
+          {{ $t('app.recovery.quarantined') }}
+          <button type="button" class="btn btn-sm btn-outline-warning ms-2" @click="switchPage('settings')">{{ $t('app.recovery.openSettings') }}</button>
+        </div>
         <OverviewPage
           v-if="activePage === 'overview' && snapshotPhase !== 'loading' && snapshotPhase !== 'error'"
           :folders="folders"
           :ssh-hosts="sshHosts"
           :forwards="forwards"
           :web-routes="webRoutes"
+          :runtime-statuses="runtimeStatuses"
           :route-statuses="routeStatuses"
           :vault-revision="vaultRevision"
           @notify="notify"
           @go-forwards="switchPage('forwards')"
         />
 
-        <ForwardsPage
+        <PageLoader
           v-if="activePage === 'forwards' && hasSnapshot"
           ref="forwardsPageRef"
+          :loader="pageLoaders.forwards"
+          :page-name="$t('app.sidebar.forwards')"
           :folders="folders"
           :ssh-hosts="sshHosts"
           :ssh-host-defaults="sshHostDefaults"
           :forwards="forwards"
-          :configuration-locked="snapshotPhase !== 'ready'"
+          :runtime-statuses="runtimeStatuses"
+          :configuration-locked="configurationLocked"
           :vault-revision="vaultRevision"
           @vault-changed="onVaultChanged"
           @notify="notify"
+          @open-diagnostics="switchPage('settings')"
         />
 
-        <HostsPage
+        <PageLoader
           v-if="activePage === 'hosts' && hasSnapshot"
           ref="hostsPageRef"
+          :loader="pageLoaders.hosts"
+          :page-name="$t('app.sidebar.hosts')"
           :ssh-hosts="sshHosts"
           :ssh-host-defaults="sshHostDefaults"
           :forwards="forwards"
-          :configuration-locked="snapshotPhase !== 'ready'"
+          :configuration-locked="configurationLocked"
           :vault-revision="vaultRevision"
           @vault-changed="onVaultChanged"
           @notify="notify"
+          @open-diagnostics="switchPage('settings')"
         />
 
-        <RoutesPage
+        <PageLoader
           v-if="activePage === 'routes' && hasSnapshot"
           ref="routesPageRef"
+          :loader="pageLoaders.routes"
+          :page-name="$t('app.sidebar.routes')"
           :forwards="forwards"
           :web-routes="webRoutes"
           :route-statuses="routeStatuses"
           :vault-revision="vaultRevision"
-          :configuration-locked="snapshotPhase !== 'ready'"
+          :configuration-locked="configurationLocked"
           @vault-changed="onVaultChanged"
           @notify="notify"
+          @open-diagnostics="switchPage('settings')"
         />
 
-        <LogsPage v-if="activePage === 'logs'" />
+        <PageLoader
+          v-if="activePage === 'logs'"
+          :loader="pageLoaders.logs"
+          :page-name="$t('app.sidebar.logs')"
+          @open-diagnostics="switchPage('settings')"
+        />
 
-        <SettingsPage
+        <PageLoader
           v-if="activePage === 'settings'"
+          :loader="pageLoaders.settings"
+          :page-name="$t('app.sidebar.settings')"
           :theme="theme"
           :app-meta="appMeta"
 		  :vault-revision="vaultRevision"
 		  :recovery-state="recoveryState"
-          :configuration-locked="snapshotPhase !== 'ready'"
+          :forwards="forwards"
+          :web-routes="webRoutes"
+          :configuration-locked="configurationLocked"
           @theme-change="setThemeBySwitch"
 		  @vault-changed="onVaultChanged"
           @notify="notify"
           @update-outcome="onUpdateOutcome"
+          @open-diagnostics="switchPage('logs')"
         />
       </main>
 
