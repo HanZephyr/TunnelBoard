@@ -1,8 +1,9 @@
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { GetLogTail } from '../../../wailsjs/go/main/App'
+import { GetLogTailV2 } from '../../../wailsjs/go/main/App'
 import { callBackend, errorMessage } from '../../utils/backend'
+import { mergeLogTail, normalizeLogCursor } from '../../modules/logTailCursor'
 
 const { t } = useI18n()
 
@@ -21,7 +22,7 @@ const loadError = ref('')
 const stuckToBottom = ref(true)
 const logViewRef = ref(null)
 
-let offset = 0
+let cursor = null
 let polling = false
 let pollTimer = null
 
@@ -50,9 +51,10 @@ function onLogScroll() {
   stuckToBottom.value = isNearBottom()
 }
 
-async function appendLines(newLines) {
+async function applyTail(result) {
   const shouldStick = autoScroll.value && stuckToBottom.value
-  lines.value = [...lines.value, ...newLines].slice(-MAX_LINES)
+  lines.value = mergeLogTail(lines.value, result, MAX_LINES)
+  cursor = normalizeLogCursor(result)
   if (shouldStick) {
     await nextTick()
     scrollToBottom()
@@ -64,16 +66,11 @@ async function poll() {
   polling = true
   const requestedSource = source.value
   try {
-    const result = await callBackend(GetLogTail, requestedSource, offset)
-    // 轮询期间用户切换了日志源：丢弃迟到结果，等下一轮按新 offset 拉取
+    const result = await callBackend(GetLogTailV2, requestedSource, cursor)
+    // 轮询期间用户切换了日志源：丢弃迟到结果，等下一轮按新 cursor 拉取
     if (requestedSource !== source.value) return
-    const nextOffset = Number(result?.offset)
-    offset = Number.isFinite(nextOffset) ? nextOffset : 0
     loadError.value = ''
-    const newLines = Array.isArray(result?.lines) ? result.lines : []
-    if (newLines.length) {
-      void appendLines(newLines)
-    }
+    await applyTail(result)
   } catch (err) {
     // 保留已有内容，仅在视图顶部提示一次；下一轮成功会自动消除
     if (requestedSource === source.value) {
@@ -87,7 +84,7 @@ async function poll() {
 function switchSource(name) {
   if (source.value === name) return
   source.value = name
-  offset = 0
+  cursor = null
   lines.value = []
   loadError.value = ''
   stuckToBottom.value = true
@@ -101,7 +98,7 @@ function togglePaused() {
   }
 }
 
-// 只清空视图，不触碰日志文件；offset 保持不变，后续只追加新行
+// 只清空视图，不触碰日志文件；cursor 保持不变，后续只追加新行
 function clearView() {
   lines.value = []
 }

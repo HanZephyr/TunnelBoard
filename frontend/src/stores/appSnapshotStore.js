@@ -7,7 +7,8 @@ function normalizeSnapshot(input) {
     sshHosts: Array.isArray(input?.sshHosts) ? input.sshHosts : [],
     forwards: Array.isArray(input?.forwards) ? input.forwards : [],
     webRoutes: Array.isArray(input?.webRoutes) ? input.webRoutes : [],
-    routeStatuses: Array.isArray(input?.routeStatuses) ? input.routeStatuses : []
+    routeStatuses: Array.isArray(input?.routeStatuses) ? input.routeStatuses : [],
+    sshHostDefaults: input?.sshHostDefaults || {}
   }
 }
 

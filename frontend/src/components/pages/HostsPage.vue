@@ -15,6 +15,7 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  sshHostDefaults: { type: Object, default: () => ({}) },
   forwards: {
     type: Array,
     default: () => []
@@ -97,7 +98,7 @@ const editingHostId = ref(null)
 const hostValidationError = ref('')
 const hostSaveBusy = ref(false)
 const pendingHostChange = ref(null)
-const hostForm = reactive(createSSHHostDraft())
+const hostForm = reactive(createSSHHostDraft(props.sshHostDefaults))
 
 function resetHostChangePreview() {
   pendingHostChange.value = null
@@ -118,7 +119,7 @@ function finishHostModal() {
 function openNewHost() {
   if (props.configurationLocked) return
   editingHostId.value = null
-  Object.assign(hostForm, createSSHHostDraft())
+  Object.assign(hostForm, createSSHHostDraft(props.sshHostDefaults))
   resetHostChangePreview()
   hostValidationError.value = ''
   hostModalOpen.value = true
@@ -129,7 +130,7 @@ defineExpose({ openNewHost })
 function editHost(host) {
   if (props.configurationLocked) return
   editingHostId.value = host.id
-  Object.assign(hostForm, createSSHHostDraft({ ...host, hasSecret: host.hasSecret === true || !!host.password }))
+  Object.assign(hostForm, createSSHHostDraft({ ...props.sshHostDefaults, ...host, hasSecret: host.hasSecret === true || !!host.password }))
   resetHostChangePreview()
   hostValidationError.value = ''
   hostModalOpen.value = true

@@ -5,6 +5,7 @@ import { errorMessage, isValidPort } from '../../utils/backend'
 import BaseDialog from '../common/BaseDialog.vue'
 import SSHHostFields from '../hosts/SSHHostFields.vue'
 import { clearSSHHostTransientSecrets, createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
+import { createListenerPreview } from '../../modules/listenerPreview'
 import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
 
 const props = defineProps({
@@ -30,6 +31,7 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  sshHostDefaults: { type: Object, default: () => ({}) },
   validationError: {
     type: String,
     default: ''
@@ -82,7 +84,7 @@ function removeChainHost(index) {
 const newHostOpen = ref(false)
 const newHostSaving = ref(false)
 const newHostError = ref('')
-const newHostForm = reactive(createSSHHostDraft())
+const newHostForm = reactive(createSSHHostDraft(props.sshHostDefaults))
 
 watch(
   () => props.show,
@@ -95,7 +97,7 @@ watch(
 )
 
 function openNewHostForm() {
-  Object.assign(newHostForm, createSSHHostDraft())
+  Object.assign(newHostForm, createSSHHostDraft(props.sshHostDefaults))
   newHostError.value = ''
   newHostOpen.value = true
 }
@@ -140,35 +142,39 @@ async function saveNewHost() {
 }
 
 // 端口冲突预警：编辑时经实际绑定预检本地监听端口（remote 模式在服务端绑定，不做本机预检）。
-const portWarning = ref('')
+const portPreviewState = reactive({ status: 'idle', host: '', port: 0, message: '' })
+const portPreview = createListenerPreview(portPreviewState)
+const portPreviewMessage = computed(() => {
+  const port = portPreviewState.port
+  if (portPreviewState.status === 'checking') return t('forwards.modal.portChecking')
+  if (portPreviewState.status === 'available') return t('forwards.modal.portAvailable', { port })
+  if (portPreviewState.status === 'owned_by_self') return t('forwards.modal.portOwnedBySelf', { port })
+  if (portPreviewState.status === 'occupied') return t('forwards.modal.portConflict', { port })
+  if (portPreviewState.status === 'unknown') return t('forwards.modal.portUnknown')
+  return ''
+})
 let portCheckTimer = null
-let portCheckGeneration = 0
 watch(
   () => [props.show, props.form.mode, props.form.localHost, props.form.localPort],
   () => {
-    const generation = ++portCheckGeneration
-    portWarning.value = ''
+    portPreview.invalidate()
     if (portCheckTimer) clearTimeout(portCheckTimer)
     if (!props.show || props.form.mode === 'remote') return
     const port = Number(props.form.localPort)
     if (!Number.isInteger(port) || port < 1 || port > 65535) return
     const host = String(props.form.localHost || '')
     portCheckTimer = setTimeout(async () => {
-      try {
-        const result = await application.previewLocalListener({ host, port, forwardId: props.editingForwardId || 0 })
-        if (generation !== portCheckGeneration || !props.show) return
-        portWarning.value = result?.status === 'occupied' ? t('forwards.modal.portConflict', { port }) : result?.status === 'unknown' ? String(result?.message || '') : ''
-      } catch (_) {
-        if (generation !== portCheckGeneration || !props.show) return
-        portWarning.value = t('forwards.modal.portConflict', { port })
-      }
+      await portPreview.check(
+        { host, port, forwardId: props.editingForwardId || 0 },
+        (candidate) => application.previewLocalListener(candidate)
+      )
     }, 400)
   },
   { immediate: true }
 )
 
 onBeforeUnmount(() => {
-  portCheckGeneration += 1
+  portPreview.invalidate()
   if (portCheckTimer) clearTimeout(portCheckTimer)
 })
 </script>
@@ -313,7 +319,13 @@ onBeforeUnmount(() => {
               max="65535"
               class="form-control"
             />
-            <div v-if="portWarning" class="field-note text-warning">{{ portWarning }}</div>
+            <div
+              v-if="portPreviewMessage"
+              class="field-note"
+              :class="portPreviewState.status === 'occupied' || portPreviewState.status === 'unknown' ? 'text-warning' : 'text-success'"
+              role="status"
+              aria-live="polite"
+            >{{ portPreviewMessage }}</div>
           </div>
 
           <template v-if="form.mode !== 'dynamic'">
@@ -324,7 +336,7 @@ onBeforeUnmount(() => {
                 v-model="form.remoteHost"
                 type="text"
                 class="form-control"
-                placeholder="e.g. db.internal"
+                :placeholder="t('forwards.modal.remoteHostPlaceholder')"
               />
             </div>
             <div class="col-12 col-md-5">

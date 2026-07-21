@@ -1,8 +1,7 @@
 const VALID = new Set(['available', 'occupied', 'owned_by_self', 'unknown'])
 
-export function createListenerPreview() {
+export function createListenerPreview(state = { status: 'idle', host: '', port: 0, message: '' }) {
   let generation = 0
-  const state = { status: 'idle', host: '', port: 0, message: '' }
 
   async function check(address, request) {
     const current = ++generation

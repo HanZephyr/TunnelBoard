@@ -80,7 +80,7 @@ defineEmits(['switch-page', 'open-update-details', 'toggle-collapse'])
           @click="$emit('open-update-details')"
         >
           <i v-if="collapsed" class="bi bi-arrow-up-circle-fill" aria-hidden="true" />
-          <template v-else>new</template>
+          <template v-else>{{ $t('app.update.badge') }}</template>
         </button>
       </span>
     </div>
