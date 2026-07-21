@@ -67,7 +67,7 @@
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过代码、单元测试和 Windows 构建验证；正式签名产物的真机 Helper smoke 待 GitHub Actions 执行
 - 确认日期：2026-07-21
 - 问题结论：成立，且当前测试机仍注册了从普通用户可写工作区启动的 `LocalSystem` 自动服务。
 - 产品决策：不需要跨应用重启持续复用授权。每次打开 TunnelBoard 后，首次特权操作允许触发一次 UAC；在该次应用生命周期内复用，应用关闭或崩溃后立即失效。
@@ -206,7 +206,7 @@ Helper 必须同时监听：
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过代码、单元测试和 Windows 构建验证；正式签名产物的 CurrentUser CA 真机 smoke 待 GitHub Actions 执行
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 Helper 接受调用方传入的任意自签 CA，并将其写入机器级 Root；“证书自签、是 CA、声明哈希一致”不能证明它属于 TunnelBoard 当前 Caddy。
 - 产品决策：TunnelBoard 只需要让当前登录 Windows 用户信任本地 Caddy CA，不需要让本机其他账户或 SYSTEM 信任。
@@ -353,7 +353,7 @@ Interface 后的 Windows Adapter 负责：
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并验证
 - 确认日期：2026-07-21
 - 问题结论：成立。固定 `127.0.0.1:2019` 对本机所有用户可达，且当前实现把 Admin API 可达性错误地当作自有 Caddy 进程存在的证据。
 - 产品决策：保留 Caddy Admin API 的无中断热重载能力，但将其从固定 TCP loopback 改为当前用户运行目录中的权限化 AF_UNIX socket。
@@ -486,7 +486,7 @@ Route Compiler 只负责编译 HTTP、TLS、PKI 和反向代理规则，不再�
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 `watch(id, run)` 在旧实例的 `Done` 关闭后无条件执行 `delete(b.runs, id)` 并写终态；旧实例迟到的 `disconnected/reconnected` 事件也会无条件覆盖同 ID 新实例的状态。
 - 产品决策：同一 Forward ID 的每次启动都分配单调递增的内部 generation；只有仍同时匹配当前 generation 和当前 `runHandle` 的异步回调，才允许修改运行表或对外状态。
@@ -589,7 +589,7 @@ RuntimeBiz 应提供一个私有的状态写入路径，集中执行 generation 
 
 #### 状态与结论
 
-- 状态：已确认，现有改动部分实现
+- 状态：已实现并验证
 - 确认日期：2026-07-21
 - 问题结论：原问题成立。旧实现每次应用 Route 都预检 443，Caddy 已运行时必然把其自身监听误判为外部冲突，使第二条及后续 Caddy Route 无法进入活动配置。
 - 现有改动：提交 `6433b5a` 已通过 `if !prevRunning { DiagnosePort() }` 修复直接症状并增加多 Route 回归测试；提交 `4cfc90e` 又在配置字节未变化时跳过重复 Reload。
@@ -671,7 +671,7 @@ Supervisor 没有自有 Caddy 进程时：
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过 race 验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前池级 `keepAliveLoop` 同步调用 `ssh.Client.SendRequest`；网络黑洞时该调用可能永久不返回，pool entry 会一直显示 alive，所有共享该首跳的 Forward 也无法及时进入重连。
 - 产品决策：共享首跳和独占连接复用同一套有界 SSH keepalive 实现。连接池负责判死并关闭当前连接代，Forward Runtime 继续负责退避重连；不让连接池建立第二套主动重拨循环。
@@ -762,7 +762,7 @@ host identity + connection generation + client + stop + closeAll
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过 race 验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 Stop 只关闭 listener 和 SSH lease，然后无限等待 accept/bridge goroutine；本地连接、SSH channel 和远程转发连接没有登记。共享首跳仍有其他租户时，释放 lease 不会关闭 transport，空闲 bridge 可永久阻塞。
 - 产品决策：每个 LocalForward 建立运行 context 和活跃连接 registry；Stop 主动关闭该 Forward 的全部资源并受 5 秒总 deadline 约束。
@@ -897,7 +897,7 @@ type ChainLease interface {
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过代码与单元测试验证；macOS/Linux 真机提权回归待对应 Runner 执行
 - 确认日期：2026-07-21
 - 问题结论：成立。Linux 把受 `TMPDIR` 影响的临时证书路径直接拼入 `pkexec sh -c`；macOS 虽做 shell 单引号转义，却又把结果嵌入 AppleScript 双引号源码，存在第二层解析逃逸。
 - 产品决策：Windows 保持 SEC-01 的应用生命周期临时 Helper；Linux/macOS 暂不引入会话级常驻 root Helper，继续使用各平台原生的逐次授权流程。
@@ -987,7 +987,7 @@ Linux 多步操作可能根据桌面 Polkit 策略多次要求授权；当前不
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并完成本地 bundle/manifest/verifier 验证；正式签名与 GitHub Actions 运行待远端执行
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 Windows Actions 只运行 `wails build` 并上传 `build/bin/*.exe`，不会包含 `caddy/caddy.exe`；macOS DMG 没有内置 Caddy；现有 Windows 打包和 smoke 又仍依赖旧 SCM Helper 与工作区 Caddy。
 - 构建决策：正式 Release 产物只能由 GitHub Actions 生成。本地可以调用相同脚本复现，但本地产物不具备正式发布来源身份。
@@ -1169,7 +1169,7 @@ SHA256SUMS
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过换代与交错测试验证
 - 确认日期：2026-07-21
 - 问题结论：成立。SSHConnPool 当前只按 `SSHHost.ID` 查找 entry；Vault 更新地址、用户、认证或凭据后，新 Acquire 仍可能复用旧连接。与此同时，运行中的 LocalForward 保存的是 Start 时解析出的旧 Host 快照，重连也可能继续拨旧目标。
 - 产品决策：连接池复用必须同时匹配 Host ID 和不含明文秘密的 ConnectionIdentity。
@@ -1308,7 +1308,7 @@ Preview 的 revision 绑定旧 Host 内容和受影响 Runtime generation。用�
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过故障注入、崩溃窗口与门禁交错测试验证；真实断电测试保留为发布门禁
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 `RestoreBackup` 在确认口令、解密、schema 和引用完整性之前就调用 `runtime.Shutdown()`；错误密码、损坏文件或用户未确认也会中断全部 Forward。成功替换 Vault 后，又没有原子清理旧 managed hosts、Caddy 和 CA 实际状态。
 - 产品决策：完全还原拆成零副作用的 `StageRestore` 与受事务保护的 `CommitRestore`。恢复配置成功后进入持久的“恢复隔离态”，所有 Forward、managed hosts、Caddy 和当前用户 CA 均保持未激活，只有用户再次明确确认才应用恢复出的网络配置。
@@ -1448,7 +1448,7 @@ func (b *RuntimeBiz) Resume(ctx context.Context, plan RuntimeSuspendPlan) Resume
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过多跳、探活与停止生命周期测试验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前多跳链只因为首跳来自连接池就返回 `shared=true`，Forward 随后完全跳过自身 keepalive；当 H1 正常而 H2、H3 或其间网络黑洞时，池级首跳探活仍成功，末跳 `client.Wait()` 又可能长期不返回，界面会继续显示 running。
 - 产品决策：单跳链只由 SSHConnPool 探活；多跳链由 SSHConnPool 探活 H1，同时由当前 Forward 对末跳 Hn 做端到端有界探活。末跳失效且首跳健康时只重建该 Forward 独占的 H2～Hn 尾链。
@@ -1549,7 +1549,7 @@ H1 池级探活失败时：
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过 revision、journal、补偿与并发交错测试验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 Save、Apply、Remove、DeleteSelection 后的 Reconcile 和启动 Resume 可以并发进入 `applySystem`，各自读取不同 Vault/hosts/Caddy 快照。固定 `.tunnelboard.tmp/.bak` 会互相覆盖，旧事务的迟到回滚也可能覆盖新事务已经成功的 hosts 或 Caddy 状态。
 - 产品决策：Vault 中的 Route 是用户保存的 desired state；hosts、Caddy 和当前用户 CA 是本机 applied state。应用失败时保留用户配置并明确显示 pending/error/conflict，不把“保存成功”伪装成“系统已生效”，也不因执行失败静默丢弃编辑。
@@ -1704,7 +1704,7 @@ UI 的开关、保存和删除均等待一个 `CommitChange` 结果，随后同�
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过恶意输入与资源预算测试验证
 - 确认日期：2026-07-21
 - 问题结论：成立。PreviewImport、ApplyImport、RestoreBackup 和 SaveImportKeyFile 都会先 `os.ReadFile` 整个文件并重复解密；备份头允许最高 1 GiB Argon2 内存、10 轮和 24 并行度，解密载荷、实体数、字符串和私钥文件均无上限。恶意或损坏备份可造成内存耗尽、长时间无响应和高复杂度导入。
 - 产品决策：所有备份导出、导入、完全还原和私钥提取统一经过 BackupPackage Module；资源预算是固定安全策略，不作为普通前端设置开放。
@@ -1851,7 +1851,7 @@ type BackupPackage interface {
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过 DTO、单向秘密提交与响应面测试验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 `GetVaultData` 返回完整 `model.VaultData`，其中 SSHHost.Password 会进入 Wails 响应并长期保存在前端 `sshHosts` 数组；编辑主机时又把该值重新填入密码框。ImportPreview 的 HostConflict 也返回完整 SSHHost，可再次泄漏导入包中的密码或私钥口令。
 - 产品决策：后端绝不把已经持久化的 SSH 密码、私钥口令、备份密码或私钥字节发送给 WebView。用户新输入的秘密只允许通过有类型命令单向传入 Go，并在请求结束后尽快从前端状态清除。
@@ -1994,7 +1994,7 @@ type SaveSSHHostCommand struct {
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过轮转、游标、上限与脱敏测试验证
 - 确认日期：2026-07-21
 - 问题结论：部分成立且需要精确表述。TunnelBoard 主程序日志已经使用 2 MiB、保留一档的简单轮转；Caddy stdout/stderr 仍永久追加到 `caddy.log`。`GetLogTail` 对两个来源都从 offset 无界 `io.ReadAll` 到 EOF，并且只有裸字节 offset，无法可靠识别文件轮转和替换。
 - 产品决策：TunnelBoard 与 Caddy 日志统一进入 LogStore Module，使用固定磁盘、单行、队列和单次 tail 预算；前端通过 `{generation, offset}` cursor 增量读取，轮转、截断和丢弃必须显式返回。
@@ -2132,7 +2132,7 @@ CaddySupervisor 已在 SEC-03 中拥有进程句柄和 Job Object，因此 stdou
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 `loadVault` 无论首次加载还是已有数据后的刷新失败，都会把 folders、sshHosts、forwards、webRoutes 全部清空且吞掉错误，所有页面随后把后端故障渲染成“暂无数据”。多个 `vault-changed` 还可并发触发加载，迟到旧响应可能覆盖新状态。
 - 产品决策：前端建立唯一 AppSnapshotStore Module，显式管理 `idle/loading/ready/refreshing/error`。首次失败显示可重试错误页；刷新失败保留最后成功快照并标记 stale，绝不通过清空数组表示错误。
@@ -2266,7 +2266,7 @@ refreshing 时可以继续显示已有真实空状态并加轻量刷新指示；
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 checkbox 的浏览器外观先自行切换，代码却用 `!route.hostsEnabled` 推导目标值；保存或应用失败后不恢复受控状态。前端还依次执行 SaveWebRoute、PreviewRoute、ApplyRoute，并用旧 Route 全字段 payload 实现 hosts/Caddy 联动，可能覆盖并发更新。
 - 产品决策：Route 开关显示 desired state，状态徽标显示 applied state。前端只发送用户的精确 flag/checked 意图；所有联动不变量、预览、保存和系统应用由 ROUTE-02 RouteCoordinator 在一个 revision-bound 命令中执行。
@@ -2428,7 +2428,7 @@ ROUTE-02 后端虽然会串行化事务，前端仍一次只允许一个 Route m
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 RoutesPage 使用 `statusOf(id)?.hostsApplied/caddyRunning ? running : stopped`；状态尚未加载、请求失败、条目缺失和真实 false 全部落入同一个 stopped 分支。GetRouteStatus 又在查询时调用端口诊断，并仅凭 Caddy 全局进程和 Vault 指纹推导每条 Route 状态，无法证明对应 revision 实际生效。
 - 产品决策：Route 开关只表达 desired state；状态区域只表达 applied state。后端返回明确枚举和 revisions，前端不得把 null/undefined/请求失败强制转换为 false。
@@ -2597,7 +2597,7 @@ Caddy 配置和 hosts managed block 都是全量目标，不是真正的逐 Rout
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前前端按选中 ID 循环调用单项 `MoveForward`；每一项都是独立 Vault Update，任一中途失败都会留下部分成功。刷新又只发生在整个循环成功之后，因此失败时界面可能继续展示旧位置，既不能说明实际移动了哪些项，也无法可靠重试。
 - 产品决策：批量移动必须是后端单命令、单次 Vault 事务、全有或全无。目标文件夹的选择不再自动触发写入，用户先选择目标，再通过明确的“移动”按钮提交并确认影响范围。
@@ -2694,7 +2694,7 @@ CatalogBiz 在一次 `VaultStore.Update` 回调中完成：
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并完成键盘语义验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前顶层和子文件夹都使用无语义的 `div @click` 作为选择入口，不能通过 Tab、Enter 或空格操作，也没有向读屏暴露当前选中项。文件夹行内部又包含新增、删除按钮，继续依赖整行 click 和 `@click.stop` 会让交互关系脆弱。
 - 产品决策：文件夹层级最多两层，采用语义化嵌套 `ul/li` 加原生 button；不使用 `role=tree/treeitem`，因此无需承担方向键、Home/End、展开折叠和 roving tabindex 等完整 Tree Widget Interface。
@@ -2788,7 +2788,7 @@ CatalogBiz 在一次 `VaultStore.Update` 回调中完成：
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并完成焦点、Escape、busy 与恢复焦点测试
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 ConfirmDialog、Host/Forward/Route Modal、HostKeyDialog、文件夹弹窗和 DNS 确认分别复制 overlay/dialog-card；除 Settings 更新结果外普遍缺少 `role=dialog`、`aria-modal` 和标题关联，所有实现都没有完整焦点陷阱、Escape、背景 inert、滚动锁和关闭后焦点恢复。重复实现使修复无法覆盖全部入口。
 - 架构决策：新增一个深的 `BaseDialog` Module，把 WebView 对话框基础设施隐藏在小 Interface 后；ConfirmDialog 等领域弹窗只负责内容、动作和业务状态。
@@ -2902,7 +2902,7 @@ CatalogBiz 在一次 `VaultStore.Update` 回调中完成：
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过 generation 竞态测试验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 ForwardModal 的 400ms 防抖只能取消尚未执行的 timer；已经发出的 Wails 调用没有身份。旧地址的迟到成功会清除新地址的冲突，旧地址的迟到失败会给新地址显示冲突，关闭/重开弹窗或切换 remote 也不能阻止旧请求写回。catch 又把所有系统/通信错误都翻译成“端口冲突”。
 - 产品决策：端口预检是及时提示，不是端口预留，也不是保存/启动成功承诺。最终 Start 的真实 bind 结果始终权威。
@@ -3030,7 +3030,7 @@ type LocalListenerPreview struct {
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过前后端 fail-closed 与生命周期单次检查测试验证
 - 确认日期：2026-07-21
 - 问题结论：成立。App 启动和 Settings 页面都先把更新偏好设为 true，读取失败后继续保持 true；前者会直接访问 GitHub，后者会把未知状态伪装成“自动检查已开启”。这同时违反隐私 fail-closed 和 UI 状态真实性。
 - 产品决策：全新安装创建 Vault 时，`UpdateCheckEnabled` 明确初始化为 true，保证普通用户能够获知后续版本；这是一项数据默认值，而不是读取失败时的运行时 fallback。
@@ -3143,7 +3143,7 @@ type UpdateCheckOutcome struct {
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并完成可发现性、键盘与 aria-live 验证
 - 确认日期：2026-07-21
 - 问题结论：成立。当前更新入口是版本文本内部的 `span @click`，不在键盘 Tab 顺序中，也没有动作语义；折叠侧栏时父元素 `.sidebar-version.compact` 被 `display:none`，更新标记一并消失。`new` 和红色又缺少版本及动作上下文。
 - 产品决策：版本文本和更新动作分离；发现新版本后，侧栏展开与折叠状态都保留一个原生 button。点击先打开应用内更新详情，再由用户明确打开官方 Releases 页面。
@@ -3232,7 +3232,7 @@ interface UpdateNoticeView {
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并通过生产构建预算验证
 - 确认日期：2026-07-21
 - 问题结论：成立。2026-07-21 重新执行 `pnpm run build`，119 个 Module 被打入单一 `index.js`：531.32 KiB minified / 154.33 KiB gzip，Vite 明确发出 500 KiB 告警；CSS 为 346.35 KiB / 50.19 KiB gzip。App 同步导入六个页面，i18n 同步导入五种语言，main 又导入完整 Bootstrap JS bundle，而业务仅使用 Tooltip。
 - 性能结论：Wails 资源来自本地，拆包主要收益是减少冷启动解析、编译、执行和常驻 Module 图，而不是网络下载时间；不能夸大为传统 Web 首屏带宽优化。
@@ -3340,7 +3340,7 @@ interface UpdateNoticeView {
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：部分实现并验证；高风险写入已迁移到根级 ApplicationClient 与有类型命令，旧只读绑定和页面轮询仍作为 P3 迁移债保留
 - 确认日期：2026-07-21
 - 问题结论：成立。当前 `app.go` 虽自称应用 Module，但仍公开三十多个 Wails 方法，绝大多数只是对 Catalog/Runtime/Router/Backup 的薄转发；各 Vue 页面直接 import 生成绑定，并自行编排 Save→Preview→Apply、Load→Refresh、Stage→Commit 等顺序。复杂度没有消失，只是扩散到调用方。
 - 架构决策：新增后端 `internal/application` 深 Module，并在前端建立唯一 `ApplicationClient` Adapter。页面只依赖 ApplicationClient，不直接导入 Wails 生成绑定或 Events runtime。
@@ -3570,7 +3570,7 @@ type AppErrorView struct {
 
 #### 状态与结论
 
-- 状态：已确认
+- 状态：已实现并验证
 - 确认日期：2026-07-21
 - 问题结论：成立。HostsPage 与 ForwardModal 分别维护 Host 默认值、认证字段显隐、验证和 payload 构造；后者已缺少 keepalive、timeout、算法和备注，且直接调用 Wails SaveSSHHost。两套逻辑无法共同落实 SEC-06 SecretAction 和 SSH-03 连接身份变更流程。
 - 架构决策：建立领域化 `SSHHostEditor` Module 和无副作用 `SSHHostFields.vue`；两个真实调用方共用同一 seam。拒绝扩张成 Folder/Route/Forward 全部使用的万能 schema 表单框架。
