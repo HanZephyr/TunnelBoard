@@ -233,8 +233,18 @@
             "inUseTitle": "无法删除",
             "inUse": "SSH 主机「{name}」仍被一条或多条 Forward 引用，请先改绑或删除这些 Forward。"
         },
+        "restart": {
+            "title": "连接配置已变化",
+            "message": "保存前将使用新配置预检完整 SSH 链。该主机影响 {count} 条 Forward。",
+            "running": "其中 {count} 条正在运行；预检通过后会停止并恢复它们。",
+            "confirm": "预检并保存",
+            "back": "返回编辑",
+            "failed": "SSH 配置预检或保存失败。",
+            "reenterSecret": "预览已取消；如需替换凭据，请重新输入。"
+        },
         "notify": {
             "saved": "SSH 主机「{name}」已保存。",
+            "savedWithRestartErrors": "SSH 主机「{name}」已保存，但部分 Forward 恢复失败，请检查运行状态。",
             "deleted": "SSH 主机「{name}」已删除。"
         }
     },

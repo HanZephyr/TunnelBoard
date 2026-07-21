@@ -233,8 +233,18 @@
             "inUseTitle": "無法刪除",
             "inUse": "SSH 主機「{name}」仍被一條或多條 Forward 引用，請先改綁或刪除這些 Forward。"
         },
+        "restart": {
+            "title": "連線設定已變更",
+            "message": "儲存前將使用新設定預檢完整 SSH 鏈。此主機影響 {count} 條 Forward。",
+            "running": "其中 {count} 條正在運行；預檢通過後會停止並恢復它們。",
+            "confirm": "預檢並儲存",
+            "back": "返回編輯",
+            "failed": "SSH 設定預檢或儲存失敗。",
+            "reenterSecret": "預覽已取消；如需替換憑據，請重新輸入。"
+        },
         "notify": {
             "saved": "SSH 主機「{name}」已儲存。",
+            "savedWithRestartErrors": "SSH 主機「{name}」已儲存，但部分 Forward 恢復失敗，請檢查運行狀態。",
             "deleted": "SSH 主機「{name}」已刪除。"
         }
     },

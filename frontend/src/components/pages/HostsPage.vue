@@ -95,12 +95,30 @@ async function handleConfirm() {
 const hostModalOpen = ref(false)
 const editingHostId = ref(null)
 const hostValidationError = ref('')
+const hostSaveBusy = ref(false)
+const pendingHostChange = ref(null)
 const hostForm = reactive(createSSHHostDraft())
+
+function resetHostChangePreview() {
+  pendingHostChange.value = null
+}
+
+function closeHostModal() {
+  if (hostSaveBusy.value) return
+  finishHostModal()
+}
+
+function finishHostModal() {
+  resetHostChangePreview()
+  hostValidationError.value = ''
+  hostModalOpen.value = false
+}
 
 function openNewHost() {
   if (props.configurationLocked) return
   editingHostId.value = null
   Object.assign(hostForm, createSSHHostDraft())
+  resetHostChangePreview()
   hostValidationError.value = ''
   hostModalOpen.value = true
 }
@@ -111,6 +129,7 @@ function editHost(host) {
   if (props.configurationLocked) return
   editingHostId.value = host.id
   Object.assign(hostForm, createSSHHostDraft({ ...host, hasSecret: host.hasSecret === true || !!host.password }))
+  resetHostChangePreview()
   hostValidationError.value = ''
   hostModalOpen.value = true
 }
@@ -130,14 +149,63 @@ async function saveHost() {
     return
   }
   try {
+    hostSaveBusy.value = true
     const result = await application.saveSSHHost(command)
+    if (result?.requiresRestart && result?.previewToken) {
+      pendingHostChange.value = result
+      hostForm.secretInput = ''
+      return
+    }
     const saved = result?.host || result
-    hostModalOpen.value = false
+    finishHostModal()
     emit('vault-changed')
     emit('notify', t('hosts.notify.saved', { name: saved?.name || command.host.name }))
   } catch (err) {
     hostValidationError.value = errorMessage(err)
+  } finally {
+    hostSaveBusy.value = false
   }
+}
+
+function hostChangeFailure(result) {
+  if (result?.operationError) return result.operationError
+  const preflight = Object.values(result?.preflightErrors || {}).filter(Boolean)
+  if (preflight.length) return preflight.join('; ')
+  return t('hosts.restart.failed')
+}
+
+async function commitHostChange() {
+  const preview = pendingHostChange.value
+  if (!preview?.previewToken || hostSaveBusy.value) return
+  hostValidationError.value = ''
+  hostSaveBusy.value = true
+  try {
+    const result = await application.commitSSHHostChange({
+      meta: createCommandMeta(preview.acceptedRevision || props.vaultRevision),
+      token: preview.previewToken
+    })
+    if (!result?.committed) {
+      resetHostChangePreview()
+      hostValidationError.value = hostChangeFailure(result)
+      return
+    }
+    const saved = result.host || preview.host
+    finishHostModal()
+    emit('vault-changed')
+    emit('notify', result.failureStage === 'restart'
+      ? t('hosts.notify.savedWithRestartErrors', { name: saved?.name || hostForm.name })
+      : t('hosts.notify.saved', { name: saved?.name || hostForm.name }))
+  } catch (err) {
+    resetHostChangePreview()
+    hostValidationError.value = errorMessage(err)
+  } finally {
+    hostSaveBusy.value = false
+  }
+}
+
+function backToHostEdit() {
+  resetHostChangePreview()
+  hostValidationError.value = t('hosts.restart.reenterSecret')
 }
 
 // ---- 删除（被 Forward 引用时后端拒绝，展示错误提示）----
@@ -230,8 +298,12 @@ function deleteHost(host) {
     :editing-host-id="editingHostId"
     :form="hostForm"
     :validation-error="hostValidationError"
-    @close="hostModalOpen = false"
+    :restart-preview="pendingHostChange"
+    :busy="hostSaveBusy"
+    @close="closeHostModal"
     @submit="saveHost"
+    @confirm-restart="commitHostChange"
+    @back-to-edit="backToHostEdit"
   />
 
   <ConfirmDialog

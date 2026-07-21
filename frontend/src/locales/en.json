@@ -233,8 +233,18 @@
             "inUseTitle": "Cannot Delete",
             "inUse": "SSH host \"{name}\" is still referenced by one or more forwards. Rebind or delete those forwards first."
         },
+        "restart": {
+            "title": "Connection settings changed",
+            "message": "The full SSH chain will be checked before saving. This host affects {count} forwards.",
+            "running": "{count} are running and will be stopped and restored after the check passes.",
+            "confirm": "Check and save",
+            "back": "Back to edit",
+            "failed": "The SSH configuration check or save failed.",
+            "reenterSecret": "The preview was cancelled. Re-enter the credential if you want to replace it."
+        },
         "notify": {
             "saved": "SSH host \"{name}\" saved.",
+            "savedWithRestartErrors": "SSH host \"{name}\" was saved, but some forwards could not be restored. Check their runtime status.",
             "deleted": "SSH host \"{name}\" deleted."
         }
     },

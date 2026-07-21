@@ -1,7 +1,8 @@
 function normalizeSnapshot(input) {
   return {
     ...input,
-    vaultRevision: Number(input?.vaultRevision ?? input?.revision ?? 0),
+    vaultRevision: String(input?.vaultRevision ?? input?.revision ?? ''),
+    eventSequence: Number(input?.eventSequence ?? 0),
     folders: Array.isArray(input?.folders) ? input.folders : [],
     sshHosts: Array.isArray(input?.sshHosts) ? input.sshHosts : [],
     forwards: Array.isArray(input?.forwards) ? input.forwards : [],
@@ -16,7 +17,8 @@ export function createAppSnapshotStore() {
     phase: 'idle',
     snapshot: null,
     error: '',
-    acceptedRevision: 0
+    acceptedRevision: '',
+    acceptedEventSequence: 0
   }
 
   async function refresh(load) {
@@ -26,7 +28,7 @@ export function createAppSnapshotStore() {
     try {
       const next = normalizeSnapshot(await load())
       if (request !== generation) return false
-      if (next.vaultRevision < state.acceptedRevision) {
+      if (next.eventSequence > 0 && next.eventSequence < state.acceptedEventSequence) {
         state.phase = 'stale'
         state.error = 'snapshot revision is older than an accepted command'
         return false
@@ -45,8 +47,9 @@ export function createAppSnapshotStore() {
   return {
     state,
     refresh,
-    acceptRevision(revision) {
-      state.acceptedRevision = Math.max(state.acceptedRevision, Number(revision) || 0)
+    acceptRevision(revision, eventSequence = 0) {
+      state.acceptedRevision = String(revision || '')
+      state.acceptedEventSequence = Math.max(state.acceptedEventSequence, Number(eventSequence) || 0)
     },
     canMutate() {
       return state.phase === 'ready'

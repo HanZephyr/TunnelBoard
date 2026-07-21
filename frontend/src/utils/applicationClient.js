@@ -20,6 +20,9 @@ export function createApplicationClient(bindings = runtimeBindings()) {
     async saveSSHHost(command) {
       return invoke('SaveSSHHostCommand', command)
     },
+    async commitSSHHostChange(command) {
+      return invoke('CommitSSHHostChange', command)
+    },
     async moveForwards(command) {
       return invoke('MoveForwardsCommand', command)
     },

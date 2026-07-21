@@ -23,3 +23,11 @@ test('缺少高层绑定时失败关闭，不回退到旧秘密契约', async ()
   await assert.rejects(client.getSnapshot(), /GetSnapshot is unavailable/)
   await assert.rejects(client.saveSSHHost({ host: {} }), /SaveSSHHostCommand is unavailable/)
 })
+
+test('SSH Host 变更确认只提交一次性 token', async () => {
+  let received
+  const client = createApplicationClient({ CommitSSHHostChange: async (command) => { received = command; return { committed: true } } })
+  const command = { meta: createCommandMeta('vault-a'), token: 'preview-token' }
+  await client.commitSSHHostChange(command)
+  assert.deepEqual(received, command)
+})

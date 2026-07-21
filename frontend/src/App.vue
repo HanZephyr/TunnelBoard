@@ -105,6 +105,7 @@ async function loadVault() {
     return {
       ...catalog,
       vaultRevision: raw?.revisions?.vault || raw?.Revisions?.Vault || raw?.vaultRevision || 0,
+      eventSequence: raw?.eventSequence || raw?.EventSequence || 0,
       routeStatuses: raw?.routes?.items || raw?.Routes?.Items || raw?.routeStatuses || []
     }
   })
