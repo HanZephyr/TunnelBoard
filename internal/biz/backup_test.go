@@ -10,7 +10,7 @@ import (
 	"github.com/HanZephyr/TunnelBoard/internal/vault"
 )
 
-var backupTestKDF = vault.BackupKDF{Time: 1, Memory: 8 * 1024, Parallelism: 1}
+var backupTestKDF = vault.BackupKDF{Time: 2, Memory: 32 * 1024, Parallelism: 1}
 
 // makeBackup 构造一个备份包：1 个顶层文件夹（含 1 个第二层文件夹）、1 主机、2 Forward（其一在第二层）、
 // 1 条 hosts+caddy 都启用的 Route、1 条指纹。

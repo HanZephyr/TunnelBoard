@@ -9,7 +9,7 @@ import (
 )
 
 // 测试用小参数 KDF（默认 64MiB 在生产使用，测试提速）。
-var fastKDF = vault.BackupKDF{Time: 1, Memory: 8 * 1024, Parallelism: 1}
+var fastKDF = vault.BackupKDF{Time: 2, Memory: 32 * 1024, Parallelism: 1}
 
 func sampleBackupData() model.VaultData {
 	return model.VaultData{
