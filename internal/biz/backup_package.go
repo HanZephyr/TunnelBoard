@@ -112,6 +112,8 @@ func (p *backupPackage) Stage(ctx context.Context, request StageRequest) (StageP
 	if request.Purpose != StagePurposeImport && request.Purpose != StagePurposeRestore {
 		return StagePreview{}, fmt.Errorf("%w: %q", ErrBackupStagePurpose, request.Purpose)
 	}
+	// Starting a new valid Stage attempt revokes any prior preview even when the new file later fails.
+	p.Cancel("")
 	raw, err := readBackupPackage(ctx, request.Path)
 	if err != nil {
 		return StagePreview{}, err
