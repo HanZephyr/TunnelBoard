@@ -171,8 +171,19 @@ func (b *RuntimeBiz) Start(id int) error {
 	if entry == nil || entry.generation != generation || entry.phase != runStarting || b.closing {
 		b.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = run.Stop(ctx)
+		stopErr := run.Stop(ctx)
+		cancel()
+		b.mu.Lock()
+		entry = b.runs[id]
+		if entry != nil && entry.generation == generation && entry.run == nil {
+			delete(b.runs, id)
+			if stopErr != nil {
+				b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateError, LastError: stopErr.Error()}
+			} else {
+				b.states[id] = RuntimeStatus{ForwardID: id, Status: RuntimeStateStopped}
+			}
+		}
+		b.mu.Unlock()
 		return ErrForwardStopping
 	}
 	entry.run = run

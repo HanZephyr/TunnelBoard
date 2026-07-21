@@ -48,6 +48,8 @@ func (s *memStore) Update(mutate func(*model.VaultData) error) (model.VaultData,
 type fakeRun struct {
 	mu             sync.Mutex
 	startErr       error
+	startEntered   chan struct{}
+	startRelease   chan struct{}
 	started        bool
 	stopCalled     bool
 	stopLeavesDone bool
@@ -70,12 +72,52 @@ func newFakeRun() *fakeRun {
 
 func (f *fakeRun) Start() error {
 	f.mu.Lock()
+	entered, release := f.startEntered, f.startRelease
+	f.mu.Unlock()
+	if entered != nil {
+		close(entered)
+	}
+	if release != nil {
+		<-release
+	}
+	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.startErr != nil {
 		return f.startErr
 	}
 	f.started = true
 	return nil
+}
+
+func TestRuntimeStopWhileStartInFlightCleansStartingGeneration(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	factory := &runFactory{onMake: func(r *fakeRun) {
+		r.startEntered = entered
+		r.startRelease = release
+	}}
+	b := newTestRuntime(seedRuntimeVault(), factory)
+	startErr := make(chan error, 1)
+	go func() { startErr <- b.Start(1) }()
+	<-entered
+	if err := b.Stop(1); err != nil {
+		t.Fatalf("Stop starting generation: %v", err)
+	}
+	close(release)
+	if err := <-startErr; !errors.Is(err, ErrForwardStopping) {
+		t.Fatalf("Start err = %v, want ErrForwardStopping", err)
+	}
+	eventually(t, func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		return b.runs[1] == nil
+	}, "cancelled starting generation must be removed")
+	if !factory.last().wasStopped() {
+		t.Fatal("unpublished run must be stopped")
+	}
+	if st, _ := b.Status(1); st.Status != RuntimeStateStopped {
+		t.Fatalf("Status = %+v, want stopped", st)
+	}
 }
 
 func (f *fakeRun) Stop(context.Context) error {
