@@ -55,11 +55,13 @@ func TestWithAttrsSharesBuffer(t *testing.T) {
 // 脱敏：秘密键值遮蔽，用户目录归一。
 func TestSanitize(t *testing.T) {
 	cases := map[string]string{
-		`dial failed password=hunter2`:               `dial failed password=[REDACTED]`,
-		`passphrase=abc123 end`:                      `passphrase=[REDACTED] end`,
-		`read C:\Users\alice\.ssh\id_ed25519 failed`: `read ~\.ssh\id_ed25519 failed`,
-		`open /home/bob/.ssh/config`:                 `open ~/.ssh/config`,
-		`nothing sensitive`:                          `nothing sensitive`,
+		`dial failed password=hunter2`:                      `dial failed password=[REDACTED]`,
+		`passphrase=abc123 end`:                             `passphrase=[REDACTED] end`,
+		`{"Authorization":"Bearer abc","Cookie":"sid=xyz"}`: `{"Authorization":"[REDACTED]","Cookie":"[REDACTED]"}`,
+		`key -----BEGIN OPENSSH PRIVATE KEY----- AAAA`:      `key [REDACTED PRIVATE KEY]`,
+		`read C:\Users\alice\.ssh\id_ed25519 failed`:        `read ~\.ssh\id_ed25519 failed`,
+		`open /home/bob/.ssh/config`:                        `open ~/.ssh/config`,
+		`nothing sensitive`:                                 `nothing sensitive`,
 	}
 	for in, want := range cases {
 		if got := diag.Sanitize(in); got != want {
