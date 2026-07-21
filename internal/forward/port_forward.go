@@ -96,6 +96,7 @@ type LocalForward struct {
 	lastLatency time.Duration
 	stopOnce    sync.Once
 	stopDone    chan struct{}
+	stopAbort   func()
 	wg          sync.WaitGroup
 	activeConns map[net.Conn]struct{}
 	runCtx      context.Context
@@ -242,6 +243,9 @@ func (f *LocalForward) Stop(ctx context.Context) error {
 		if f.stopDone == nil {
 			f.stopDone = make(chan struct{})
 		}
+		if lease != nil {
+			f.stopAbort = lease.AbortGeneration
+		}
 		stopDone := f.stopDone
 		f.mu.Unlock()
 
@@ -277,6 +281,12 @@ func (f *LocalForward) Stop(ctx context.Context) error {
 	case <-stopDone:
 		return nil
 	case <-ctx.Done():
+		f.mu.Lock()
+		abort := f.stopAbort
+		f.mu.Unlock()
+		if abort != nil {
+			abort()
+		}
 		return fmt.Errorf("forward stop timeout: %w", ctx.Err())
 	}
 }
