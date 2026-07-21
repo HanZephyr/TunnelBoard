@@ -33,17 +33,17 @@ import (
 // App 是 Wails 的唯一绑定入口（应用 Module）：把目录与配置 Module、Vault
 // 和应用偏好转换为 UI 可用的结果，不承载业务规则。
 type App struct {
-	ctx     context.Context
-	store   *vault.Store
-	catalog *biz.CatalogBiz
-	runtime *biz.RuntimeBiz
-	router  *biz.RouterBiz
-	backup  *biz.BackupBiz
-	diagBuf *diag.RingBuffer
-	logFile *diag.LogFile
-	caddy   *caddy.Adapter
-	updater *updater.Service
-	initErr error
+	ctx      context.Context
+	store    *vault.Store
+	catalog  *biz.CatalogBiz
+	runtime  *biz.RuntimeBiz
+	router   *biz.RouterBiz
+	backup   *biz.BackupBiz
+	diagBuf  *diag.RingBuffer
+	logStore diag.LogStore
+	caddy    *caddy.Adapter
+	updater  *updater.Service
+	initErr  error
 
 	trayMu   sync.Mutex
 	trayShow *systray.MenuItem
@@ -57,26 +57,24 @@ type App struct {
 func NewApp() *App {
 	store, err := vault.OpenDefault()
 
-	// 运行日志持久化到数据目录 logs/（滚动 2MiB 一档），同时保留 stderr 与内存环（诊断包）。
-	// Vault 打不开时仅 stderr。注意顺序：GUI 应用无控制台，stderr 写入会失败，
-	// 而 io.MultiWriter 遇错即中断后续 writer——文件必须写在第一个。
-	var logWriter io.Writer = os.Stderr
-	var logFile *diag.LogFile
-	if err == nil {
-		if lf, lerr := diag.OpenLogFile(filepath.Join(store.Dir(), "logs", "tunnelboard.log"), 2<<20); lerr == nil {
-			logFile = lf
-			logWriter = io.MultiWriter(lf, os.Stderr)
-		}
-	}
-	diagBuf := diag.NewRingBuffer(slog.NewTextHandler(logWriter, nil), 2000)
-	slog.SetDefault(slog.New(diagBuf))
-
 	if err != nil {
+		diagBuf := diag.NewRingBuffer(slog.NewTextHandler(os.Stderr, nil), 2000)
+		slog.SetDefault(slog.New(diag.NewSafeLogHandler(diagBuf)))
 		return &App{initErr: err, diagBuf: diagBuf}
 	}
+	logStore, logErr := diag.NewLogStore(filepath.Join(store.Dir(), "logs"))
+	if logErr != nil {
+		diagBuf := diag.NewRingBuffer(slog.NewTextHandler(os.Stderr, nil), 2000)
+		slog.SetDefault(slog.New(diag.NewSafeLogHandler(diagBuf)))
+		return &App{initErr: logErr, store: store, diagBuf: diagBuf}
+	}
+	logWriter := io.MultiWriter(diag.NewSourceWriter(logStore, diag.LogTunnelBoard), os.Stderr)
+	diagBuf := diag.NewRingBuffer(slog.NewTextHandler(logWriter, nil), 2000)
+	slog.SetDefault(slog.New(diag.NewSafeLogHandler(diagBuf)))
 	catalog := biz.NewCatalogBiz(store)
 	caddyAdapter := caddy.New(store.Dir())
 	caddyAdapter.ExpectedSHA256 = caddyBundleSHA256
+	caddyAdapter.Output = diag.NewSourceWriter(logStore, diag.LogCaddy)
 	return &App{
 		store:   store,
 		catalog: catalog,
@@ -85,11 +83,11 @@ func NewApp() *App {
 			store, catalog, helper.NewOperator(), caddyAdapter,
 			helper.SystemHostsPath(), filepath.Join(store.Dir(), "caddy.json"),
 		),
-		backup:  biz.NewBackupBiz(store),
-		diagBuf: diagBuf,
-		logFile: logFile,
-		caddy:   caddyAdapter,
-		updater: updater.NewDefaultService(),
+		backup:   biz.NewBackupBiz(store),
+		diagBuf:  diagBuf,
+		logStore: logStore,
+		caddy:    caddyAdapter,
+		updater:  updater.NewDefaultService(),
 	}
 }
 
@@ -128,8 +126,8 @@ func (a *App) shutdown(ctx context.Context) {
 			slog.Error("stop caddy on shutdown failed", "err", err)
 		}
 	}
-	if a.logFile != nil {
-		_ = a.logFile.Close()
+	if a.logStore != nil {
+		_ = a.logStore.Close()
 	}
 }
 
@@ -595,8 +593,12 @@ func (a *App) ReplaceHostKey(host string, port int, keyType, fingerprint string)
 
 // LogTailResult 是日志文件的增量读取结果：新行与下一次读取偏移。
 type LogTailResult struct {
-	Lines  []string `json:"lines"`
-	Offset int64    `json:"offset"`
+	Lines        []string `json:"lines"`
+	Offset       int64    `json:"offset"`
+	Generation   uint64   `json:"generation"`
+	Rotated      bool     `json:"rotated"`
+	Truncated    bool     `json:"truncated"`
+	DroppedBytes int64    `json:"droppedBytes"`
 }
 
 // GetLogTail 从 offset 增量读取日志文件（name 仅允许 tunnelboard | caddy）。
@@ -605,36 +607,41 @@ func (a *App) GetLogTail(name string, offset int64) (LogTailResult, error) {
 	if err := a.ensureReady(); err != nil {
 		return LogTailResult{}, err
 	}
-	if name != "tunnelboard" && name != "caddy" {
-		return LogTailResult{}, fmt.Errorf("unknown log name %q", name)
-	}
-	f, err := os.Open(filepath.Join(a.store.Dir(), "logs", name+".log"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return LogTailResult{Lines: []string{}, Offset: 0}, nil
-		}
-		return LogTailResult{}, fmt.Errorf("open log: %w", err)
-	}
-	defer f.Close()
-	st, err := f.Stat()
+	source, err := parseLogSource(name)
 	if err != nil {
 		return LogTailResult{}, err
 	}
-	if offset > st.Size() {
-		offset = st.Size()
+	cursor := &diag.LogCursor{Generation: 1, Offset: offset}
+	if offset == 0 {
+		cursor = nil
 	}
-	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return LogTailResult{}, err
-	}
-	data, err := io.ReadAll(f)
+	result, err := a.logStore.Tail(source, cursor)
 	if err != nil {
 		return LogTailResult{}, err
 	}
-	text := strings.TrimSuffix(string(data), "\n")
-	if text == "" {
-		return LogTailResult{Lines: []string{}, Offset: st.Size()}, nil
+	return LogTailResult{Lines: result.Lines, Offset: result.NextCursor.Offset, Generation: result.NextCursor.Generation, Rotated: result.Rotated, Truncated: result.Truncated, DroppedBytes: result.DroppedBytes}, nil
+}
+
+func (a *App) GetLogTailV2(name string, cursor *diag.LogCursor) (diag.LogTailResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return diag.LogTailResult{}, err
 	}
-	return LogTailResult{Lines: strings.Split(text, "\n"), Offset: st.Size()}, nil
+	source, err := parseLogSource(name)
+	if err != nil {
+		return diag.LogTailResult{}, err
+	}
+	return a.logStore.Tail(source, cursor)
+}
+
+func parseLogSource(name string) (diag.LogSource, error) {
+	switch name {
+	case string(diag.LogTunnelBoard):
+		return diag.LogTunnelBoard, nil
+	case string(diag.LogCaddy):
+		return diag.LogCaddy, nil
+	default:
+		return "", fmt.Errorf("unknown log name %q", name)
+	}
 }
 
 // GetAppVersion 返回应用版本（构建常量，界面与更新检查的唯一来源）。

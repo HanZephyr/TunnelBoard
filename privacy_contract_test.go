@@ -94,8 +94,8 @@ func TestNewAppCreatesLogOnlyInsideDataDir(t *testing.T) {
 	if app.initErr != nil {
 		t.Fatal(app.initErr)
 	}
-	if app.logFile != nil {
-		t.Cleanup(func() { _ = app.logFile.Close() })
+	if app.logStore != nil {
+		t.Cleanup(func() { _ = app.logStore.Close() })
 	}
 	logPath := filepath.Join(configRoot, "TunnelBoard", "logs", "tunnelboard.log")
 	if _, err := os.Stat(logPath); err != nil {

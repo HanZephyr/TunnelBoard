@@ -65,6 +65,7 @@ type Adapter struct {
 	StartProcess   func(bin string, args []string, dir string, env []string, stdout, stderr io.Writer) (Process, error)
 	ValidateConfig func(ctx context.Context, bin, configPath, dir string, env []string, output io.Writer) error
 	CheckPort      func() error
+	Output         io.Writer
 
 	mu           sync.Mutex
 	generation   string
@@ -286,12 +287,19 @@ func (a *Adapter) Apply(ctx context.Context, revision string, routeConfig []byte
 	if err := a.writeConfigAtomic(config); err != nil {
 		return ApplyResult{}, a.failLocked(err)
 	}
-	logWriter, err := a.openLogFile()
-	if err != nil {
-		return ApplyResult{}, a.failLocked(err)
+	logWriter := a.Output
+	var logFile *os.File
+	if logWriter == nil {
+		logFile, err = a.openLogFile()
+		if err != nil {
+			return ApplyResult{}, a.failLocked(err)
+		}
+		logWriter = logFile
 	}
 	process, err := a.StartProcess(bin, []string{"run", "--config", a.configPath()}, a.DataDir, env, logWriter, logWriter)
-	_ = logWriter.Close()
+	if logFile != nil {
+		_ = logFile.Close()
+	}
 	if err != nil {
 		return ApplyResult{}, a.failLocked(err)
 	}
