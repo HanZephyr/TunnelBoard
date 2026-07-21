@@ -339,9 +339,10 @@ onBeforeUnmount(() => {
           v-if="activePage === 'settings'"
           :theme="theme"
           :app-meta="appMeta"
+		  :vault-revision="vaultRevision"
           :configuration-locked="snapshotPhase !== 'ready'"
           @theme-change="setThemeBySwitch"
-          @vault-changed="loadVault"
+		  @vault-changed="onVaultChanged"
           @notify="notify"
           @update-outcome="onUpdateOutcome"
         />

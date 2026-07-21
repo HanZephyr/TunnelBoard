@@ -23,7 +23,7 @@ import { callBackend, errorMessage } from '../../utils/backend'
 import { ensureLocaleMessages } from '../../i18n'
 import BaseDialog from '../common/BaseDialog.vue'
 import { DEFAULT_RELEASES_PAGE_URL, officialReleaseUrl } from '../../modules/releaseUrl'
-import { createApplicationClient } from '../../utils/applicationClient'
+import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
 
 const props = defineProps({
   theme: {
@@ -34,7 +34,8 @@ const props = defineProps({
     type: Object,
     required: true
   },
-  configurationLocked: { type: Boolean, default: false }
+	configurationLocked: { type: Boolean, default: false },
+	vaultRevision: { type: String, default: '' }
 })
 
 const emit = defineEmits(['theme-change', 'notify', 'vault-changed', 'update-outcome'])
@@ -348,7 +349,7 @@ async function onApplyImport() {
         action: importState.resolutions[index] === 'skip' ? 'skip' : 'rename'
       }))
     }
-    const result = await callBackend(CommitImportCommand, { meta: {}, token: importState.token, plan })
+	const result = await callBackend(CommitImportCommand, { meta: createCommandMeta(props.vaultRevision), token: importState.token, plan })
     const summary = result?.summary || {}
     importSummary.value = summary
     importState.keyFiles = Array.isArray(result?.keyFiles) ? result.keyFiles : []
@@ -367,7 +368,7 @@ async function onApplyImport() {
     emit('notify', message)
     // 防止重复点击造成重复导入；私钥另存只保留后端 lease token，不保留密码。
     importState.preview = null
-    emit('vault-changed')
+	emit('vault-changed', result)
   } catch (err) {
     emit('notify', errorMessage(err))
   } finally {

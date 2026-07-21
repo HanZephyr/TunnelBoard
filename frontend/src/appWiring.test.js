@@ -54,5 +54,13 @@ test('更新偏好失败后保持关闭并提供重试', async () => {
 test('高层命令结果先登记 revision 和 event sequence 再刷新', async () => {
   const source = await readFile(new URL('./App.vue', import.meta.url), 'utf8')
   assert.match(source, /function onVaultChanged[\s\S]*acceptRevision\(result\?\.acceptedRevision, result\?\.eventSequence\)[\s\S]*await loadVault/)
-  assert.equal((source.match(/@vault-changed="onVaultChanged"/g) || []).length, 3)
+	assert.equal((source.match(/@vault-changed="onVaultChanged"/g) || []).length, 4)
+	const settingsMount = source.match(/<SettingsPage[\s\S]*?\/>/)?.[0] || ''
+	assert.match(settingsMount, /:vault-revision="vaultRevision"/)
+})
+
+test('导入提交携带幂等命令 ID 与当前 Vault revision', async () => {
+	const source = await readFile(new URL('./components/pages/SettingsPage.vue', import.meta.url), 'utf8')
+	assert.match(source, /CommitImportCommand, \{ meta: createCommandMeta\(props\.vaultRevision\)/)
+	assert.match(source, /emit\('vault-changed', result\)/)
 })
