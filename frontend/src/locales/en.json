@@ -44,9 +44,22 @@
             "stale": "Showing the last successful snapshot. Configuration changes are paused.",
             "retry": "Retry"
         },
+        "recovery": {
+            "pending": "An interrupted restore still requires recovery. Configuration and network changes are locked.",
+            "quarantined": "Restored network settings are isolated and have not been activated.",
+            "openSettings": "Review in Settings"
+        },
+        "pageLoader": {
+            "loading": "Loading {page}…",
+            "loadFailed": "{page} could not be loaded",
+            "retry": "Retry",
+            "diagnostics": "Open Settings and diagnostics"
+        },
         "update": {
             "available": "Update available",
             "badge": "new",
+            "actionLabel": "Update {version} is available; view details",
+            "announcement": "Update {version} is available",
             "latestVersion": "Latest version: {version}",
             "openRelease": "Open download page"
         }
@@ -331,7 +344,7 @@
 			"restorePreviewButton": "Validate Backup",
 			"restoreStaging": "Validating...",
 			"restorePreviewReady": "Backup validated. Review the contents before confirming.",
-            "restoreConfirm": "I understand this will replace all current data with the backup content",
+            "restoreConfirm": "I understand this replaces all current data and keeps restored network settings isolated until I activate them",
             "restoreButton": "Restore Backup",
             "restoring": "Restoring...",
 			"restoreSuccess": "All data has been replaced by the backup.",
@@ -339,7 +352,10 @@
 			"restoreQuarantineNotice": "Restored routes and auto-start forwards are isolated. Review them before activating network access.",
 			"activateRestore": "Activate Restored Network",
 			"activatingRestore": "Activating...",
-			"restoreActivated": "Restored network configuration is active."
+			"restoreActivated": "Restored network configuration is active.",
+            "restoreRecoveryPending": "An interrupted restore must be recovered before configuration or network activation can continue.",
+            "activateRestoreConfirmTitle": "Activate restored network?",
+            "activateRestoreConfirmMessage": "This will start {forwards} auto-start forwards and apply {routes} routes. Domains: {domains}"
         }
     },
     "routes": {
@@ -356,6 +372,7 @@
             "actions": "Actions"
         },
         "status": {
+            "statusUnavailable": "Route status unavailable",
             "hostsApplied": "hosts applied",
             "hostsNotApplied": "hosts pending",
             "caddyRunning": "caddy running",

@@ -7,8 +7,11 @@ function normalizeSnapshot(input) {
     sshHosts: Array.isArray(input?.sshHosts) ? input.sshHosts : [],
     forwards: Array.isArray(input?.forwards) ? input.forwards : [],
     webRoutes: Array.isArray(input?.webRoutes) ? input.webRoutes : [],
+    runtimeStatuses: Array.isArray(input?.runtimeStatuses) ? input.runtimeStatuses : [],
     routeStatuses: Array.isArray(input?.routeStatuses) ? input.routeStatuses : [],
-    sshHostDefaults: input?.sshHostDefaults || {}
+    sshHostDefaults: input?.sshHostDefaults || {},
+    recovery: input?.recovery || { quarantined: false, journalPending: false, maintenance: false },
+    capabilities: input?.capabilities || { mutationAllowed: true }
   }
 }
 
@@ -53,7 +56,12 @@ export function createAppSnapshotStore() {
       state.acceptedEventSequence = Math.max(state.acceptedEventSequence, Number(eventSequence) || 0)
     },
     canMutate() {
-      return state.phase === 'ready'
+      const recovery = state.snapshot?.recovery || {}
+      return state.phase === 'ready' &&
+        state.snapshot?.capabilities?.mutationAllowed !== false &&
+        recovery.quarantined !== true &&
+        recovery.journalPending !== true &&
+        recovery.maintenance !== true
     }
   }
 }

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   GetConnPoolStats,
@@ -27,7 +27,9 @@ const props = defineProps({
   webRoutes: {
     type: Array,
     default: () => []
-  }
+  },
+  runtimeStatuses: { type: Array, default: () => [] },
+  routeStatuses: { type: Array, default: () => [] }
 })
 
 const emit = defineEmits(['notify', 'go-forwards'])
@@ -35,9 +37,26 @@ const emit = defineEmits(['notify', 'go-forwards'])
 const { t } = useI18n()
 
 // ---- 运行时状态轮询（与 ForwardsPage 同一模式：5s，卸载清理）----
-const runtimeMap = ref({})
+function runtimeStatusMap(items) {
+  const next = {}
+  for (const item of Array.isArray(items) ? items : []) {
+    next[item.forwardId] = {
+      status: item.status || 'stopped',
+      lastError: item.lastError || '',
+      latencyMs: Number(item.latencyMs) || 0
+    }
+  }
+  return next
+}
+
+const runtimeMap = ref(runtimeStatusMap(props.runtimeStatuses))
+const runtimeFetchError = ref('')
 const pendingIds = ref(new Set())
 let runtimeTimer = null
+
+watch(() => props.runtimeStatuses, (items) => {
+  runtimeMap.value = runtimeStatusMap(items)
+}, { deep: true })
 
 function runtimeOf(forwardId) {
   return runtimeMap.value[forwardId] || { status: 'stopped', lastError: '', latencyMs: 0 }
@@ -50,17 +69,10 @@ function isActiveStatus(status) {
 async function refreshRuntime() {
   try {
     const snapshot = await callBackend(GetRuntimeSnapshot)
-    const next = {}
-    for (const item of Array.isArray(snapshot) ? snapshot : []) {
-      next[item.forwardId] = {
-        status: item.status || 'stopped',
-        lastError: item.lastError || '',
-        latencyMs: Number(item.latencyMs) || 0
-      }
-    }
-    runtimeMap.value = next
-  } catch (_) {
-    /* 保留现有状态，下一轮轮询再试 */
+    runtimeMap.value = runtimeStatusMap(snapshot)
+    runtimeFetchError.value = ''
+  } catch (error) {
+    runtimeFetchError.value = errorMessage(error)
   }
 }
 
@@ -77,8 +89,19 @@ async function refreshConnPool() {
 }
 
 // ---- Web 路由系统状态轮询（5s，卸载清理）----
-const routeStatusMap = ref({})
+function buildRouteStatusMap(items) {
+  const next = {}
+  for (const item of Array.isArray(items) ? items : []) next[item.routeId] = item
+  return next
+}
+
+const routeStatusMap = ref(buildRouteStatusMap(props.routeStatuses))
+const routeStatusFetchError = ref('')
 let routeStatusTimer = null
+
+watch(() => props.routeStatuses, (items) => {
+  routeStatusMap.value = buildRouteStatusMap(items)
+}, { deep: true })
 
 function routeStatusOf(routeId) {
   return routeStatusMap.value[routeId] || null
@@ -87,13 +110,10 @@ function routeStatusOf(routeId) {
 async function refreshRouteStatus() {
   try {
     const items = await callBackend(GetRouteStatus)
-    const next = {}
-    for (const item of Array.isArray(items) ? items : []) {
-      next[item.routeId] = item
-    }
-    routeStatusMap.value = next
-  } catch (_) {
-    /* 保留现有状态，下一轮轮询再试 */
+    routeStatusMap.value = buildRouteStatusMap(items)
+    routeStatusFetchError.value = ''
+  } catch (error) {
+    routeStatusFetchError.value = errorMessage(error)
   }
 }
 
@@ -204,6 +224,12 @@ function routeFlowLabel(forward) {
 
 <template>
   <section class="page-fade">
+    <div v-if="runtimeFetchError" class="alert alert-warning py-2 px-3 mb-2 small" role="alert">
+      {{ t('forwards.statusUnavailable') }}：{{ runtimeFetchError }}
+    </div>
+    <div v-if="routeStatusFetchError" class="alert alert-warning py-2 px-3 mb-2 small" role="alert">
+      {{ t('routes.statusUnavailable') }}：{{ routeStatusFetchError }}
+    </div>
     <!-- 状态总览条 -->
     <div class="overview-stats">
       <div class="stat-card">

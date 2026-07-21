@@ -37,6 +37,7 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
+  runtimeStatuses: { type: Array, default: () => [] },
   configurationLocked: { type: Boolean, default: false },
   vaultRevision: { type: String, default: '' }
 })
@@ -447,7 +448,19 @@ function onMoveTargetChange() {
 }
 
 // ---- 运行时状态（仅存内存；Vault 数据重载不清除）----
-const runtimeMap = ref({})
+function runtimeStatusMap(items) {
+  const next = {}
+  for (const item of Array.isArray(items) ? items : []) {
+    next[item.forwardId] = {
+      status: item.status || 'stopped',
+      lastError: item.lastError || '',
+      latencyMs: Number(item.latencyMs) || 0
+    }
+  }
+  return next
+}
+
+const runtimeMap = ref(runtimeStatusMap(props.runtimeStatuses))
 const pendingIds = ref(new Set())
 const batchPending = ref(false)
 let runtimeTimer = null
@@ -473,18 +486,14 @@ function formatLatency(latencyMs) {
 // runtimeFetchError 非空表示状态快照获取失败：页面向用户显式提示，而不是静默回退为"全部已停止"。
 const runtimeFetchError = ref('')
 
+watch(() => props.runtimeStatuses, (items) => {
+  runtimeMap.value = runtimeStatusMap(items)
+}, { deep: true })
+
 async function refreshRuntime() {
   try {
     const snapshot = await callBackend(GetRuntimeSnapshot)
-    const next = {}
-    for (const item of Array.isArray(snapshot) ? snapshot : []) {
-      next[item.forwardId] = {
-        status: item.status || 'stopped',
-        lastError: item.lastError || '',
-        latencyMs: Number(item.latencyMs) || 0
-      }
-    }
-    runtimeMap.value = next
+    runtimeMap.value = runtimeStatusMap(snapshot)
     runtimeFetchError.value = ''
   } catch (err) {
     /* 保留现有状态，下一轮轮询再试；但让失败可见 */

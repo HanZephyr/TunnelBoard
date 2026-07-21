@@ -43,3 +43,16 @@ test('Snapshot 保留后端 SSH Host 安全默认值', async () => {
   await store.refresh(async () => ({ sshHostDefaults: { port: 2202, timeoutMs: 9000 } }))
   assert.deepEqual(store.state.snapshot.sshHostDefaults, { port: 2202, timeoutMs: 9000 })
 })
+
+test('Snapshot 保留运行时、恢复门禁和能力事实', async () => {
+  const store = createAppSnapshotStore()
+  await store.refresh(async () => ({
+    runtimeStatuses: [{ forwardId: 7, status: 'running' }],
+    recovery: { quarantined: false, journalPending: true, maintenance: false },
+    capabilities: { mutationAllowed: false }
+  }))
+  assert.deepEqual(store.state.snapshot.runtimeStatuses, [{ forwardId: 7, status: 'running' }])
+  assert.equal(store.state.snapshot.recovery.journalPending, true)
+  assert.equal(store.state.snapshot.capabilities.mutationAllowed, false)
+  assert.equal(store.canMutate(), false)
+})

@@ -44,9 +44,22 @@
             "stale": "目前顯示上次成功讀取的資料，設定修改已暫停。",
             "retry": "重試"
         },
+        "recovery": {
+            "pending": "上次還原交易仍需恢復，設定與網路變更已鎖定。",
+            "quarantined": "還原的網路設定仍處於隔離狀態，尚未啟用。",
+            "openSettings": "前往設定檢查"
+        },
+        "pageLoader": {
+            "loading": "正在載入{page}…",
+            "loadFailed": "無法載入{page}",
+            "retry": "重試",
+            "diagnostics": "開啟設定與診斷"
+        },
         "update": {
             "available": "發現新版本",
             "badge": "新",
+            "actionLabel": "發現新版本 {version}，檢視更新詳情",
+            "announcement": "發現新版本 {version}",
             "latestVersion": "最新版本：{version}",
             "openRelease": "開啟下載頁"
         }
@@ -331,7 +344,7 @@
 			"restorePreviewButton": "驗證並預覽",
 			"restoreStaging": "驗證中…",
 			"restorePreviewReady": "備份驗證通過，請核對內容後再確認取代。",
-            "restoreConfirm": "我已知曉將用備份內容取代目前全部資料",
+            "restoreConfirm": "我已知曉將用備份內容取代目前全部資料，並在我主動啟用前保持網路設定隔離",
             "restoreButton": "完全還原",
             "restoring": "還原中…",
 			"restoreSuccess": "資料已取代為備份內容。",
@@ -339,7 +352,10 @@
 			"restoreQuarantineNotice": "還原後的 Route 和自動啟動 Forward 仍被隔離，請檢查設定後再啟用網路。",
 			"activateRestore": "啟用還原後的網路",
 			"activatingRestore": "啟用中…",
-			"restoreActivated": "還原後的網路設定已啟用。"
+			"restoreActivated": "還原後的網路設定已啟用。",
+            "restoreRecoveryPending": "上次還原交易尚未恢復完成，恢復前不能修改設定或啟用網路。",
+            "activateRestoreConfirmTitle": "確認啟用還原後的網路？",
+            "activateRestoreConfirmMessage": "將啟動 {forwards} 個自動啟動 Forward，並套用 {routes} 條 Route。網域：{domains}"
         }
     },
     "routes": {
@@ -356,6 +372,7 @@
             "actions": "操作"
         },
         "status": {
+            "statusUnavailable": "Route 狀態取得失敗",
             "hostsApplied": "hosts 已生效",
             "hostsNotApplied": "hosts 未生效",
             "caddyRunning": "Caddy 執行中",
