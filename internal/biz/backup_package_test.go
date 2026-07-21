@@ -84,13 +84,29 @@ func TestBackupPackageInvalidatesExpiredStaleAndSupersededTokens(t *testing.T) {
 	}); !errors.Is(err, biz.ErrBackupStageToken) {
 		t.Fatalf("superseded token error = %v", err)
 	}
+	if _, err := pkg.Stage(context.Background(), biz.StageRequest{
+		Path: "missing.tbb", Password: "pw", Purpose: biz.StagePurposeRestore, VaultRevision: "vault-1",
+	}); err == nil {
+		t.Fatal("missing replacement package must fail")
+	}
 	if _, err := pkg.Take(context.Background(), biz.TakeStageRequest{
-		Token: second.Token, Purpose: biz.StagePurposeRestore, VaultRevision: "vault-2",
+		Token: second.Token, Purpose: biz.StagePurposeRestore, VaultRevision: "vault-1",
+	}); !errors.Is(err, biz.ErrBackupStageToken) {
+		t.Fatalf("failed replacement must still revoke old token: %v", err)
+	}
+	stale, err := pkg.Stage(context.Background(), biz.StageRequest{
+		Path: writeBackupFile(t, makeBackup(t)), Password: "pw", Purpose: biz.StagePurposeRestore, VaultRevision: "vault-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pkg.Take(context.Background(), biz.TakeStageRequest{
+		Token: stale.Token, Purpose: biz.StagePurposeRestore, VaultRevision: "vault-2",
 	}); !errors.Is(err, biz.ErrBackupStageStale) {
 		t.Fatalf("stale revision error = %v", err)
 	}
 
-	third, err := pkg.Stage(context.Background(), biz.StageRequest{
+	expiring, err := pkg.Stage(context.Background(), biz.StageRequest{
 		Path: writeBackupFile(t, makeBackup(t)), Password: "pw", Purpose: biz.StagePurposeRestore, VaultRevision: "vault-2",
 	})
 	if err != nil {
@@ -98,7 +114,7 @@ func TestBackupPackageInvalidatesExpiredStaleAndSupersededTokens(t *testing.T) {
 	}
 	now = now.Add(10*time.Minute + time.Nanosecond)
 	if _, err := pkg.Take(context.Background(), biz.TakeStageRequest{
-		Token: third.Token, Purpose: biz.StagePurposeRestore, VaultRevision: "vault-2",
+		Token: expiring.Token, Purpose: biz.StagePurposeRestore, VaultRevision: "vault-2",
 	}); !errors.Is(err, biz.ErrBackupStageExpired) {
 		t.Fatalf("expired token error = %v", err)
 	}

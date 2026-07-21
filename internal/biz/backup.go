@@ -168,14 +168,14 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 	}
 
 	_, err = b.store.Update(func(d *model.VaultData) error {
-		// 逐实体分配新 ID（nextID 随 append 递增），并维护 原ID→新ID 映射修正引用。
-		nextFolderID := func() int { return nextID(len(d.Folders), func(i int) int { return d.Folders[i].ID }) }
-		nextHostID := func() int { return nextID(len(d.SSHHosts), func(i int) int { return d.SSHHosts[i].ID }) }
-		nextForwardID := func() int { return nextID(len(d.Forwards), func(i int) int { return d.Forwards[i].ID }) }
-		nextRouteID := func() int { return nextID(len(d.WebRoutes), func(i int) int { return d.WebRoutes[i].ID }) }
-		nextHostKeyID := func() int { return nextID(len(d.HostKeys), func(i int) int { return d.HostKeys[i].ID }) }
+		// 每类 ID 只扫描一次既有数据，随后单调分配；导入复杂度与实体数线性相关。
+		folderIDs := newImportIDSequence(len(d.Folders), func(i int) int { return d.Folders[i].ID })
+		hostIDs := newImportIDSequence(len(d.SSHHosts), func(i int) int { return d.SSHHosts[i].ID })
+		forwardIDs := newImportIDSequence(len(d.Forwards), func(i int) int { return d.Forwards[i].ID })
+		routeIDs := newImportIDSequence(len(d.WebRoutes), func(i int) int { return d.WebRoutes[i].ID })
+		hostKeyIDs := newImportIDSequence(len(d.HostKeys), func(i int) int { return d.HostKeys[i].ID })
 
-		wrapper := model.Folder{ID: nextFolderID(), Name: folderName}
+		wrapper := model.Folder{ID: folderIDs.Next(), Name: folderName}
 		d.Folders = append(d.Folders, wrapper)
 
 		// 文件夹：顶层挂到 wrapper 下；原第二层压平（其 Forward 并入父文件夹）。
@@ -184,7 +184,7 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 		for _, f := range imported.Folders {
 			if f.ParentID == 0 {
 				nf := f
-				nf.ID = nextFolderID()
+				nf.ID = folderIDs.Next()
 				nf.ParentID = wrapper.ID
 				folderNewID[f.ID] = nf.ID
 				d.Folders = append(d.Folders, nf)
@@ -212,7 +212,7 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 				continue
 			}
 			nh := h
-			nh.ID = nextHostID()
+			nh.ID = hostIDs.Next()
 			if existingEndpoints[key] || rename[key] {
 				nh.Name = h.Name + "-imported"
 			}
@@ -226,7 +226,7 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 		forwardNewID := map[int]int{}
 		for _, fw := range imported.Forwards {
 			nf := fw
-			nf.ID = nextForwardID()
+			nf.ID = forwardIDs.Next()
 			if mapped, ok := folderNewID[fw.FolderID]; ok {
 				nf.FolderID = mapped
 			} else if mapped, ok := flattenFolderNewID[fw.FolderID]; ok {
@@ -262,7 +262,7 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 				continue
 			}
 			nr := r
-			nr.ID = nextRouteID()
+			nr.ID = routeIDs.Next()
 			nr.ForwardID = fwID
 			if nr.HostsEnabled || nr.CaddyEnabled {
 				nr.HostsEnabled = false
@@ -279,7 +279,7 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 				continue
 			}
 			nk := k
-			nk.ID = nextHostKeyID()
+			nk.ID = hostKeyIDs.Next()
 			d.HostKeys = append(d.HostKeys, nk)
 			summary.Imported["hostKeys"]++
 		}
@@ -298,8 +298,28 @@ func (b *BackupBiz) ApplyImport(raw []byte, password string, plan ImportPlan) (I
 	return summary, nil
 }
 
+type importIDSequence struct{ next int }
+
+func newImportIDSequence(size int, idAt func(int) int) *importIDSequence {
+	maxID := 0
+	for i := 0; i < size; i++ {
+		if id := idAt(i); id > maxID {
+			maxID = id
+		}
+	}
+	return &importIDSequence{next: maxID + 1}
+}
+
+func (s *importIDSequence) Next() int {
+	id := s.next
+	s.next++
+	return id
+}
+
 // RestoreBackup 完全还原：用备份内容整体替换 Vault（含偏好），必须显式二次确认。
 // 调用方负责先停止全部 Forward（网络行为不变直到用户显式应用）。
+// Deprecated: application wiring must migrate to RestoreCoordinator StageRestore/CommitRestore;
+// this compatibility method does not coordinate Runtime, Route effects, journal or quarantine.
 func (b *BackupBiz) RestoreBackup(raw []byte, password string, confirmed bool) error {
 	if !confirmed {
 		return ErrRestoreNotConfirmed
