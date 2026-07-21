@@ -445,7 +445,9 @@ Route Compiler 只负责编译 HTTP、TLS、PKI 和反向代理规则，不再�
 - 运行 generation；
 - 进程级配置和持久化策略。
 
-同一 generation 内的每次 `/load` 必须保留相同 Admin socket 地址。业务层不得直接拼接 `/load`、`/stop` 或 `/config/` 请求。
+同一应用 generation 内由 Supervisor 在 `admin-a.sock` 与 `admin-b.sock` 两个权限相同的地址间换代；任一时刻只有一个地址属于当前 Caddy 配置。业务层不得直接拼接 `/load`、`/stop` 或 `/config/` 请求。
+
+实现阶段使用正式钉版 Caddy `v2.11.4` 在 Windows 真机完成 POC 后，对原设计作出必要修正：Caddy 重载会重建 Admin listener，如果新旧配置复用同一 AF_UNIX 路径，旧 listener 的迟到清理会 unlink 新 listener，导致后续 `/stop` 无法连接。因此热重载固定采用“通过旧 socket 提交包含新 socket 的完整配置 → 以新 socket readiness 确认成功 → 切换 Supervisor ownership → 清理旧 socket”的双槽换代。候选 `caddy validate` 使用 `admin.disabled=true`，避免验证进程预占活动 socket。该变化不扩大信任边界，也不回退到 TCP。
 
 #### 兼容性降级
 

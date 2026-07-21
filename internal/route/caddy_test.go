@@ -90,8 +90,8 @@ func TestCompileCaddyHTTPUpstream(t *testing.T) {
 	}
 	cfg := decodeCaddy(t, raw)
 
-	if cfg.Admin.Listen != "127.0.0.1:2019" {
-		t.Fatalf("admin.listen = %q, want 127.0.0.1:2019", cfg.Admin.Listen)
+	if cfg.Admin.Listen != "" {
+		t.Fatalf("route compiler must not choose caddy admin transport, got %q", cfg.Admin.Listen)
 	}
 	server, ok := cfg.Apps.HTTP.Servers["tunnelboard"]
 	if !ok {

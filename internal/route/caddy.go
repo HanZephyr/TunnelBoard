@@ -11,12 +11,7 @@ import (
 // 以下类型按 Caddy v2 JSON 配置结构声明，键名与其一一对应；用结构体保证字段顺序与输出稳定。
 
 type caddyConfig struct {
-	Admin caddyAdmin `json:"admin"`
-	Apps  caddyApps  `json:"apps"`
-}
-
-type caddyAdmin struct {
-	Listen string `json:"listen"`
+	Apps caddyApps `json:"apps"`
 }
 
 type caddyApps struct {
@@ -148,7 +143,6 @@ func CompileCaddy(data model.VaultData) ([]byte, error) {
 	sort.Strings(subjects)
 
 	cfg := caddyConfig{
-		Admin: caddyAdmin{Listen: "127.0.0.1:2019"},
 		Apps: caddyApps{
 			HTTP: caddyHTTPApp{
 				Servers: map[string]caddyServer{

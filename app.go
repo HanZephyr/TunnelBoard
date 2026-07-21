@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/HanZephyr/TunnelBoard/internal/autostart"
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
@@ -116,13 +117,14 @@ func (a *App) startup(ctx context.Context) {
 
 // shutdown 在显式退出时停止全部 Forward 与 Caddy（CONTEXT.md:55）。
 func (a *App) shutdown(ctx context.Context) {
-	_ = ctx
 	slog.Info("app shutdown")
 	if a.runtime != nil {
 		a.runtime.Shutdown()
 	}
 	if a.caddy != nil {
-		if err := a.caddy.Stop(); err != nil {
+		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := a.caddy.Stop(stopCtx); err != nil {
 			slog.Error("stop caddy on shutdown failed", "err", err)
 		}
 	}

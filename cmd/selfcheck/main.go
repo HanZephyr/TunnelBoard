@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/pem"
@@ -179,5 +180,7 @@ func stageCaddyStart(datadir, domain string, port int) error {
 }
 
 func stageCaddyStop(datadir string) error {
-	return caddy.New(datadir).Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return caddy.New(datadir).Stop(ctx)
 }

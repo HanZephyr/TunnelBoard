@@ -2,14 +2,19 @@ package biz
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
+	caddycore "github.com/HanZephyr/TunnelBoard/internal/caddy"
 	"github.com/HanZephyr/TunnelBoard/internal/helper"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 	"github.com/HanZephyr/TunnelBoard/internal/route"
@@ -28,10 +33,9 @@ type HelperClient interface {
 
 // CaddyAdapter 是 Caddy 进程管理接缝（生产 = *caddy.Adapter，测试 = fake）。
 type CaddyAdapter interface {
-	DiagnosePort() error
-	Running() bool
-	Reload(config []byte) error
-	Stop() error
+	Apply(ctx context.Context, revision string, config []byte) (caddycore.ApplyResult, error)
+	Stop(ctx context.Context) error
+	Status(ctx context.Context) caddycore.Status
 	RootCACert(timeout time.Duration) ([]byte, error)
 }
 
@@ -66,6 +70,7 @@ type RoutePreview struct {
 // RouterBiz 是本地路由 Module：把 Vault 中的 Web Route 状态推到系统
 // （受托管 hosts 区块、Caddy、本地 CA 信任），失败按逆序回滚并报告失败点。
 type RouterBiz struct {
+	mu             sync.Mutex
 	store          VaultStore
 	catalog        *CatalogBiz
 	helper         HelperClient
@@ -73,6 +78,7 @@ type RouterBiz struct {
 	hostsPath      string // 只读快照用；写入只经 helper
 	caddyConfigPth string // 回滚时恢复上一份配置
 	caWaitTimeout  time.Duration
+	state          routeStateStore
 }
 
 // NewRouterBiz 组装本地路由 Module；所有系统副作用经注入接缝完成，可在测试中全内存验证。
@@ -85,12 +91,15 @@ func NewRouterBiz(store VaultStore, catalog *CatalogBiz, helperClient HelperClie
 		hostsPath:      hostsPath,
 		caddyConfigPth: caddyConfigPath,
 		caWaitTimeout:  10 * time.Second,
+		state:          newRouteStateStore(filepath.Dir(caddyConfigPath)),
 	}
 }
 
 // ApplyRoute 把单条 Route（及其所在的全局 Route 状态）应用到系统；
 // 该 Route 的域名需要确认而调用方未确认时返回 ErrDomainConfirmationRequired。
 func (b *RouterBiz) ApplyRoute(routeID int, confirmedDomains []string) (RouteApplyResult, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	data, err := b.store.Load()
 	if err != nil {
 		return RouteApplyResult{}, err
@@ -108,24 +117,28 @@ func (b *RouterBiz) ApplyRoute(routeID int, confirmedDomains []string) (RouteApp
 	if target.HostsEnabled && route.NeedsConfirmation(target.Domain) && !containsFold(confirmedDomains, target.Domain) {
 		return RouteApplyResult{}, fmt.Errorf("%w: %s", ErrDomainConfirmationRequired, target.Domain)
 	}
-	return b.applySystem()
+	return b.applySystemLocked()
 }
 
 // ReconcileRoutes 按 Vault 当前状态全量重推系统（删除 Route/Forward 后的清理不需要域名确认）。
 func (b *RouterBiz) ReconcileRoutes() (RouteApplyResult, error) {
-	return b.applySystem()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.applySystemLocked()
 }
 
 // RemoveRoute 删除 Route 并重推系统（hosts 记录随之撤销；最后一个 Caddy Route 移除后停止 Caddy 并撤 CA）。
 func (b *RouterBiz) RemoveRoute(routeID int) (RouteApplyResult, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if err := b.catalog.DeleteWebRoute(routeID); err != nil {
 		return RouteApplyResult{}, err
 	}
-	return b.applySystem()
+	return b.applySystemLocked()
 }
 
 // applySystem 是统一的系统重推流程：快照 → hosts → Caddy → CA；失败逆序回滚。
-func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
+func (b *RouterBiz) applySystemLocked() (result RouteApplyResult, retErr error) {
 	data, err := b.store.Load()
 	if err != nil {
 		return RouteApplyResult{}, err
@@ -135,10 +148,63 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 	if err != nil {
 		return RouteApplyResult{}, err
 	}
+	desiredRevision := desiredRouteRevision(data)
+	beforeApplied, err := b.state.loadState()
+	if err != nil {
+		return RouteApplyResult{}, err
+	}
+	journal := routeJournal{
+		TxID:            newRouteTxID(),
+		DesiredRevision: desiredRevision,
+		BeforeApplied:   beforeApplied,
+		TargetHosts:     append([]route.HostEntry(nil), entries...),
+		TargetCaddyHash: digestBytes(caddyConfig),
+		Phase:           "planned",
+		CreatedAt:       time.Now().UTC(),
+	}
+	if err := b.state.saveJournal(journal); err != nil {
+		return RouteApplyResult{}, err
+	}
+	caFingerprint := data.Prefs.CATrustedSHA256
+	defer func() {
+		status := RouteStatusApplied
+		if result.PortConflict != "" {
+			status = RouteStatusHostsOnly
+		}
+		state := RouteAppliedState{
+			AppliedDesiredRevision: desiredRevision,
+			HostsDigest:            digestHosts(entries),
+			AppliedHosts:           append([]route.HostEntry(nil), entries...),
+			CaddyConfigDigest:      digestBytes(caddyConfig),
+			CATrustedSHA256:        caFingerprint,
+			Status:                 status,
+			PortConflict:           result.PortConflict,
+		}
+		caddyStatus := b.caddy.Status(context.Background())
+		state.CaddyGeneration = caddyStatus.Generation
+		if retErr != nil {
+			state = beforeApplied
+			state.Status = RouteStatusError
+			state.LastError = sanitizeRouteError(retErr)
+			state.PendingTxID = journal.TxID
+			_ = b.state.saveState(state)
+			return
+		}
+		if err := b.state.saveState(state); err != nil {
+			retErr = err
+			return
+		}
+		if err := b.state.clearJournal(); err != nil {
+			retErr = err
+		}
+	}()
+	advanceJournal := func(phase string) error {
+		journal.Phase = phase
+		return b.state.saveJournal(journal)
+	}
 
 	prevEntries := b.currentManagedEntries()
-	prevRunning := b.caddy.Running()
-	result := RouteApplyResult{}
+	prevRunning := b.caddy.Status(context.Background()).Owned
 
 	// 需要特权操作的场景：写 hosts、信任/撤销 CA；否则完全无需 helper。
 	needHelper := len(entries) > 0 || len(prevEntries) > 0 || len(caddyConfig) > 0 || data.Prefs.CATrustedSHA256 != ""
@@ -161,11 +227,17 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 	} else {
 		result.HostsApplied = true
 	}
+	if err := advanceJournal("hosts_applied"); err != nil {
+		return result, err
+	}
 
 	// Caddy：无启用 Route 时确保停止并撤销 CA；有则诊断端口→重载→信任 CA。
 	if len(caddyConfig) == 0 {
 		if prevRunning {
-			if err := b.caddy.Stop(); err != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := b.caddy.Stop(ctx)
+			cancel()
+			if err != nil {
 				slog.Error("stop caddy failed", "err", err)
 				return result, fmt.Errorf("stop caddy: %w", err)
 			}
@@ -180,34 +252,38 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 			if err := b.setCATrusted(""); err != nil {
 				return result, err
 			}
+			caFingerprint = ""
+		}
+		if err := advanceJournal("neutralized"); err != nil {
+			return result, err
 		}
 		return result, nil
 	}
 
-	// 仅在 Caddy 未运行时预检 443：已运行时走 admin API 热重载，不会重新 bind 443，
-	// 否则会因 Caddy 自身占着 443 而误判为冲突，导致后续路由的热重载永远不执行。
-	if !prevRunning {
-		if err := b.caddy.DiagnosePort(); err != nil {
-			// 443 冲突：不启动 Caddy，保留 hosts-only 访问；非致命。
-			slog.Warn("caddy port conflict, route stays hosts-only", "err", err)
-			result.PortConflict = err.Error()
-			return result, nil
-		}
-	}
 	prevConfig, _ := os.ReadFile(b.caddyConfigPth)
 	// 短路：Caddy 已运行且新编译配置与磁盘 caddy.json 字节相同时，跳过 admin API 热重载。
 	// CompileCaddy 对同一输入字节稳定（路由/subjects 排序、json map 键排序），bytes.Equal 安全。
 	// 既避免无谓的 /load 请求，也避免 Caddy 落盘 caddy.json 时重写相同文件。
 	if prevRunning && bytes.Equal(prevConfig, caddyConfig) {
-		slog.Info("caddy config unchanged, skip reload")
-		result.CaddyApplied = true
-	} else if err := b.caddy.Reload(caddyConfig); err != nil {
+		slog.Info("caddy config unchanged, supervisor will verify digest")
+	}
+	revision := configRevision(caddyConfig)
+	applyResult, err := b.caddy.Apply(context.Background(), revision, caddyConfig)
+	if err != nil {
 		b.rollbackHosts(prevEntries, hostsChanged)
 		slog.Error("reload caddy failed", "err", err)
 		return result, fmt.Errorf("reload caddy: %w", err)
-	} else {
+	}
+	if applyResult.Outcome == caddycore.OutcomePortConflict {
+		result.PortConflict = applyResult.Detail
+		return result, nil
+	}
+	{
 		slog.Info("caddy config reloaded")
 		result.CaddyApplied = true
+	}
+	if err := advanceJournal("caddy_applied"); err != nil {
+		return result, err
 	}
 
 	if data.Prefs.CATrustedSHA256 == "" {
@@ -230,6 +306,10 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 		if err := b.setCATrusted(fp); err != nil {
 			return result, err
 		}
+		caFingerprint = fp
+	}
+	if err := advanceJournal("ca_applied"); err != nil {
+		return result, err
 	}
 	return result, nil
 }
@@ -238,6 +318,8 @@ func (b *RouterBiz) applySystem() (RouteApplyResult, error) {
 // 与 ApplyRoute 的区别：不重写 hosts（已持久化）、绝不触发特权安装（不弹 UAC）；
 // CA 未信任时仅在 helper 可达时补信任，否则如实记录，待用户手动应用。
 func (b *RouterBiz) ResumeCaddy() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	data, err := b.store.Load()
 	if err != nil {
 		return err
@@ -249,16 +331,16 @@ func (b *RouterBiz) ResumeCaddy() error {
 	if err != nil {
 		return err
 	}
-	if b.caddy.Running() {
+	if b.caddy.Status(context.Background()).Owned {
 		slog.Info("caddy already running at resume")
 	} else {
-		if err := b.caddy.DiagnosePort(); err != nil {
-			// 443 冲突：与 ApplyRoute 同策略，保持 hosts-only，不视为启动失败。
-			slog.Warn("caddy port conflict at resume, routes stay hosts-only", "err", err)
-			return nil
-		}
-		if err := b.caddy.Reload(caddyConfig); err != nil {
+		applyResult, err := b.caddy.Apply(context.Background(), configRevision(caddyConfig), caddyConfig)
+		if err != nil {
 			return fmt.Errorf("resume caddy reload: %w", err)
+		}
+		if applyResult.Outcome == caddycore.OutcomePortConflict {
+			slog.Warn("caddy port conflict at resume, routes stay hosts-only", "detail", applyResult.Detail)
+			return nil
 		}
 		slog.Info("caddy resumed at startup")
 	}
@@ -288,6 +370,8 @@ func (b *RouterBiz) ResumeCaddy() error {
 
 // RouteStatus 汇总每条 Route 的系统生效状态。
 func (b *RouterBiz) RouteStatus() ([]RouteStatusItem, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	data, err := b.store.Load()
 	if err != nil {
 		return nil, err
@@ -296,8 +380,9 @@ func (b *RouterBiz) RouteStatus() ([]RouteStatusItem, error) {
 	for _, e := range b.currentManagedEntries() {
 		applied[e.Domain] = true
 	}
-	running := b.caddy.Running()
-	portConflict := b.caddy.DiagnosePort() != nil && !running
+	caddyStatus := b.caddy.Status(context.Background())
+	running := caddyStatus.Owned
+	portConflict := !running && strings.Contains(strings.ToLower(caddyStatus.LastError), "443")
 	caTrusted := data.Prefs.CATrustedSHA256 != ""
 
 	items := make([]RouteStatusItem, 0, len(data.WebRoutes))
@@ -318,6 +403,8 @@ func (b *RouterBiz) RouteStatus() ([]RouteStatusItem, error) {
 
 // PreviewRoute 返回 ApplyRoute 前需要用户知悉的记录与确认项。
 func (b *RouterBiz) PreviewRoute(routeID int) (RoutePreview, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	data, err := b.store.Load()
 	if err != nil {
 		return RoutePreview{}, err
@@ -329,9 +416,7 @@ func (b *RouterBiz) PreviewRoute(routeID int) (RoutePreview, error) {
 			preview.RequiresConfirmation = []string{r.Domain}
 		}
 	}
-	if !b.caddy.Running() && b.caddy.DiagnosePort() != nil {
-		preview.PortConflict = true
-	}
+	// Preview 保持纯读：端口冲突由 Supervisor 在 Commit/Apply 时按真实启动结果分类。
 	preview.CATrustNeeded = data.Prefs.CATrustedSHA256 == "" && hasCaddyEnabledRoute(data)
 	return preview, nil
 }
@@ -374,11 +459,18 @@ func (b *RouterBiz) rollbackHosts(prevEntries []route.HostEntry, hostsChanged bo
 func (b *RouterBiz) rollbackCaddy(prevRunning bool, prevConfig []byte) {
 	if prevRunning && len(prevConfig) > 0 {
 		slog.Warn("rollback caddy to previous config")
-		_ = b.caddy.Reload(prevConfig)
+		_, _ = b.caddy.Apply(context.Background(), configRevision(prevConfig), prevConfig)
 	} else if !prevRunning {
 		slog.Warn("rollback caddy: stop process")
-		_ = b.caddy.Stop()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = b.caddy.Stop(ctx)
+		cancel()
 	}
+}
+
+func configRevision(config []byte) string {
+	sum := sha256.Sum256(config)
+	return hex.EncodeToString(sum[:])
 }
 
 func hasCaddyEnabledRoute(data model.VaultData) bool {

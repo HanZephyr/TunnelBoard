@@ -4,23 +4,25 @@ package caddy
 
 import (
 	"fmt"
-	"os"
+	"io"
 	"os/exec"
 	"syscall"
 )
 
-// startDetached 以独立会话启动 Caddy（Setsid），主程序退出不影响 Caddy 生命周期；
-// stdout/stderr 写入 logFile 供日志页查阅。
-func startDetached(bin string, args []string, dir string, env []string, logFile *os.File) error {
+type ownedProcess struct{ cmd *exec.Cmd }
+
+func startOwned(bin string, args []string, dir string, env []string, stdout, stderr io.Writer) (Process, error) {
 	cmd := exec.Command(bin, args...)
-	cmd.Dir = dir
-	cmd.Env = env
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, env, stdout, stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("caddy: start process: %w", err)
+		return nil, fmt.Errorf("caddy: start process: %w", err)
 	}
-	_ = cmd.Process.Release()
-	return nil
+	return &ownedProcess{cmd: cmd}, nil
 }
+
+func (p *ownedProcess) PID() int { return p.cmd.Process.Pid }
+func (p *ownedProcess) Kill() error {
+	return syscall.Kill(-p.cmd.Process.Pid, syscall.SIGKILL)
+}
+func (p *ownedProcess) Wait() error { return p.cmd.Wait() }

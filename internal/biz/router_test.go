@@ -1,15 +1,19 @@
 package biz_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
+	caddycore "github.com/HanZephyr/TunnelBoard/internal/caddy"
 	"github.com/HanZephyr/TunnelBoard/internal/helper"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 	"github.com/HanZephyr/TunnelBoard/internal/route"
@@ -44,13 +48,18 @@ func (f *fakeHelperClient) EnsureInstalled() error {
 }
 
 type fakeCaddyAdapter struct {
+	mu          sync.Mutex
 	running     bool
 	diagnoseErr error
 	reloadErr   error
 	rootCA      []byte
 	rootCAErr   error
 	reloads     [][]byte
+	lastConfig  []byte
 	stopCalls   int
+	applyDelay  time.Duration
+	activeApply int
+	maxApply    int
 }
 
 func (f *fakeCaddyAdapter) DiagnosePort() error {
@@ -64,29 +73,53 @@ func (f *fakeCaddyAdapter) DiagnosePort() error {
 	}
 	return nil
 }
-func (f *fakeCaddyAdapter) Running() bool { return f.running }
-func (f *fakeCaddyAdapter) Reload(config []byte) error {
-	f.reloads = append(f.reloads, config)
-	if f.reloadErr != nil {
-		return f.reloadErr
+func (f *fakeCaddyAdapter) Status(context.Context) caddycore.Status {
+	lastError := ""
+	if f.diagnoseErr != nil {
+		lastError = f.diagnoseErr.Error()
 	}
-	f.running = true
-	return nil
+	return caddycore.Status{Owned: f.running, Ready: f.running, LastError: lastError}
 }
-func (f *fakeCaddyAdapter) Stop() error { f.stopCalls++; f.running = false; return nil }
+func (f *fakeCaddyAdapter) Apply(_ context.Context, _ string, config []byte) (caddycore.ApplyResult, error) {
+	f.mu.Lock()
+	f.activeApply++
+	if f.activeApply > f.maxApply {
+		f.maxApply = f.activeApply
+	}
+	delay := f.applyDelay
+	f.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	defer func() { f.mu.Lock(); f.activeApply--; f.mu.Unlock() }()
+	if f.reloadErr != nil {
+		return caddycore.ApplyResult{}, f.reloadErr
+	}
+	if !f.running && f.diagnoseErr != nil {
+		return caddycore.ApplyResult{Outcome: caddycore.OutcomePortConflict, Detail: f.diagnoseErr.Error()}, nil
+	}
+	if f.running && string(f.lastConfig) == string(config) {
+		return caddycore.ApplyResult{Outcome: caddycore.OutcomeUnchanged}, nil
+	}
+	f.reloads = append(f.reloads, config)
+	f.lastConfig = append([]byte(nil), config...)
+	f.running = true
+	return caddycore.ApplyResult{Outcome: caddycore.OutcomeApplied}, nil
+}
+func (f *fakeCaddyAdapter) Stop(context.Context) error { f.stopCalls++; f.running = false; return nil }
 func (f *fakeCaddyAdapter) RootCACert(time.Duration) ([]byte, error) {
 	return f.rootCA, f.rootCAErr
 }
 
 // routerFixture 组装共享同一 fakeStore 的 catalog 与 router。
 type routerFixture struct {
-	store      *fakeStore
-	catalog    *biz.CatalogBiz
-	router     *biz.RouterBiz
-	helper     *fakeHelperClient
-	caddy      *fakeCaddyAdapter
-	hosts      string
-	caddyJSON  string
+	store     *fakeStore
+	catalog   *biz.CatalogBiz
+	router    *biz.RouterBiz
+	helper    *fakeHelperClient
+	caddy     *fakeCaddyAdapter
+	hosts     string
+	caddyJSON string
 }
 
 func newRouterFixture(t *testing.T) *routerFixture {
@@ -333,7 +366,7 @@ func TestRouteStatusReflectsSystem(t *testing.T) {
 	}
 }
 
-// PreviewRoute 暴露确认项、端口冲突与 CA 信任需求。
+// PreviewRoute 保持纯读，只暴露确认项与 CA 信任需求；端口冲突由真实 Apply 分类。
 func TestPreviewRoute(t *testing.T) {
 	fx := newRouterFixture(t)
 	fw := fx.seedForward(t, "local", 8080)
@@ -350,8 +383,8 @@ func TestPreviewRoute(t *testing.T) {
 	if len(preview.RequiresConfirmation) != 1 || preview.RequiresConfirmation[0] != "grafana.example.com" {
 		t.Fatalf("RequiresConfirmation = %+v", preview.RequiresConfirmation)
 	}
-	if !preview.PortConflict {
-		t.Fatal("PortConflict should be true")
+	if preview.PortConflict {
+		t.Fatal("Preview must not bind-probe port 443")
 	}
 	if !preview.CATrustNeeded {
 		t.Fatal("CATrustNeeded should be true")
@@ -423,6 +456,7 @@ func TestApplyRouteSkipsReloadWhenConfigUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	fx.caddy.running = true
+	fx.caddy.lastConfig = append([]byte(nil), prevCfg...)
 	if _, err := fx.store.Update(func(d *model.VaultData) error {
 		d.Prefs.CATrustedSHA256 = "deadbeef"
 		return nil
@@ -557,4 +591,54 @@ func TestResumeCaddyTrustsCAOnlyWhenHelperReachable(t *testing.T) {
 			t.Fatal("pref should stay empty")
 		}
 	})
+}
+
+func TestRouteCoordinatorSerializesAndPersistsAppliedState(t *testing.T) {
+	fx := newRouterFixture(t)
+	fw := fx.seedForward(t, "local", 8080)
+	rt, err := fx.catalog.SaveWebRoute(model.WebRoute{ForwardID: fw.ID, Domain: "db.test", HostsEnabled: true, CaddyEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fx.caddy.rootCA = []byte("fake-der")
+	fx.caddy.applyDelay = 30 * time.Millisecond
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := fx.router.ApplyRoute(rt.ID, nil)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	fx.caddy.mu.Lock()
+	maxApply := fx.caddy.maxApply
+	fx.caddy.mu.Unlock()
+	if maxApply != 1 {
+		t.Fatalf("Caddy Apply concurrency = %d, want 1", maxApply)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(fx.caddyJSON), "state", "route-applied.json"))
+	if err != nil {
+		t.Fatalf("read applied state: %v", err)
+	}
+	var state biz.RouteAppliedState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != biz.RouteStatusApplied || state.AppliedDesiredRevision == "" || len(state.AppliedHosts) != 1 {
+		t.Fatalf("applied state = %+v", state)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(fx.caddyJSON), "state", "route-journal.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("completed transaction must clear journal, err=%v", err)
+	}
 }
