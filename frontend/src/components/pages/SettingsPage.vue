@@ -21,6 +21,9 @@ import {
 } from '../../../wailsjs/go/main/App'
 import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime'
 import { callBackend, errorMessage } from '../../utils/backend'
+import { ensureLocaleMessages } from '../../i18n'
+import BaseDialog from '../common/BaseDialog.vue'
+import { DEFAULT_RELEASES_PAGE_URL, officialReleaseUrl } from '../../modules/releaseUrl'
 
 const props = defineProps({
   theme: {
@@ -30,17 +33,19 @@ const props = defineProps({
   appMeta: {
     type: Object,
     required: true
-  }
+  },
+  configurationLocked: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['theme-change', 'notify', 'vault-changed'])
+const emit = defineEmits(['theme-change', 'notify', 'vault-changed', 'update-outcome'])
 
-const { t, locale } = useI18n()
+const i18n = useI18n()
+const { t, locale } = i18n
 
-const DEFAULT_RELEASES_PAGE_URL = 'https://github.com/HanZephyr/TunnelBoard/releases'
 const releasePageUrl = ref(DEFAULT_RELEASES_PAGE_URL)
 const autoRunEnabled = ref(false)
-const updateCheckEnabled = ref(true)
+const updateCheckEnabled = ref(false)
+const updatePreferencePhase = ref('loading')
 const configPath = ref('')
 const isCheckingUpdates = ref(false)
 const updateCheckDialog = reactive({
@@ -58,9 +63,12 @@ onMounted(async () => {
     autoRunEnabled.value = false
   }
   try {
-    updateCheckEnabled.value = await callBackend(GetUpdateCheckEnabled)
-  } catch (_) {
-    updateCheckEnabled.value = true
+    updateCheckEnabled.value = (await callBackend(GetUpdateCheckEnabled)) === true
+    updatePreferencePhase.value = 'ready'
+  } catch (error) {
+    updateCheckEnabled.value = false
+    updatePreferencePhase.value = 'error'
+    emit('notify', errorMessage(error))
   }
   try {
     configPath.value = await callBackend(GetConfigPath)
@@ -70,6 +78,8 @@ onMounted(async () => {
 })
 
 async function onUpdateCheckChange(event) {
+  if (props.configurationLocked) return
+  if (updatePreferencePhase.value !== 'ready') return
   const previous = updateCheckEnabled.value
   const enabled = !!event.target.checked
   updateCheckEnabled.value = enabled
@@ -82,6 +92,7 @@ async function onUpdateCheckChange(event) {
 }
 
 async function onAutoRunChange(event) {
+  if (props.configurationLocked) return
   const previous = autoRunEnabled.value
   const enabled = !!event.target.checked
   autoRunEnabled.value = enabled
@@ -94,7 +105,15 @@ async function onAutoRunChange(event) {
 }
 
 async function onLocaleChange(event) {
+  if (props.configurationLocked) return
   const newLocale = event.target.value
+  try {
+    await ensureLocaleMessages(i18n, newLocale)
+  } catch (error) {
+    event.target.value = locale.value
+    emit('notify', errorMessage(error))
+    return
+  }
   locale.value = newLocale
   if (typeof window !== 'undefined') {
     window.localStorage.setItem('tunnelboard.locale', newLocale)
@@ -139,15 +158,17 @@ async function checkForUpdates() {
       updateCheckDialog.releaseNotes = ''
       updateCheckDialog.message = ''
       updateCheckDialog.visible = true
+      emit('update-outcome', { status: 'up_to_date' })
       return
     }
 
-    releasePageUrl.value = String(result.releasePageUrl || DEFAULT_RELEASES_PAGE_URL).trim() || DEFAULT_RELEASES_PAGE_URL
+    releasePageUrl.value = officialReleaseUrl(result.releasePageUrl)
     updateCheckDialog.mode = 'updateAvailable'
     updateCheckDialog.latestVersion = String(result.latestVersion || '').trim()
     updateCheckDialog.releaseNotes = String(result.releaseNotes || '').trim()
     updateCheckDialog.message = ''
     updateCheckDialog.visible = true
+    emit('update-outcome', { status: 'available', latestVersion: updateCheckDialog.latestVersion, releaseNotes: updateCheckDialog.releaseNotes, releasePageUrl: releasePageUrl.value })
   } catch (err) {
     releasePageUrl.value = DEFAULT_RELEASES_PAGE_URL
     updateCheckDialog.mode = 'error'
@@ -155,6 +176,7 @@ async function checkForUpdates() {
     updateCheckDialog.releaseNotes = ''
     updateCheckDialog.message = errorMessage(err, 'Failed to check updates from GitHub Releases API.')
     updateCheckDialog.visible = true
+    emit('update-outcome', { status: 'failed', message: updateCheckDialog.message })
   } finally {
     isCheckingUpdates.value = false
   }
@@ -290,6 +312,7 @@ async function onPreviewImport() {
 }
 
 async function onApplyImport() {
+  if (props.configurationLocked) return
   if (isImporting.value || !importState.preview) return
   const folderName = importState.folderName.trim()
   if (!folderName) return
@@ -330,6 +353,7 @@ async function onApplyImport() {
 }
 
 async function onSaveImportKeyFile(keyPath) {
+  if (props.configurationLocked) return
   if (!keyPath) return
   try {
     // 保存对话框的关闭即反馈；用户取消时后端同样返回成功，故此处静默。
@@ -351,6 +375,7 @@ async function onSelectRestoreFile() {
 }
 
 async function onRestoreBackup() {
+  if (props.configurationLocked) return
   if (isRestoring.value || !canRestore.value) return
   isRestoring.value = true
   try {
@@ -390,7 +415,7 @@ async function onRestoreBackup() {
               <div class="config-desc">{{ t('settings.languageDesc') }}</div>
             </div>
             <div>
-              <select class="form-select form-select-sm" :value="locale" @change="onLocaleChange">
+              <select class="form-select form-select-sm" :value="locale" :disabled="configurationLocked" @change="onLocaleChange">
                 <option value="en">English</option>
                 <option value="zh-CN">简体中文</option>
                 <option value="zh-TW">繁體中文（台灣）</option>
@@ -427,6 +452,7 @@ async function onRestoreBackup() {
                 class="form-check-input"
                 type="checkbox"
                 :checked="autoRunEnabled"
+                :disabled="configurationLocked"
                 @change="onAutoRunChange"
               />
             </div>
@@ -452,6 +478,7 @@ async function onRestoreBackup() {
                 type="checkbox"
                 role="switch"
                 :checked="updateCheckEnabled"
+                :disabled="configurationLocked || updatePreferencePhase !== 'ready'"
                 @change="onUpdateCheckChange"
               />
             </div>
@@ -666,7 +693,7 @@ async function onRestoreBackup() {
               <button
                 type="button"
                 class="btn btn-sm btn-primary"
-                :disabled="!importState.folderName.trim() || isImporting"
+                :disabled="configurationLocked || !importState.folderName.trim() || isImporting"
                 @click="onApplyImport"
               >
                 {{ isImporting ? t('settings.backup.importing') : t('settings.backup.importButton') }}
@@ -727,7 +754,7 @@ async function onRestoreBackup() {
             <button
               type="button"
               class="btn btn-sm btn-danger mt-2"
-              :disabled="!canRestore || isRestoring"
+              :disabled="configurationLocked || !canRestore || isRestoring"
               @click="onRestoreBackup"
             >
               {{ isRestoring ? t('settings.backup.restoring') : t('settings.backup.restoreButton') }}
@@ -738,26 +765,7 @@ async function onRestoreBackup() {
     </div>
   </section>
 
-  <div
-    v-if="updateCheckDialog.visible"
-    class="modal fade show"
-    style="display: block"
-    tabindex="-1"
-    aria-modal="true"
-    role="dialog"
-  >
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content compact-dialog update-check-dialog-content">
-        <div class="modal-header dialog-head">
-          <h3 class="modal-title dialog-title">{{ t('settings.updateResultTitle') }}</h3>
-          <button
-            type="button"
-            class="btn-close"
-            :aria-label="t('app.common.close')"
-            @click="closeUpdateCheckDialog"
-          />
-        </div>
-        <div class="modal-body dialog-body">
+  <BaseDialog :visible="updateCheckDialog.visible" :title="t('settings.updateResultTitle')" :busy="isCheckingUpdates" class="update-check-dialog-content" @close="closeUpdateCheckDialog">
           <p v-if="updateCheckDialog.mode === 'upToDate'" class="mb-0 update-check-dialog-text">
             {{ t('settings.noUpdatesAvailable') }}
           </p>
@@ -771,9 +779,7 @@ async function onRestoreBackup() {
             </div>
           </template>
           <p v-else class="mb-0 update-check-dialog-text">{{ updateCheckDialog.message }}</p>
-        </div>
-        <div class="modal-footer dialog-actions">
-          <div class="dialog-right-actions">
+    <template #footer>
             <button
               v-if="updateCheckDialog.mode === 'updateAvailable'"
               type="button"
@@ -789,10 +795,6 @@ async function onRestoreBackup() {
             >
               {{ t('app.common.close') }}
             </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-  <div v-if="updateCheckDialog.visible" class="modal-backdrop fade show" />
+    </template>
+  </BaseDialog>
 </template>
