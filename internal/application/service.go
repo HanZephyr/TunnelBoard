@@ -22,9 +22,22 @@ import (
 )
 
 var (
-	ErrMaintenance      = errors.New("application: maintenance in progress")
-	ErrRevisionConflict = errors.New("application: revision conflict")
+	ErrMaintenance       = errors.New("application: maintenance in progress")
+	ErrRevisionConflict  = errors.New("application: revision conflict")
+	ErrCommandIDConflict = errors.New("application: command id conflict")
 )
+
+type CommandIDConflictError struct {
+	CommandID          string
+	ExistingOperation  string
+	RequestedOperation string
+}
+
+func (e *CommandIDConflictError) Error() string {
+	return fmt.Sprintf("%v: commandId=%q existing=%s requested=%s", ErrCommandIDConflict, e.CommandID, e.ExistingOperation, e.RequestedOperation)
+}
+
+func (e *CommandIDConflictError) Unwrap() error { return ErrCommandIDConflict }
 
 type RuntimePort interface {
 	Snapshot() ([]biz.RuntimeStatus, error)
@@ -57,14 +70,15 @@ type RecoveryPort interface {
 }
 
 type Dependencies struct {
-	Store    biz.VaultStore
-	Catalog  *biz.CatalogBiz
-	Runtime  RuntimePort
-	Routes   RoutePort
-	Restore  RestorePort
-	Recovery RecoveryPort
-	Backup   *biz.BackupBiz
-	Packages biz.BackupPackage
+	Store        biz.VaultStore
+	Catalog      *biz.CatalogBiz
+	Runtime      RuntimePort
+	Routes       RoutePort
+	Restore      RestorePort
+	Recovery     RecoveryPort
+	Backup       *biz.BackupBiz
+	Packages     biz.BackupPackage
+	CommandCache CommandCacheOptions
 }
 
 type Service struct {
@@ -81,10 +95,11 @@ type Service struct {
 	importStage *stagedImport
 	maintenance atomic.Bool
 	sequence    atomic.Uint64
+	commands    *recentCommandCache
 }
 
 func NewService(deps Dependencies) *Service {
-	return &Service{store: deps.Store, catalog: deps.Catalog, runtime: deps.Runtime, routes: deps.Routes, restore: deps.Restore, recovery: deps.Recovery, backup: deps.Backup, packages: deps.Packages}
+	return &Service{store: deps.Store, catalog: deps.Catalog, runtime: deps.Runtime, routes: deps.Routes, restore: deps.Restore, recovery: deps.Recovery, backup: deps.Backup, packages: deps.Packages, commands: newRecentCommandCache(deps.CommandCache)}
 }
 
 // LegacyMutation 仅供 app.go 迁移期兼容绑定使用，使旧调用也服从 maintenance gate。
@@ -178,6 +193,9 @@ func (s *Service) GetSnapshot(ctx context.Context) (AppSnapshot, error) {
 }
 
 func (s *Service) SaveSSHHost(ctx context.Context, command SaveSSHHostCommand) (SaveSSHHostResult, error) {
+	if err := ctx.Err(); err != nil {
+		return SaveSSHHostResult{}, err
+	}
 	if s.maintenance.Load() {
 		return SaveSSHHostResult{}, ErrMaintenance
 	}
@@ -185,6 +203,13 @@ func (s *Service) SaveSSHHost(ctx context.Context, command SaveSSHHostCommand) (
 	defer s.mutation.Unlock()
 	if s.maintenance.Load() {
 		return SaveSSHHostResult{}, ErrMaintenance
+	}
+	cached, digest, ok, err := lookupCommandResult[SaveSSHHostResult](s.commands, command.Meta.CommandID, "save_ssh_host", command)
+	if err != nil {
+		return SaveSSHHostResult{}, err
+	}
+	if ok {
+		return cached, nil
 	}
 	data, err := s.store.Load()
 	if err != nil {
@@ -210,6 +235,9 @@ func (s *Service) SaveSSHHost(ctx context.Context, command SaveSSHHostCommand) (
 	if changed && len(result.RunningForwardIDs) != 0 && !command.ConfirmRestart {
 		result.RequiresRestart = true
 		result.AcceptedRevision = currentRevision
+		if err := storeCommandResult(s.commands, command.Meta.CommandID, "save_ssh_host", digest, result); err != nil {
+			return SaveSSHHostResult{}, err
+		}
 		return result, nil
 	}
 
@@ -245,6 +273,9 @@ func (s *Service) SaveSSHHost(ctx context.Context, command SaveSSHHostCommand) (
 	result.ConnectionChanged = changedAtCommit
 	result.AcceptedRevision = revisionOfCatalog(data)
 	result.EventSequence = s.sequence.Add(1)
+	if err := storeCommandResult(s.commands, command.Meta.CommandID, "save_ssh_host", digest, result); err != nil {
+		return SaveSSHHostResult{}, err
+	}
 	return result, nil
 }
 
@@ -257,6 +288,16 @@ func (s *Service) MoveForwards(ctx context.Context, command MoveForwardsCommand)
 	}
 	s.mutation.Lock()
 	defer s.mutation.Unlock()
+	if s.maintenance.Load() {
+		return MoveForwardsResult{}, ErrMaintenance
+	}
+	cached, digest, ok, err := lookupCommandResult[MoveForwardsResult](s.commands, command.Meta.CommandID, "move_forwards", command)
+	if err != nil {
+		return MoveForwardsResult{}, err
+	}
+	if ok {
+		return cached, nil
+	}
 	data, err := s.store.Load()
 	if err != nil {
 		return MoveForwardsResult{}, err
@@ -265,16 +306,26 @@ func (s *Service) MoveForwards(ctx context.Context, command MoveForwardsCommand)
 	if command.Meta.ExpectedRevision != "" && command.Meta.ExpectedRevision != current {
 		return MoveForwardsResult{}, fmt.Errorf("%w: current=%s", ErrRevisionConflict, current)
 	}
-	if err := s.catalog.MoveForwards(command.ForwardIDs, command.TargetFolderID); err != nil {
+	report, err := s.catalog.MoveForwards(command.ForwardIDs, command.TargetFolderID)
+	if err != nil {
 		return MoveForwardsResult{}, err
+	}
+	if len(report.ChangedIDs) == 0 {
+		result := MoveForwardsResult{ChangedIDs: report.ChangedIDs, UnchangedIDs: report.UnchangedIDs, AcceptedRevision: current, EventSequence: s.sequence.Load()}
+		if err := storeCommandResult(s.commands, command.Meta.CommandID, "move_forwards", digest, result); err != nil {
+			return MoveForwardsResult{}, err
+		}
+		return result, nil
 	}
 	data, err = s.store.Load()
 	if err != nil {
 		return MoveForwardsResult{}, err
 	}
-	ids := append([]int(nil), command.ForwardIDs...)
-	sort.Ints(ids)
-	return MoveForwardsResult{MovedIDs: ids, AcceptedRevision: revisionOfCatalog(data), EventSequence: s.sequence.Add(1)}, nil
+	result := MoveForwardsResult{ChangedIDs: report.ChangedIDs, UnchangedIDs: report.UnchangedIDs, AcceptedRevision: revisionOfCatalog(data), EventSequence: s.sequence.Add(1)}
+	if err := storeCommandResult(s.commands, command.Meta.CommandID, "move_forwards", digest, result); err != nil {
+		return MoveForwardsResult{}, err
+	}
+	return result, nil
 }
 
 func (s *Service) PreviewLocalListener(ctx context.Context, command PreviewLocalListenerCommand) LocalListenerPreview {

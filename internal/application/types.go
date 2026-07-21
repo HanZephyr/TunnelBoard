@@ -115,7 +115,8 @@ type MoveForwardsCommand struct {
 }
 
 type MoveForwardsResult struct {
-	MovedIDs         []int  `json:"movedIds"`
+	ChangedIDs       []int  `json:"changedIds"`
+	UnchangedIDs     []int  `json:"unchangedIds"`
 	AcceptedRevision string `json:"acceptedRevision"`
 	EventSequence    uint64 `json:"eventSequence"`
 }
