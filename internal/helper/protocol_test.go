@@ -67,6 +67,22 @@ func TestHandleRequestRejectsUnknownOp(t *testing.T) {
 	}
 }
 
+// 旧版机器级 CA 操作不再属于提权 Helper 白名单；即使请求形态仍能被旧调用方构造，
+// Helper 也必须拒绝且保持零副作用。
+func TestHandleRequestRejectsLegacyCAOperations(t *testing.T) {
+	for _, req := range []helper.Request{
+		{Op: "trust_local_ca"},
+		{Op: "untrust_local_ca"},
+	} {
+		env := newCountingEnvironment(t)
+		resp := helper.HandleRequest(req, env.environment())
+		if resp.OK || !strings.Contains(resp.Error, "unknown op") {
+			t.Fatalf("op %q: resp = %+v, want unknown-op rejection", req.Op, resp)
+		}
+		env.assertNoSideEffects(t)
+	}
+}
+
 // ping 返回注入的版本号，无其他副作用。
 func TestHandleRequestPingReturnsVersion(t *testing.T) {
 	env := newCountingEnvironment(t)
@@ -191,71 +207,6 @@ func TestHandleRequestHostsEntryLimit(t *testing.T) {
 	resp = helper.HandleRequest(helper.Request{Op: "apply_managed_hosts", Hosts: entries(256)}, env2.environment())
 	if !resp.OK {
 		t.Fatalf("256 entries: resp = %+v, want OK", resp)
-	}
-}
-
-// trust_local_ca：SHA-256 格式非法、DER 为空/超限、指纹不匹配、非自签 CA 均拒绝且零副作用。
-func TestHandleRequestTrustLocalCAValidation(t *testing.T) {
-	der := makeSelfSignedCA(t, "Caddy Local Authority - 2026 ECC Root")
-	goodSHA := sha256Hex(der)
-
-	cases := map[string]helper.Request{
-		"empty sha256":         {Op: "trust_local_ca", CertDER: der, CertSHA256: ""},
-		"short sha256":         {Op: "trust_local_ca", CertDER: der, CertSHA256: goodSHA[:63]},
-		"long sha256":          {Op: "trust_local_ca", CertDER: der, CertSHA256: goodSHA + "0"},
-		"uppercase sha256":     {Op: "trust_local_ca", CertDER: der, CertSHA256: strings.ToUpper(goodSHA)},
-		"non-hex sha256":       {Op: "trust_local_ca", CertDER: der, CertSHA256: strings.Repeat("z", 64)},
-		"empty DER":            {Op: "trust_local_ca", CertSHA256: goodSHA},
-		"oversized DER":        {Op: "trust_local_ca", CertDER: make([]byte, (16<<10)+1), CertSHA256: goodSHA},
-		"fingerprint mismatch": {Op: "trust_local_ca", CertDER: der, CertSHA256: strings.Repeat("0", 64)},
-		"corrupt DER":          {Op: "trust_local_ca", CertDER: []byte("junk"), CertSHA256: goodSHA},
-	}
-	for name, req := range cases {
-		t.Run(name, func(t *testing.T) {
-			env := newCountingEnvironment(t)
-			resp := helper.HandleRequest(req, env.environment())
-			if resp.OK || resp.Error == "" {
-				t.Fatalf("resp = %+v, want OK=false with error", resp)
-			}
-			env.assertNoSideEffects(t)
-		})
-	}
-}
-
-// 合法 trust 恰好调用注入的 TrustCA 一次。
-func TestHandleRequestTrustLocalCA(t *testing.T) {
-	der := makeSelfSignedCA(t, "TunnelBoard Local CA")
-	env := newCountingEnvironment(t)
-	resp := helper.HandleRequest(helper.Request{Op: "trust_local_ca", CertDER: der, CertSHA256: sha256Hex(der)}, env.environment())
-	if !resp.OK || env.trustCalls != 1 {
-		t.Fatalf("resp = %+v, trustCalls = %d, want OK with 1 call", resp, env.trustCalls)
-	}
-}
-
-// 注入实现返回错误时透传为失败响应。
-func TestHandleRequestTrustLocalCAPropagatesError(t *testing.T) {
-	der := makeSelfSignedCA(t, "TunnelBoard Local CA")
-	env := newCountingEnvironment(t)
-	env.trustErr = errors.New("certutil failed")
-	resp := helper.HandleRequest(helper.Request{Op: "trust_local_ca", CertDER: der, CertSHA256: sha256Hex(der)}, env.environment())
-	if resp.OK || !strings.Contains(resp.Error, "certutil failed") {
-		t.Fatalf("resp = %+v, want propagated error", resp)
-	}
-}
-
-// untrust_local_ca：SHA-256 非法拒绝且零副作用；合法时恰好调用 UntrustCA 一次。
-func TestHandleRequestUntrustLocalCA(t *testing.T) {
-	env := newCountingEnvironment(t)
-	resp := helper.HandleRequest(helper.Request{Op: "untrust_local_ca", CertSHA256: "ABC"}, env.environment())
-	if resp.OK {
-		t.Fatalf("invalid sha256: resp = %+v, want rejected", resp)
-	}
-	env.assertNoSideEffects(t)
-
-	env2 := newCountingEnvironment(t)
-	resp = helper.HandleRequest(helper.Request{Op: "untrust_local_ca", CertSHA256: strings.Repeat("a", 64)}, env2.environment())
-	if !resp.OK || env2.untrustCalls != 1 {
-		t.Fatalf("resp = %+v, untrustCalls = %d, want OK with 1 call", resp, env2.untrustCalls)
 	}
 }
 
