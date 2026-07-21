@@ -282,6 +282,74 @@ func (p *SSHConnPool) DialChain(hosts []model.SSHHost, verifier HostKeyVerifier)
 	return client, closeChain, shared, nil
 }
 
+// LeaseChain 是 Forward 运行路径使用的深 Interface；旧 DialChain 仅保留给兼容调用。
+func (p *SSHConnPool) LeaseChain(hosts []model.SSHHost, verifier HostKeyVerifier) (ChainLease, error) {
+	client, release, shared, err := p.DialChain(hosts, verifier)
+	if err != nil {
+		return nil, err
+	}
+	abort := release
+	if shared && len(hosts) > 0 {
+		abort = p.captureGenerationAbort(hosts[0])
+	}
+	lease := &chainLease{
+		terminal: client,
+		probe:    !shared || len(hosts) > 1,
+		interval: keepAliveInterval(hosts[len(hosts)-1]),
+		timeout:  keepAliveRequestTimeout(keepAliveInterval(hosts[len(hosts)-1])),
+		release:  release,
+		abort:    abort,
+	}
+	if len(hosts) > 1 && lease.interval <= 0 {
+		lease.interval = defaultPoolKeepAliveInterval
+		lease.timeout = keepAliveRequestTimeout(lease.interval)
+	}
+	lease.rebuild = func(ctx context.Context) (ChainLease, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		next, err := p.LeaseChain(hosts, verifier)
+		if err != nil {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			next.Release()
+			return nil, ctx.Err()
+		default:
+			return next, nil
+		}
+	}
+	return lease, nil
+}
+
+func (p *SSHConnPool) captureGenerationAbort(host model.SSHHost) func() {
+	identity := SSHConnectionIdentity(host)
+	p.mu.Lock()
+	entry := p.entries[host.ID][identity]
+	p.mu.Unlock()
+	if entry == nil {
+		return func() {}
+	}
+	entry.mu.Lock()
+	client, generation := entry.client, entry.generation
+	entry.mu.Unlock()
+	return func() {
+		entry.mu.Lock()
+		same := entry.client == client && entry.generation == generation
+		closeAll := entry.closeAll
+		if same {
+			entry.dead = true
+		}
+		entry.mu.Unlock()
+		if same && closeAll != nil {
+			closeAll()
+		}
+	}
+}
+
 // CloseAll 关闭全部池化连接（应用 Shutdown 用）；条目标记 dead，
 // 之后的 acquire 会按单飞逻辑重拨。
 func (p *SSHConnPool) CloseAll() {

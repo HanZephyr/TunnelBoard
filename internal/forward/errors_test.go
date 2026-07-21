@@ -1,6 +1,7 @@
 package forward
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -70,7 +71,14 @@ func newReconnectTestForward() *LocalForward {
 	)
 	// reconnectWithBackoff 以 keepStop 为停止信号；未 Start 的实例需要手动补一个。
 	lf.keepStop = make(chan struct{})
+	lf.runCtx = context.Background()
 	return lf
+}
+
+func reconnectSeed(lf *LocalForward) ChainLease {
+	return &chainLease{rebuild: func(ctx context.Context) (ChainLease, error) {
+		return defaultChainDialer(lf.hosts, lf.verifier)
+	}}
 }
 
 // 终态错误：第一次拨号失败即返回，错误原样上抛（errors.Is 命中），不进退避循环。
@@ -84,7 +92,7 @@ func TestReconnectWithBackoff_TerminalErrorAbortsImmediately(t *testing.T) {
 
 	lf := newReconnectTestForward()
 	start := time.Now()
-	client, closeFn, shared, err := lf.reconnectWithBackoff()
+	lease, err := lf.reconnectWithBackoff(reconnectSeed(lf))
 	elapsed := time.Since(start)
 
 	if !errors.Is(err, ErrHostKeyRejected) {
@@ -93,11 +101,8 @@ func TestReconnectWithBackoff_TerminalErrorAbortsImmediately(t *testing.T) {
 	if !errors.Is(err, termErr) {
 		t.Fatalf("err = %v, want errors.Is original terminal error", err)
 	}
-	if client != nil || closeFn != nil {
-		t.Fatalf("client/closeFn should be nil on terminal error")
-	}
-	if shared {
-		t.Fatalf("shared = true, want false (default dialer never shares)")
+	if lease != nil {
+		t.Fatalf("lease should be nil on terminal error")
 	}
 	if calls != 1 {
 		t.Fatalf("dial calls = %d, want 1 (no retry after terminal error)", calls)
@@ -121,16 +126,14 @@ func TestReconnectWithBackoff_NonTerminalErrorRetries(t *testing.T) {
 	})
 
 	lf := newReconnectTestForward()
-	client, closeFn, shared, err := lf.reconnectWithBackoff()
+	lease, err := lf.reconnectWithBackoff(reconnectSeed(lf))
 	if err != nil {
 		t.Fatalf("err = %v, want nil (retry should eventually succeed)", err)
 	}
-	if client == nil || closeFn == nil {
-		t.Fatalf("client/closeFn should be non-nil after successful retry")
+	if lease == nil || lease.Terminal() == nil {
+		t.Fatalf("lease/terminal should be non-nil after successful retry")
 	}
-	if shared {
-		t.Fatalf("shared = true, want false (default dialer never shares)")
-	}
+	lease.Release()
 	if calls != 2 {
 		t.Fatalf("dial calls = %d, want 2 (first fails, retry succeeds)", calls)
 	}
