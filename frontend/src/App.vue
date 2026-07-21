@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue'
+import { computed, defineAsyncComponent, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ApplyTrayLocale,
@@ -14,12 +14,19 @@ import { callBackend } from './utils/backend'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppTopHeader from './components/layout/AppTopHeader.vue'
 import OverviewPage from './components/pages/OverviewPage.vue'
-import ForwardsPage from './components/pages/ForwardsPage.vue'
-import HostsPage from './components/pages/HostsPage.vue'
-import LogsPage from './components/pages/LogsPage.vue'
-import RoutesPage from './components/pages/RoutesPage.vue'
-import SettingsPage from './components/pages/SettingsPage.vue'
+import BaseDialog from './components/common/BaseDialog.vue'
+import { createAppSnapshotStore } from './stores/appSnapshotStore'
+import { createUpdatePreferenceStore } from './stores/updatePreferenceStore'
+import { createUpdateNoticeStore } from './stores/updateNoticeStore'
+import { DEFAULT_RELEASES_PAGE_URL, officialReleaseUrl } from './modules/releaseUrl'
+import { createApplicationClient } from './utils/applicationClient'
 import './styles/app-shell.css'
+
+const ForwardsPage = defineAsyncComponent(() => import('./components/pages/ForwardsPage.vue'))
+const HostsPage = defineAsyncComponent(() => import('./components/pages/HostsPage.vue'))
+const LogsPage = defineAsyncComponent(() => import('./components/pages/LogsPage.vue'))
+const RoutesPage = defineAsyncComponent(() => import('./components/pages/RoutesPage.vue'))
+const SettingsPage = defineAsyncComponent(() => import('./components/pages/SettingsPage.vue'))
 
 const { t, locale } = useI18n()
 
@@ -41,9 +48,12 @@ const activePage = ref('overview')
 const appMeta = reactive({
   version: '0.0.0'
 })
-const DEFAULT_RELEASES_PAGE_URL = 'https://github.com/HanZephyr/TunnelBoard/releases'
 const releasePageUrl = ref(DEFAULT_RELEASES_PAGE_URL)
 const hasNewVersion = ref(false)
+const updateDetailsVisible = ref(false)
+const updateNotice = createUpdateNoticeStore()
+const updatePreference = createUpdatePreferenceStore()
+const application = createApplicationClient()
 
 const currentPage = computed(() => pages.value.find((page) => page.key === activePage.value))
 
@@ -83,19 +93,30 @@ const folders = ref([])
 const sshHosts = ref([])
 const forwards = ref([])
 const webRoutes = ref([])
+const snapshotStore = createAppSnapshotStore()
+const snapshotPhase = ref('loading')
+const snapshotError = ref('')
+const hasSnapshot = ref(false)
 
 async function loadVault() {
-  try {
-    const data = await callBackend(GetVaultData)
+  await snapshotStore.refresh(async () => {
+    const raw = await application.getSnapshot(() => callBackend(GetVaultData))
+    const catalog = raw?.catalog || raw?.Catalog || raw
+    return {
+      ...catalog,
+      vaultRevision: raw?.revisions?.vault || raw?.Revisions?.Vault || raw?.vaultRevision || 0,
+      routeStatuses: raw?.routes?.items || raw?.Routes?.Items || raw?.routeStatuses || []
+    }
+  })
+  snapshotPhase.value = snapshotStore.state.phase
+  snapshotError.value = snapshotStore.state.error
+  const data = snapshotStore.state.snapshot
+  hasSnapshot.value = data !== null
+  if (data) {
     folders.value = Array.isArray(data?.folders) ? data.folders : []
     sshHosts.value = Array.isArray(data?.sshHosts) ? data.sshHosts : []
     forwards.value = Array.isArray(data?.forwards) ? data.forwards : []
     webRoutes.value = Array.isArray(data?.webRoutes) ? data.webRoutes : []
-  } catch (_) {
-    folders.value = []
-    sshHosts.value = []
-    forwards.value = []
-    webRoutes.value = []
   }
 }
 
@@ -148,15 +169,24 @@ function openReleasePage() {
   openExternalUrl(releasePageUrl.value || DEFAULT_RELEASES_PAGE_URL)
 }
 
+function onUpdateOutcome(outcome) {
+  updateNotice.accept(outcome)
+  if (updateNotice.state.status === 'available') {
+    hasNewVersion.value = true
+    releasePageUrl.value = officialReleaseUrl(updateNotice.state.releasePageUrl)
+  }
+}
+
 async function checkForUpdatesSilently() {
   try {
     const result = await callBackend(CheckForUpdatesAPI, appMeta.version)
     if (result?.hasUpdate) {
       hasNewVersion.value = true
-      releasePageUrl.value = String(result.releasePageUrl || DEFAULT_RELEASES_PAGE_URL).trim() || DEFAULT_RELEASES_PAGE_URL
+      releasePageUrl.value = officialReleaseUrl(result.releasePageUrl)
+      updateNotice.accept({ status: 'available', latestVersion: result.latestVersion, releaseNotes: result.releaseNotes, releasePageUrl: releasePageUrl.value })
     }
-  } catch (_) {
-    // silent check, ignore errors
+  } catch (error) {
+    updateNotice.accept({ status: 'failed', message: String(error) })
   }
 }
 
@@ -194,13 +224,8 @@ onMounted(async () => {
   } catch (_) {
     /* locale persist is best-effort */
   }
-  let updateCheckEnabled = true
-  try {
-    updateCheckEnabled = await callBackend(GetUpdateCheckEnabled)
-  } catch (_) {
-    /* default to checking when the preference cannot be loaded */
-  }
-  if (updateCheckEnabled) {
+  await updatePreference.load(() => callBackend(GetUpdateCheckEnabled))
+  if (updatePreference.shouldAutoCheck()) {
     void checkForUpdatesSilently()
   }
 })
@@ -222,7 +247,7 @@ onBeforeUnmount(() => {
       :has-new-version="hasNewVersion"
       :collapsed="sidebarCollapsed"
       @switch-page="switchPage"
-      @open-release-page="openReleasePage"
+      @open-update-details="updateDetailsVisible = true"
       @toggle-collapse="toggleSidebar"
     />
 
@@ -236,8 +261,17 @@ onBeforeUnmount(() => {
       />
 
       <main class="page-body">
+        <div v-if="snapshotPhase === 'loading'" class="alert alert-info" role="status">{{ $t('app.snapshot.loading') }}</div>
+        <div v-else-if="snapshotPhase === 'error'" class="alert alert-danger" role="alert">
+          {{ $t('app.snapshot.loadFailed') }}：{{ snapshotError }}
+          <button type="button" class="btn btn-sm btn-outline-danger ms-2" @click="loadVault">{{ $t('app.snapshot.retry') }}</button>
+        </div>
+        <div v-else-if="snapshotPhase === 'stale'" class="alert alert-warning" role="alert">
+          {{ $t('app.snapshot.stale') }}
+          <button type="button" class="btn btn-sm btn-outline-warning ms-2" @click="loadVault">{{ $t('app.snapshot.retry') }}</button>
+        </div>
         <OverviewPage
-          v-if="activePage === 'overview'"
+          v-if="activePage === 'overview' && snapshotPhase !== 'loading' && snapshotPhase !== 'error'"
           :folders="folders"
           :ssh-hosts="sshHosts"
           :forwards="forwards"
@@ -247,29 +281,32 @@ onBeforeUnmount(() => {
         />
 
         <ForwardsPage
-          v-if="activePage === 'forwards'"
+          v-if="activePage === 'forwards' && hasSnapshot"
           ref="forwardsPageRef"
           :folders="folders"
           :ssh-hosts="sshHosts"
           :forwards="forwards"
+          :configuration-locked="snapshotPhase !== 'ready'"
           @vault-changed="loadVault"
           @notify="notify"
         />
 
         <HostsPage
-          v-if="activePage === 'hosts'"
+          v-if="activePage === 'hosts' && hasSnapshot"
           ref="hostsPageRef"
           :ssh-hosts="sshHosts"
           :forwards="forwards"
+          :configuration-locked="snapshotPhase !== 'ready'"
           @vault-changed="loadVault"
           @notify="notify"
         />
 
         <RoutesPage
-          v-if="activePage === 'routes'"
+          v-if="activePage === 'routes' && hasSnapshot"
           ref="routesPageRef"
           :forwards="forwards"
           :web-routes="webRoutes"
+          :configuration-locked="snapshotPhase !== 'ready'"
           @vault-changed="loadVault"
           @notify="notify"
         />
@@ -280,11 +317,22 @@ onBeforeUnmount(() => {
           v-if="activePage === 'settings'"
           :theme="theme"
           :app-meta="appMeta"
+          :configuration-locked="snapshotPhase !== 'ready'"
           @theme-change="setThemeBySwitch"
           @vault-changed="loadVault"
           @notify="notify"
+          @update-outcome="onUpdateOutcome"
         />
       </main>
+
+      <BaseDialog :visible="updateDetailsVisible" :title="$t('app.update.available')" @close="updateDetailsVisible = false">
+        <p>{{ $t('app.update.latestVersion', { version: updateNotice.state.latestVersion }) }}</p>
+        <p v-if="updateNotice.state.releaseNotes" class="update-release-notes-content">{{ updateNotice.state.releaseNotes }}</p>
+        <template #footer>
+          <button type="button" class="btn btn-outline-secondary" data-dialog-initial-focus @click="updateDetailsVisible = false">{{ $t('app.common.close') }}</button>
+          <button type="button" class="btn btn-primary" @click="openReleasePage">{{ $t('app.update.openRelease') }}</button>
+        </template>
+      </BaseDialog>
 
       <div v-if="showToast && toastMessage" class="toast-container position-absolute bottom-0 start-50 translate-middle-x p-3 toast-config-container">
         <div class="toast show align-items-center text-bg-dark border-0 toast-config-item" role="alert" aria-live="assertive" aria-atomic="true">
