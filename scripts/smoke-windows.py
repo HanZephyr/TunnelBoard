@@ -6,7 +6,7 @@
 curl 经系统信任库访问 https://<smoke 域名> → 全量清理（撤 hosts / 停 Caddy / 撤 CA）。
 
 用法：uv run scripts/smoke-windows.py
-前置：先执行 uv run scripts/package-windows.py 产出 build/bin。
+前置：先执行 uv run scripts/package-windows.py 产出 Windows bundle。
 """
 import http.server
 import os
@@ -15,13 +15,13 @@ import subprocess
 import sys
 import tempfile
 import threading
+import zipfile
 from functools import partial
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-BIN = ROOT / "build" / "bin"
 GO = r"C:\Program Files\Go\bin\go.exe"
-SELFCHECK = BIN / "selfcheck.exe"
+SELFCHECK: Path | None = None
 DOMAIN = "tunnelboard-smoke.test"
 UPSTREAM_PORT = 18099
 HOSTS = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "drivers" / "etc" / "hosts"
@@ -42,7 +42,27 @@ def run(cmd: list[str], check: bool = True, capture: bool = False, cwd: Path | N
 
 
 def selfcheck(*args: str) -> subprocess.CompletedProcess:
+    if SELFCHECK is None:
+        raise RuntimeError("selfcheck 尚未初始化")
     return run([SELFCHECK, *args], capture=True)
+
+
+def extract_latest_bundle(destination: Path) -> Path:
+    out = ROOT / "build" / "release" / "windows-amd64" / "out"
+    bundles = sorted(out.glob("*.bundle.zip"), key=lambda path: path.stat().st_mtime, reverse=True)
+    if not bundles:
+        sys.exit("缺少 Windows bundle，请先运行 uv run scripts/package-windows.py")
+    with zipfile.ZipFile(bundles[0]) as archive:
+        archive.extractall(destination)
+    manifests = list(destination.glob("*/manifest.json"))
+    if len(manifests) != 1:
+        sys.exit(f"Windows bundle 顶层结构无效：应有一个 manifest.json，实际 {len(manifests)} 个")
+    bundle_root = manifests[0].parent
+    required = [bundle_root / "TunnelBoard.exe", bundle_root / "tunnelboard-helper.exe", bundle_root / "caddy" / "caddy.exe"]
+    missing = [str(path.relative_to(bundle_root)) for path in required if not path.is_file()]
+    if missing:
+        sys.exit(f"Windows bundle 缺少必需文件：{', '.join(missing)}")
+    return bundle_root
 
 
 def start_upstream(docroot: Path) -> http.server.ThreadingHTTPServer:
@@ -53,14 +73,16 @@ def start_upstream(docroot: Path) -> http.server.ThreadingHTTPServer:
 
 
 def main() -> int:
-    if not (BIN / "tunnelboard.exe").exists() or not (BIN / "tunnelboard-helper.exe").exists():
-        sys.exit("缺少打包产物，请先运行 uv run scripts/package-windows.py")
-
+    global SELFCHECK
+    bundle_temp = Path(tempfile.mkdtemp(prefix="tb-smoke-bundle-"))
+    bundle_root = extract_latest_bundle(bundle_temp)
+    SELFCHECK = bundle_root / "selfcheck.exe"
     run([GO, "build", "-o", str(SELFCHECK), "./cmd/selfcheck"], cwd=ROOT)
+    os.environ["TUNNELBOARD_HELPER_PATH"] = str(bundle_root / "tunnelboard-helper.exe")
+    os.environ["TUNNELBOARD_CADDY_PATH"] = str(bundle_root / "caddy" / "caddy.exe")
     docroot = Path(tempfile.mkdtemp(prefix="tb-smoke-"))
     (docroot / "index.html").write_text(SMOKE_TEXT, encoding="utf-8")
     datadir = Path(tempfile.mkdtemp(prefix="tb-smoke-caddy-"))
-    os.environ["TUNNELBOARD_CADDY_PATH"] = str(ROOT / "build" / "caddy" / "caddy.exe")
 
     steps = []
     server = None
@@ -96,6 +118,7 @@ def main() -> int:
             subprocess.run([str(SELFCHECK), *args], capture_output=True)
         shutil.rmtree(docroot, ignore_errors=True)
         shutil.rmtree(datadir, ignore_errors=True)
+        shutil.rmtree(bundle_temp, ignore_errors=True)
         if server is not None:
             server.shutdown()
 
