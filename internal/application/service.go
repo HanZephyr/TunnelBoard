@@ -282,6 +282,17 @@ func (s *Service) PreviewSSHHostChange(ctx context.Context, command SaveSSHHostC
 }
 
 func (s *Service) CommitSSHHostChange(ctx context.Context, command CommitSSHHostChangeCommand) (CommitSSHHostChangeResult, error) {
+	if err := ctx.Err(); err != nil {
+		return CommitSSHHostChangeResult{}, err
+	}
+	if s.maintenance.Load() {
+		return CommitSSHHostChangeResult{}, ErrMaintenance
+	}
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
+	if s.maintenance.Load() {
+		return CommitSSHHostChangeResult{}, ErrMaintenance
+	}
 	cached, digest, ok, err := lookupCommandResult[CommitSSHHostChangeResult](s.commands, command.Meta.CommandID, "commit_ssh_host_change", command)
 	if err != nil {
 		return CommitSSHHostChangeResult{}, err
@@ -289,7 +300,7 @@ func (s *Service) CommitSSHHostChange(ctx context.Context, command CommitSSHHost
 	if ok {
 		return cached, nil
 	}
-	result, err := s.commitSSHHostChangeOnce(ctx, command.Token)
+	result, err := s.commitSSHHostChangeOnceLocked(ctx, command.Token)
 	if err == nil {
 		if cacheErr := storeCommandResult(s.commands, command.Meta.CommandID, "commit_ssh_host_change", digest, result); cacheErr != nil {
 			return CommitSSHHostChangeResult{}, cacheErr
@@ -298,7 +309,7 @@ func (s *Service) CommitSSHHostChange(ctx context.Context, command CommitSSHHost
 	return result, err
 }
 
-func (s *Service) commitSSHHostChangeOnce(ctx context.Context, token string) (CommitSSHHostChangeResult, error) {
+func (s *Service) commitSSHHostChangeOnceLocked(ctx context.Context, token string) (CommitSSHHostChangeResult, error) {
 	if err := ctx.Err(); err != nil {
 		return CommitSSHHostChangeResult{}, err
 	}
@@ -308,14 +319,6 @@ func (s *Service) commitSSHHostChangeOnce(ctx context.Context, token string) (Co
 	s.hostChangeMu.Unlock()
 	if !ok || token == "" || !stage.expiresAt.After(time.Now().UTC()) {
 		return CommitSSHHostChangeResult{}, ErrSSHHostChangeToken
-	}
-	if s.maintenance.Load() {
-		return CommitSSHHostChangeResult{}, ErrMaintenance
-	}
-	s.mutation.Lock()
-	defer s.mutation.Unlock()
-	if s.maintenance.Load() {
-		return CommitSSHHostChangeResult{}, ErrMaintenance
 	}
 	data, err := s.store.Load()
 	if err != nil {
@@ -582,17 +585,24 @@ func (s *Service) CommitRouteChange(ctx context.Context, command CommitRouteChan
 	if s.maintenance.Load() {
 		return RouteCommandResult{}, ErrMaintenance
 	}
+	cached, digest, ok, err := lookupCommandResult[RouteCommandResult](s.commands, command.Meta.CommandID, "commit_route_change", command)
+	if err != nil {
+		return RouteCommandResult{}, err
+	}
+	if ok {
+		return cached, nil
+	}
 	s.routeStageMu.Lock()
 	stage, ok := s.routeStages[command.Token]
 	s.routeStageMu.Unlock()
 	if !ok || strings.TrimSpace(command.Token) == "" || time.Now().After(stage.expiresAt) {
-		return rejectedRouteResult("invalid_or_expired_token", "route preview token is invalid or expired"), nil
+		return s.cacheRouteCommandResult(command, digest, rejectedRouteResult("invalid_or_expired_token", "route preview token is invalid or expired"))
 	}
 	if !containsAllDomains(command.ConfirmedDomains, stage.requiredDomains) {
-		return rejectedRouteResult("confirmation_required", "domain override confirmation is required"), nil
+		return s.cacheRouteCommandResult(command, digest, rejectedRouteResult("confirmation_required", "domain override confirmation is required"))
 	}
 	if stage.caTrustNeeded && !command.ConfirmCATrust {
-		return rejectedRouteResult("ca_confirmation_required", "current-user CA trust confirmation is required"), nil
+		return s.cacheRouteCommandResult(command, digest, rejectedRouteResult("ca_confirmation_required", "current-user CA trust confirmation is required"))
 	}
 	data, err := s.store.Load()
 	if err != nil {
@@ -600,7 +610,7 @@ func (s *Service) CommitRouteChange(ctx context.Context, command CommitRouteChan
 	}
 	if revisionOfCatalog(data) != stage.desiredRevision {
 		s.deleteRouteStage(command.Token)
-		return rejectedRouteResult("stale_revision", "route preview is stale"), nil
+		return s.cacheRouteCommandResult(command, digest, rejectedRouteResult("stale_revision", "route preview is stale"))
 	}
 	applied, err := s.routes.AppliedState()
 	if err != nil {
@@ -608,7 +618,7 @@ func (s *Service) CommitRouteChange(ctx context.Context, command CommitRouteChan
 	}
 	if applied.AppliedDesiredRevision != stage.appliedRevision {
 		s.deleteRouteStage(command.Token)
-		return rejectedRouteResult("stale_applied_revision", "applied route state changed after preview"), nil
+		return s.cacheRouteCommandResult(command, digest, rejectedRouteResult("stale_applied_revision", "applied route state changed after preview"))
 	}
 
 	var savedRoute *model.WebRoute
@@ -629,7 +639,7 @@ func (s *Service) CommitRouteChange(ctx context.Context, command CommitRouteChan
 		if errors.Is(err, ErrRevisionConflict) {
 			code = "stale_revision"
 		}
-		return RouteCommandResult{Outcome: RouteOutcomeRejected, Error: &AppErrorView{Code: code, Message: err.Error()}}, nil
+		return s.cacheRouteCommandResult(command, digest, RouteCommandResult{Outcome: RouteOutcomeRejected, Error: &AppErrorView{Code: code, Message: err.Error()}})
 	}
 	s.deleteRouteStage(command.Token)
 	acceptedRevision := revisionOfCatalog(updated)
@@ -649,13 +659,20 @@ func (s *Service) CommitRouteChange(ctx context.Context, command CommitRouteChan
 			result.Outcome = RouteOutcomeStateUnknown
 			result.Error = &AppErrorView{Code: "route_state_unknown", Message: appliedErr.Error()}
 		}
-		return result, nil
+		return s.cacheRouteCommandResult(command, digest, result)
 	}
 	if applyResult.PortConflict != "" {
 		result.Outcome = RouteOutcomeHostsOnly
-		return result, nil
+		return s.cacheRouteCommandResult(command, digest, result)
 	}
 	result.Outcome = RouteOutcomeApplied
+	return s.cacheRouteCommandResult(command, digest, result)
+}
+
+func (s *Service) cacheRouteCommandResult(command CommitRouteChangeCommand, digest [sha256.Size]byte, result RouteCommandResult) (RouteCommandResult, error) {
+	if err := storeCommandResult(s.commands, command.Meta.CommandID, "commit_route_change", digest, result); err != nil {
+		return RouteCommandResult{}, err
+	}
 	return result, nil
 }
 

@@ -203,9 +203,10 @@ type RouteChangePreview struct {
 }
 
 type CommitRouteChangeCommand struct {
-	Token            string   `json:"token"`
-	ConfirmedDomains []string `json:"confirmedDomains,omitempty"`
-	ConfirmCATrust   bool     `json:"confirmCATrust"`
+	Meta             CommandMeta `json:"meta"`
+	Token            string      `json:"token"`
+	ConfirmedDomains []string    `json:"confirmedDomains,omitempty"`
+	ConfirmCATrust   bool        `json:"confirmCATrust"`
 }
 
 type RouteCommandOutcome string

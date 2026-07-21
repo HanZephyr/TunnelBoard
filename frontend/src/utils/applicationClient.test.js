@@ -40,9 +40,10 @@ test('Route 变更只调用绑定 revision 的高层命令', async () => {
   })
   const intent = { action: 'set_flag', routeId: 7, flag: 'hostsEnabled', enabled: true, expectedRevision: 'vault-v1' }
   assert.equal((await client.previewRouteChange(intent)).token, 'route-token')
-  assert.equal((await client.commitRouteChange({ token: 'route-token', confirmedDomains: ['demo.example.com'] })).outcome, 'applied')
+  const command = { meta: createCommandMeta('vault-v1'), token: 'route-token', confirmedDomains: ['demo.example.com'] }
+  assert.equal((await client.commitRouteChange(command)).outcome, 'applied')
   assert.deepEqual(calls, [
     ['preview', intent],
-    ['commit', { token: 'route-token', confirmedDomains: ['demo.example.com'] }]
+    ['commit', command]
   ])
 })

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -430,6 +431,58 @@ func TestCommitSSHHostChangePreflightsBeforeSuspendAndRestartsCapturedSet(t *tes
 	}
 }
 
+func TestCommitSSHHostChangeConcurrentRetryReturnsOneResult(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1, SSHHosts: []model.SSHHost{{ID: 1, Name: "h", Host: "old", Port: 22, User: "u", AuthType: "password", Password: "old-secret", CredentialRevision: 1}}}}
+	runtime := &fakeRuntime{}
+	service := newService(store, runtime)
+	preview, err := service.PreviewSSHHostChange(context.Background(), application.SaveSSHHostCommand{
+		Host: application.SSHHostInput{ID: 1, Name: "h", Host: "new", Port: 22, User: "u", AuthType: "password"}, SecretAction: biz.SecretKeep,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := application.CommitSSHHostChangeCommand{Meta: application.CommandMeta{CommandID: "host-change-retry"}, Token: preview.Token}
+	results := make(chan application.CommitSSHHostChangeResult, 2)
+	errors := make(chan error, 2)
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			result, commitErr := service.CommitSSHHostChange(context.Background(), command)
+			results <- result
+			errors <- commitErr
+		}()
+	}
+	wait.Wait()
+	close(results)
+	close(errors)
+	for commitErr := range errors {
+		if commitErr != nil {
+			t.Fatal(commitErr)
+		}
+	}
+	var first *application.CommitSSHHostChangeResult
+	for result := range results {
+		if !result.Committed {
+			t.Fatalf("result = %+v", result)
+		}
+		if first == nil {
+			copy := result
+			first = &copy
+		} else {
+			firstJSON, _ := json.Marshal(*first)
+			resultJSON, _ := json.Marshal(result)
+			if string(firstJSON) != string(resultJSON) {
+				t.Fatalf("concurrent retry result mismatch: first=%s second=%s", firstJSON, resultJSON)
+			}
+		}
+	}
+	if store.updates != 1 || strings.Join(runtime.operations, ",") != "preflight,retire" {
+		t.Fatalf("command repeated side effects: updates=%d operations=%v", store.updates, runtime.operations)
+	}
+}
+
 func TestCommitSSHHostChangeReturnsPerForwardCompensationFailure(t *testing.T) {
 	store := &memStore{data: model.VaultData{Version: 1, SSHHosts: []model.SSHHost{{ID: 1, Name: "h", Host: "old", Port: 22, User: "u", AuthType: "password", Password: "old-secret", CredentialRevision: 1}}}}
 	runtime := &fakeRuntime{
@@ -560,6 +613,35 @@ func TestRouteChangeKeepsSavedDesiredWhenReconcileFails(t *testing.T) {
 	}
 	if routes.reconciles != 1 || result.AcceptedRevision == snapshot.Revisions.Vault {
 		t.Fatalf("reconciles=%d accepted=%q", routes.reconciles, result.AcceptedRevision)
+	}
+}
+
+func TestCommitRouteChangeRetryIsIdempotent(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	routes := &fakeRoutes{}
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: routes, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
+	snapshot, _ := service.GetSnapshot(context.Background())
+	preview, err := service.PreviewRouteChange(context.Background(), application.RouteChangeIntent{
+		ExpectedRevision: snapshot.Revisions.Vault, Action: application.RouteChangeSetFlag, RouteID: 1, Flag: application.RouteFlagHostsEnabled, Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := application.CommitRouteChangeCommand{Meta: application.CommandMeta{CommandID: "route-retry"}, Token: preview.Token, ConfirmedDomains: preview.RequiresConfirmation}
+	first, err := service.CommitRouteChange(context.Background(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.CommitRouteChange(context.Background(), command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, second) || store.updates != 1 || routes.reconciles != 1 {
+		t.Fatalf("retry repeated route mutation: first=%+v second=%+v updates=%d reconciles=%d", first, second, store.updates, routes.reconciles)
+	}
+	command.ConfirmCATrust = true
+	if _, err := service.CommitRouteChange(context.Background(), command); !errors.Is(err, application.ErrCommandIDConflict) {
+		t.Fatalf("same id with changed payload error = %v", err)
 	}
 }
 

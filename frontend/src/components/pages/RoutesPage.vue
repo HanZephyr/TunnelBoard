@@ -2,7 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { errorMessage } from '../../utils/backend'
-import { createApplicationClient } from '../../utils/applicationClient'
+import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import StatusChip from '../common/StatusChip.vue'
@@ -188,6 +188,7 @@ async function commitPreview(preview, confirmedDomains = [], confirmCATrust = fa
   const context = routeMutation.context
   try {
     const result = await application.commitRouteChange({
+      meta: createCommandMeta(preview.desiredRevision || props.vaultRevision),
       token: preview.token,
       confirmedDomains,
       confirmCATrust
