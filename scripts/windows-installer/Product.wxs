@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Name="TunnelBoard"
+      Manufacturer="TunnelBoard"
+      Version="$(var.MsiVersion)"
+      UpgradeCode="{D5CB6F64-09DB-4D47-9B52-F91B547C81AB}"
+      Scope="perMachine"
+      InstallerVersion="500"
+      Compressed="yes">
+    <SummaryInformation Description="TunnelBoard local SSH forward manager" />
+    <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 TunnelBoard，无法降级。" />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="TunnelBoard">
+        <Component Id="ApplicationFiles" Guid="{6904489F-0C76-46A1-B1B9-EB6F37C0A926}">
+          <File Id="TunnelBoardExe" Source="$(var.SourceDir)\TunnelBoard.exe" KeyPath="yes" />
+          <File Id="HelperExecutable" Source="$(var.SourceDir)\tunnelboard-helper.exe" />
+          <File Id="ManifestFile" Source="$(var.SourceDir)\manifest.json" />
+        </Component>
+        <Directory Id="CaddyFolder" Name="caddy">
+          <Component Id="CaddyFiles" Guid="{7E4C0E94-A0A6-4CBE-82E9-2AD6A9E6B6A4}">
+            <File Id="CaddyExecutable" Source="$(var.SourceDir)\caddy\caddy.exe" KeyPath="yes" />
+          </Component>
+        </Directory>
+        <Directory Id="LicensesFolder" Name="LICENSES">
+          <Component Id="LicenseFiles" Guid="{D1B4C50D-57F9-4B04-9CA0-2DAEFD98B02D}">
+            <File Id="TunnelBoardLicense" Source="$(var.SourceDir)\LICENSES\TunnelBoard.txt" KeyPath="yes" />
+            <File Id="CaddyLicense" Source="$(var.SourceDir)\LICENSES\Caddy.txt" />
+          </Component>
+        </Directory>
+        <Component Id="ProductRegistry" Guid="{E4B10682-1B68-494E-9DC5-C321AA913EA1}">
+          <RegistryValue Root="HKLM" Key="Software\TunnelBoard" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <Binary Id="MigrationHelper" SourceFile="$(var.SourceDir)\tunnelboard-helper.exe" />
+    <CustomAction
+        Id="CleanupLegacyService"
+        BinaryRef="MigrationHelper"
+        ExeCommand="--cleanup-legacy-service"
+        Execute="deferred"
+        Impersonate="no"
+        Return="check" />
+    <CustomAction
+        Id="CleanupCurrentUserCA"
+        FileRef="HelperExecutable"
+        ExeCommand="--cleanup-current-user-ca"
+        Execute="deferred"
+        Impersonate="yes"
+        Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="CleanupLegacyService" Before="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="CleanupCurrentUserCA" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot;" />
+    </InstallExecuteSequence>
+
+    <Feature Id="MainFeature" Title="TunnelBoard" Level="1">
+      <ComponentRef Id="ApplicationFiles" />
+      <ComponentRef Id="CaddyFiles" />
+      <ComponentRef Id="LicenseFiles" />
+      <ComponentRef Id="ProductRegistry" />
+    </Feature>
+  </Package>
+</Wix>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix
+    xmlns="http://wixtoolset.org/schemas/v4/wxs"
+    xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+  <Bundle
+      Name="TunnelBoard"
+      Manufacturer="TunnelBoard"
+      Version="$(var.BundleVersion)"
+      UpgradeCode="{72EFA2F1-56D9-4AB5-8D21-A79F3DFB0F57}"
+      IconSourceFile="build\windows\icon.ico"
+      AboutUrl="https://github.com/HanZephyr/TunnelBoard"
+      Compressed="yes">
+    <Variable Name="InstallFolder" Type="string" Value="[ProgramFiles64Folder]\TunnelBoard" bal:Overridable="yes" />
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication
+          Theme="hyperlinkLargeLicense"
+          LicenseUrl=""
+          LogoFile="build\appicon-512-rounded.png"
+          ShowVersion="yes"
+          SuppressRepair="no"
+          SuppressOptionsUI="yes" />
+    </BootstrapperApplication>
+
+    <Chain>
+      <MsiPackage Id="TunnelBoardMsi" SourceFile="$(var.MsiPath)" Vital="yes">
+        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>

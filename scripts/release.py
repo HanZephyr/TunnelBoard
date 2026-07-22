@@ -407,7 +407,7 @@ def verify_windows_installer(installer: Path, require_signing: bool) -> None:
     install_dir = program_files / f"TunnelBoard-CI-{os.getpid()}"
     if install_dir.exists():
         shutil.rmtree(install_dir)
-    result = subprocess.run([str(installer), "/S", f"/D={install_dir}"], timeout=120)
+    result = subprocess.run([str(installer), "/quiet", "/norestart", f"InstallFolder={install_dir}"], timeout=120)
     if result.returncode != 0:
         raise ReleaseError(f"silent installer failed with exit code {result.returncode}")
     if not install_dir.is_dir():
@@ -421,14 +421,11 @@ def verify_windows_installer(installer: Path, require_signing: bool) -> None:
         verify_bundle_root(
             install_dir,
             execute_caddy=True,
-            allowed_runtime_files={"Uninstall.exe"},
         )
         if service_exists():
             raise ReleaseError("installer created a forbidden persistent TunnelBoardHelper service")
     finally:
-        uninstaller = install_dir / "Uninstall.exe"
-        if uninstaller.is_file():
-            subprocess.run([str(uninstaller), "/S"], timeout=120, check=False)
+        subprocess.run([str(installer), "/uninstall", "/quiet", "/norestart"], timeout=120, check=False)
         deadline = time.monotonic() + 10
         while install_dir.exists() and time.monotonic() < deadline:
             time.sleep(0.1)
@@ -879,17 +876,24 @@ def prepare_release_root(target: str) -> tuple[Path, Path]:
     return stage, output
 
 
-def find_makensis() -> str | None:
-    if command := shutil.which("makensis"):
-        return command
-    for environment_variable in ("ProgramFiles(x86)", "ProgramW6432", "ProgramFiles"):
-        program_files = os.environ.get(environment_variable)
-        if not program_files:
-            continue
-        candidate = Path(program_files) / "NSIS" / "makensis.exe"
-        if candidate.is_file():
-            return str(candidate)
-    return None
+def find_wix() -> str | None:
+    configured = os.environ.get("TUNNELBOARD_WIX", "")
+    if configured and Path(configured).is_file():
+        return configured
+    return shutil.which("wix") or shutil.which("wix.exe")
+
+
+def windows_installer_version(version: str) -> str:
+    """将发布版本映射为 Windows Installer 支持的三段数字版本。"""
+    parts = version.removeprefix("v").split(".")
+    if 3 <= len(parts) <= 4 and all(part.isdecimal() for part in parts):
+        major, minor, patch = (int(part) for part in parts[:3])
+        revision = int(parts[3]) if len(parts) == 4 else 0
+        build = patch * 1000 + revision
+        if major <= 255 and minor <= 255 and build <= 65535:
+            return f"{major}.{minor}.{build}"
+    # 分支候选只用于 CI 生命周期验证；避免把 prerelease 标签塞进 MSI 的数字版本字段。
+    return "0.0.1"
 
 
 def build_windows(version: str, require_signing: bool, skip_installer: bool) -> list[Path]:
@@ -951,16 +955,43 @@ def build_windows(version: str, require_signing: bool, skip_installer: bool) -> 
     shutil.copy2(manifest, sidecar)
     outputs = [bundle, sidecar]
     if not skip_installer:
-        makensis = find_makensis()
-        if not makensis:
-            raise ReleaseError("makensis is required for the Windows installer")
+        wix = find_wix()
+        if not wix:
+            raise ReleaseError("WiX v4 is required for the Windows installer")
+        installer_root = ROOT / "scripts" / "windows-installer"
+        installer_version = windows_installer_version(version)
+        msi = scratch / f"{base}.msi"
         setup = output / f"{base}-setup.exe"
         run([
-            makensis,
-            f"/DPRODUCT_VERSION={version}",
-            f"/DSOURCE_DIR={stage}",
-            f"/DOUT_FILE={setup}",
-            str(ROOT / "scripts" / "windows-installer.nsi"),
+            wix,
+            "build",
+            "-arch",
+            "x64",
+            "-d",
+            f"SourceDir={stage}",
+            "-d",
+            f"MsiVersion={installer_version}",
+            "-o",
+            str(msi),
+            str(installer_root / "Product.wxs"),
+        ])
+        msi_sign = sign_windows(msi, require_signing)
+        if require_signing and msi_sign.get("publisher") != app_sign.get("publisher"):
+            raise ReleaseError("MSI and application Authenticode publishers differ")
+        run([
+            wix,
+            "build",
+            "-arch",
+            "x64",
+            "-ext",
+            "WixToolset.Bal.wixext",
+            "-d",
+            f"MsiPath={msi}",
+            "-d",
+            f"BundleVersion={installer_version}",
+            "-o",
+            str(setup),
+            str(installer_root / "Bundle.wxs"),
         ])
         setup_sign = sign_windows(setup, require_signing)
         if require_signing and setup_sign.get("publisher") != app_sign.get("publisher"):

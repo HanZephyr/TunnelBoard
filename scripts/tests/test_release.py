@@ -212,21 +212,35 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertNotIn("build-linux:", workflow)
 
     def test_windows_installer_removes_legacy_service_before_copying_files(self) -> None:
-        installer = (ROOT / "scripts" / "windows-installer.nsi").read_text(encoding="utf-8")
-        cleanup = installer.find("--cleanup-legacy-service")
-        copy_payload = installer.find('File /r "${SOURCE_DIR}\\*.*"')
+        installer = (ROOT / "scripts" / "windows-installer" / "Product.wxs").read_text(encoding="utf-8")
+        cleanup = installer.find('Id="CleanupLegacyService"')
+        copy_payload = installer.find('Before="InstallFiles"')
         self.assertGreaterEqual(cleanup, 0, "installer must invoke the fixed legacy-service cleanup command")
         self.assertGreater(copy_payload, cleanup, "legacy SYSTEM service must be removed before replacing payload files")
-        self.assertIn("Abort", installer[cleanup:copy_payload], "cleanup failure must stop the upgrade")
+        self.assertIn("--cleanup-legacy-service", installer[cleanup:copy_payload])
+        self.assertIn('Return="check"', installer[cleanup:copy_payload], "cleanup failure must stop the upgrade")
 
     def test_windows_uninstaller_removes_current_user_ca_before_deleting_helper(self) -> None:
-        installer = (ROOT / "scripts" / "windows-installer.nsi").read_text(encoding="utf-8")
-        uninstall = installer.index('Section "Uninstall"')
-        cleanup = installer.find("--cleanup-current-user-ca", uninstall)
-        delete_helper = installer.find('Delete "$INSTDIR\\tunnelboard-helper.exe"', uninstall)
+        installer = (ROOT / "scripts" / "windows-installer" / "Product.wxs").read_text(encoding="utf-8")
+        cleanup = installer.find('Id="CleanupCurrentUserCA"')
+        delete_helper = installer.find('Before="RemoveFiles"')
         self.assertGreaterEqual(cleanup, 0, "uninstaller must offer the fixed current-user CA cleanup")
         self.assertGreater(delete_helper, cleanup, "CA and its private key must be removed before deleting the cleanup binary")
-        self.assertIn("Abort", installer[cleanup:delete_helper], "failed trust cleanup must not silently orphan a root CA")
+        self.assertIn("--cleanup-current-user-ca", installer[cleanup:delete_helper])
+        self.assertIn('Return="check"', installer[cleanup:delete_helper], "failed trust cleanup must not silently orphan a root CA")
+
+    def test_windows_installer_uses_wix_burn_instead_of_nsis(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+        release = RELEASE.read_text(encoding="utf-8")
+        bundle = (ROOT / "scripts" / "windows-installer" / "Bundle.wxs").read_text(encoding="utf-8")
+        self.assertFalse((ROOT / "scripts" / "windows-installer.nsi").exists())
+        self.assertIn("dotnet tool install", workflow)
+        self.assertNotIn("choco install nsis", workflow)
+        self.assertIn('WixStandardBootstrapperApplication', bundle)
+        self.assertIn('Theme="hyperlinkLargeLicense"', bundle)
+        self.assertIn('bal:Overridable="yes"', bundle)
+        self.assertIn("def find_wix", release)
+        self.assertIn('"/quiet", "/norestart"', release)
 
 
 if __name__ == "__main__":
