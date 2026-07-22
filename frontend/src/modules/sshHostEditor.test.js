@@ -42,3 +42,12 @@ test('切换到密码认证必须显式输入新密码', () => {
   assert.equal(validateSSHHostDraft(draft), 'passwordRequired')
   assert.equal(toSaveSSHHostCommand(draft).secretAction, 'replace')
 })
+
+test('无私钥口令的 SSH Key 主机明确清除秘密而不是替换为空值', () => {
+  const draft = createSSHHostDraft({ name: 'bastion', host: 'bastion.example.test', user: 'ops', authType: 'ssh_key', keyPath: '~/.ssh/id_ed25519' })
+
+  const command = toSaveSSHHostCommand(draft)
+
+  assert.equal(command.secretAction, 'clear')
+  assert.equal('secretInput' in command, false)
+})

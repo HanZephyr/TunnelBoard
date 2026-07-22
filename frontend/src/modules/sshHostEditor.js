@@ -51,6 +51,9 @@ export function clearSSHHostTransientSecrets(draft) {
 
 function resolvedSecretAction(draft) {
   if (draft.authType === 'ssh_agent') return 'clear'
+  // 私钥口令可选：空值表示不使用口令，而不是要求后端替换为一个空秘密。
+  // 已保存口令的默认 keep 语义不受影响。
+  if (draft.authType === 'ssh_key' && draft.secretAction === 'replace' && !draft.secretInput) return 'clear'
   if (draft.hasSecret && draft.authType !== draft.originalAuthType) {
     if (draft.authType === 'password') return 'replace'
     return draft.secretInput ? 'replace' : 'clear'
