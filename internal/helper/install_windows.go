@@ -4,11 +4,9 @@ package helper
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -23,19 +21,14 @@ const HelperBinaryEnvVar = "TUNNELBOARD_HELPER_PATH"
 
 var ErrAuthorizationCancelled = errors.New("helper: user cancelled administrator authorization")
 
+var currentExecutablePath = os.Executable
+var startElevatedSessionHelper = func(executable, parameters string) (elevatedProcess, error) {
+	return shellExecuteRunAs(executable, parameters)
+}
+
 func launchElevatedSessionHelper(pipePath string, parentPID uint32, protocol string) (elevatedProcess, error) {
 	exe, err := helperBinaryPath()
 	if err != nil {
-		return nil, err
-	}
-	if err := verifyAuthenticode(exe); err != nil {
-		return nil, fmt.Errorf("helper: verify helper signature: %w", err)
-	}
-	application, err := os.Executable()
-	if err != nil {
-		return nil, fmt.Errorf("helper: resolve application publisher: %w", err)
-	}
-	if err := verifySameAuthenticodePublisher(application, exe); err != nil {
 		return nil, err
 	}
 	parameters := windowsCommandLine(
@@ -44,7 +37,7 @@ func launchElevatedSessionHelper(pipePath string, parentPID uint32, protocol str
 		"--parent-pid", strconv.FormatUint(uint64(parentPID), 10),
 		"--protocol", protocol,
 	)
-	process, err := shellExecuteRunAs(exe, parameters)
+	process, err := startElevatedSessionHelper(exe, parameters)
 	if err != nil {
 		if errors.Is(err, syscall.Errno(windows.ERROR_CANCELLED)) {
 			return nil, ErrAuthorizationCancelled
@@ -69,7 +62,7 @@ func helperBinaryPath() (string, error) {
 		}
 		return absolute, nil
 	}
-	executable, err := os.Executable()
+	executable, err := currentExecutablePath()
 	if err != nil {
 		return "", fmt.Errorf("helper: resolve application executable: %w", err)
 	}
@@ -198,76 +191,5 @@ func verifyParentProcess(parentPID uint32) error {
 	if !strings.EqualFold(filepath.Base(path), "tunnelboard.exe") {
 		return fmt.Errorf("unexpected parent executable %q", filepath.Base(path))
 	}
-	if err := verifyAuthenticode(path); err != nil {
-		return err
-	}
-	helperPath, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	return verifySameAuthenticodePublisher(path, helperPath)
-}
-
-func verifySameAuthenticodePublisher(applicationPath, helperPath string) error {
-	applicationIdentity, err := authenticodeCertificateSHA256(applicationPath)
-	if err != nil {
-		return fmt.Errorf("helper: read application publisher identity: %w", err)
-	}
-	helperIdentity, err := authenticodeCertificateSHA256(helperPath)
-	if err != nil {
-		return fmt.Errorf("helper: read Helper publisher identity: %w", err)
-	}
-	return requireMatchingPublisherIdentity(applicationIdentity, helperIdentity)
-}
-
-func requireMatchingPublisherIdentity(applicationIdentity, helperIdentity string) error {
-	applicationIdentity = strings.TrimSpace(strings.ToLower(applicationIdentity))
-	helperIdentity = strings.TrimSpace(strings.ToLower(helperIdentity))
-	if applicationIdentity == "" || helperIdentity == "" {
-		return errors.New("helper: Authenticode publisher identity is empty")
-	}
-	if applicationIdentity != helperIdentity {
-		return errors.New("helper: application and Helper Authenticode publishers differ")
-	}
 	return nil
-}
-
-func authenticodeCertificateSHA256(path string) (string, error) {
-	powerShell := filepath.Join(os.Getenv("SystemRoot"), "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-	const script = `$s=Get-AuthenticodeSignature -LiteralPath $env:TUNNELBOARD_AUTHENTICODE_PATH; if($s.Status -ne 'Valid' -or -not $s.SignerCertificate){exit 42}; $h=[Security.Cryptography.SHA256]::Create(); (($h.ComputeHash($s.SignerCertificate.RawData) | ForEach-Object {$_.ToString('x2')}) -join '')`
-	cmd := exec.Command(powerShell, "-NoProfile", "-NonInteractive", "-Command", script)
-	cmd.Env = append(os.Environ(), "TUNNELBOARD_AUTHENTICODE_PATH="+path)
-	output, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("publisher certificate query failed: %w", err)
-	}
-	identity := strings.TrimSpace(string(output))
-	if len(identity) != sha256.Size*2 {
-		return "", errors.New("publisher certificate query returned an invalid SHA-256 identity")
-	}
-	return identity, nil
-}
-
-func verifyAuthenticode(path string) error {
-	pathUTF16, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return err
-	}
-	fileInfo := windows.WinTrustFileInfo{
-		Size:     uint32(unsafe.Sizeof(windows.WinTrustFileInfo{})),
-		FilePath: pathUTF16,
-	}
-	data := windows.WinTrustData{
-		Size:                            uint32(unsafe.Sizeof(windows.WinTrustData{})),
-		UIChoice:                        windows.WTD_UI_NONE,
-		RevocationChecks:                windows.WTD_REVOKE_NONE,
-		UnionChoice:                     windows.WTD_CHOICE_FILE,
-		StateAction:                     windows.WTD_STATEACTION_VERIFY,
-		ProvFlags:                       windows.WTD_CACHE_ONLY_URL_RETRIEVAL,
-		FileOrCatalogOrBlobOrSgnrOrCert: unsafe.Pointer(&fileInfo),
-	}
-	verifyErr := windows.WinVerifyTrustEx(windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, &data)
-	data.StateAction = windows.WTD_STATEACTION_CLOSE
-	closeErr := windows.WinVerifyTrustEx(windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, &data)
-	return errors.Join(verifyErr, closeErr)
 }

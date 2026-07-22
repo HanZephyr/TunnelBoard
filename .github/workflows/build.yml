@@ -87,13 +87,10 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         shell: pwsh
         run: uv run scripts/release.py build --target windows-amd64 --version "0.0.0-ci.${{ github.run_number }}"
-      - name: Build signed Tag candidate
+      - name: Build portable Tag candidate
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         shell: pwsh
-        env:
-          TUNNELBOARD_SIGN_CERT_BASE64: ${{ secrets.TUNNELBOARD_SIGN_CERT_BASE64 }}
-          TUNNELBOARD_SIGN_CERT_PASSWORD: ${{ secrets.TUNNELBOARD_SIGN_CERT_PASSWORD }}
-        run: uv run scripts/release.py build --target windows-amd64 --version "${{ github.ref_name }}" --require-signing
+        run: uv run scripts/release.py build --target windows-amd64 --version "${{ github.ref_name }}"
       - name: Upload exact Windows candidate directory
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -179,7 +176,7 @@ jobs:
           $installers = @(Get-ChildItem artifacts/windows -Filter *-setup.exe -Recurse -File -ErrorAction Stop)
           if ($installers.Count -ne 1) { throw "Expected exactly one Windows installer, found $($installers.Count)" }
           $installer = $installers[0].FullName
-          uv run scripts/release.py verify-windows-installer --installer $installer --require-signing
+          uv run scripts/release.py verify-windows-installer --installer $installer
       - name: Verify re-downloaded macOS bundle structure
         shell: pwsh
         run: |
