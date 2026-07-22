@@ -12,7 +12,7 @@ export function createListenerPreview(state = { status: 'idle', host: '', port: 
     try {
       const result = await request(address)
       if (current !== generation) return false
-      state.status = VALID.has(result?.status) ? result.status : 'unknown'
+      state.status = VALID.has(result?.state) ? result.state : 'unknown'
       state.message = String(result?.message || '')
       return true
     } catch (error) {
