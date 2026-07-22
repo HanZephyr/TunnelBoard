@@ -868,6 +868,19 @@ def prepare_release_root(target: str) -> tuple[Path, Path]:
     return stage, output
 
 
+def find_makensis() -> str | None:
+    if command := shutil.which("makensis"):
+        return command
+    for environment_variable in ("ProgramFiles(x86)", "ProgramW6432", "ProgramFiles"):
+        program_files = os.environ.get(environment_variable)
+        if not program_files:
+            continue
+        candidate = Path(program_files) / "NSIS" / "makensis.exe"
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 def build_windows(version: str, require_signing: bool, skip_installer: bool) -> list[Path]:
     if os.name != "nt":
         raise ReleaseError("windows-amd64 must be built on a Windows runner")
@@ -927,7 +940,7 @@ def build_windows(version: str, require_signing: bool, skip_installer: bool) -> 
     shutil.copy2(manifest, sidecar)
     outputs = [bundle, sidecar]
     if not skip_installer:
-        makensis = shutil.which("makensis")
+        makensis = find_makensis()
         if not makensis:
             raise ReleaseError("makensis is required for the Windows installer")
         setup = output / f"{base}-setup.exe"
