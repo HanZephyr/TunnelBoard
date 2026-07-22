@@ -215,6 +215,7 @@ def verify_bundle_root(
     root: Path,
     execute_caddy: bool = False,
     supply_chain_lock: Path = LOCK_PATH,
+    allowed_runtime_files: set[PurePosixPath] | None = None,
 ) -> dict[str, Any]:
     manifest_path = locate_manifest(root)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -255,7 +256,7 @@ def verify_bundle_root(
         for p in bundle_root.rglob("*")
         if p.is_file() and p != manifest_path
     }
-    undeclared = sorted(actual - declared)
+    undeclared = sorted(actual - declared - (allowed_runtime_files or set()))
     if undeclared:
         raise ReleaseError(f"undeclared artifact file: {undeclared[0]}")
     missing_records = sorted(declared - actual)
@@ -417,7 +418,11 @@ def verify_windows_installer(installer: Path, require_signing: bool) -> None:
             raise ReleaseError(f"installer did not create {install_dir} or {default_install_dir}")
     try:
         verify_windows_acl(install_dir)
-        verify_bundle_root(install_dir, execute_caddy=True)
+        verify_bundle_root(
+            install_dir,
+            execute_caddy=True,
+            allowed_runtime_files={PurePosixPath("Uninstall.exe")},
+        )
         if service_exists():
             raise ReleaseError("installer created a forbidden persistent TunnelBoardHelper service")
     finally:
