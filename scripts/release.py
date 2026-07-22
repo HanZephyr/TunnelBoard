@@ -23,6 +23,7 @@ import tempfile
 import time
 import urllib.request
 import zipfile
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -614,10 +615,35 @@ def command_version(command: list[str]) -> str:
 
 
 def run(command: list[str], cwd: Path = ROOT) -> None:
-    print("+", subprocess.list2cmdline(command))
-    result = subprocess.run(platform_command(command), cwd=cwd)
-    if result.returncode != 0:
-        raise ReleaseError(f"command failed ({result.returncode}): {command}")
+    display = subprocess.list2cmdline(command)
+    started = time.monotonic()
+    print(f"[{datetime.now():%H:%M:%S}] START {display}", flush=True)
+    process = subprocess.Popen(
+        platform_command(command),
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    try:
+        for line in process.stdout:
+            print(f"[{datetime.now():%H:%M:%S}]   {line.rstrip()}", flush=True)
+        returncode = process.wait()
+    except KeyboardInterrupt:
+        process.terminate()
+        process.wait(timeout=5)
+        raise
+    finally:
+        process.stdout.close()
+    elapsed = time.monotonic() - started
+    if returncode != 0:
+        print(f"[{datetime.now():%H:%M:%S}] FAIL exit={returncode} elapsed={elapsed:.1f}s", flush=True)
+        raise ReleaseError(f"command failed ({returncode}): {command}")
+    print(f"[{datetime.now():%H:%M:%S}] DONE elapsed={elapsed:.1f}s", flush=True)
 
 
 def platform_command(command: list[str]) -> list[str]:
@@ -842,7 +868,7 @@ def build_windows(version: str, require_signing: bool, skip_installer: bool) -> 
     app = scratch / "TunnelBoard.exe"
     helper = scratch / "tunnelboard-helper.exe"
     caddy = stage / "caddy" / "caddy.exe"
-    run(["go", "build", "-trimpath", "-o", str(helper), "./cmd/helper"])
+    run(["go", "build", "-v", "-trimpath", "-o", str(helper), "./cmd/helper"])
     # 签名会改变 PE 字节，必须先签 Helper，再把最终 SHA 注入主程序。
     helper_sign = sign_windows(helper, require_signing)
     helper_digest = sha256_file(helper)
