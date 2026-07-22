@@ -200,6 +200,9 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         macos_job = workflow.split("  build-macos:", 1)[1].split("  verify-artifacts:", 1)[0]
         self.assertNotIn("run: wails build", windows_job)
         self.assertNotIn("run: wails build", macos_job)
+        self.assertIn('if: ${{ !startsWith(github.ref, \'refs/tags/v\') }}', macos_job)
+        self.assertIn('if: ${{ startsWith(github.ref, \'refs/tags/v\') }}', macos_job)
+        self.assertIn('--version "${{ github.ref_name }}"', macos_job)
         self.assertIn("gh release create", workflow)
         self.assertIn("--draft", workflow)
         self.assertNotIn("draft: false", workflow)
