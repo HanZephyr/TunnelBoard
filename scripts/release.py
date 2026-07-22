@@ -409,6 +409,12 @@ def verify_windows_installer(installer: Path, require_signing: bool) -> None:
     result = subprocess.run([str(installer), "/S", f"/D={install_dir}"], timeout=120)
     if result.returncode != 0:
         raise ReleaseError(f"silent installer failed with exit code {result.returncode}")
+    if not install_dir.is_dir():
+        default_install_dir = program_files / "TunnelBoard"
+        if default_install_dir.is_dir():
+            install_dir = default_install_dir
+        else:
+            raise ReleaseError(f"installer did not create {install_dir} or {default_install_dir}")
     try:
         verify_windows_acl(install_dir)
         verify_bundle_root(install_dir, execute_caddy=True)
