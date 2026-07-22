@@ -39,6 +39,15 @@ RELEASE_TARGETS = {
 }
 
 
+def configure_stdout() -> None:
+    """确保转发外部构建工具的 UTF-8 日志不会被 Windows 代码页中断。"""
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
+configure_stdout()
+
+
 class ReleaseError(RuntimeError):
     pass
 
