@@ -376,31 +376,26 @@ def helper_metadata(helper_path: Path) -> dict[str, Any]:
 
 
 def verify_windows_acl(install_dir: Path) -> None:
-    escaped = str(install_dir).replace("'", "''")
-    script = f"""
-$ErrorActionPreference = 'Stop'
-$danger = [int][System.Security.AccessControl.FileSystemRights]::Write -bor
-          [int][System.Security.AccessControl.FileSystemRights]::Modify -bor
-          [int][System.Security.AccessControl.FileSystemRights]::FullControl -bor
-          [int][System.Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
-          [int][System.Security.AccessControl.FileSystemRights]::ChangePermissions -bor
-          [int][System.Security.AccessControl.FileSystemRights]::TakeOwnership
-$unsafe = @((Get-Acl -LiteralPath '{escaped}').Access | Where-Object {{
-  $_.AccessControlType -eq [System.Security.AccessControl.AccessControlType]::Allow -and
-  @('S-1-1-0','S-1-5-11','S-1-5-32-545') -contains $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]).Value -and
-  (([int]$_.FileSystemRights -band $danger) -ne 0)
-}})
-if ($unsafe.Count -gt 0) {{ $unsafe | Format-List | Out-String | Write-Error; exit 42 }}
-"""
     result = subprocess.run(
-        [windows_powershell(), "-NoProfile", "-Command", script],
+        ["icacls", str(install_dir)],
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
     )
     if result.returncode != 0:
-        raise ReleaseError(f"installed directory grants standard-user write rights: {result.stdout} {result.stderr}")
+        raise ReleaseError(f"cannot inspect installed directory ACL: {result.stdout} {result.stderr}")
+    standard_users = ("everyone", "authenticated users", "builtin\\users", "s-1-1-0", "s-1-5-11", "s-1-5-32-545")
+    dangerous_rights = ("(f)", "(m)", "(w)", "(wd)", "(wo)", "(dc)")
+    unsafe = []
+    for line in result.stdout.splitlines():
+        normalized_line = line.lower()
+        if any(identity in normalized_line for identity in standard_users) and any(
+            right in normalized_line for right in dangerous_rights
+        ):
+            unsafe.append(line)
+    if unsafe:
+        raise ReleaseError(f"installed directory grants standard-user write rights: {' | '.join(unsafe)}")
 
 
 def verify_windows_installer(installer: Path, require_signing: bool) -> None:
