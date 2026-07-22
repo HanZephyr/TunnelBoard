@@ -48,6 +48,11 @@ def configure_stdout() -> None:
 configure_stdout()
 
 
+def windows_powershell() -> str:
+    candidate = Path(os.environ.get("SystemRoot", r"C:\\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    return str(candidate) if candidate.is_file() else "powershell"
+
+
 class ReleaseError(RuntimeError):
     pass
 
@@ -388,7 +393,7 @@ $unsafe = @((Get-Acl -LiteralPath '{escaped}').Access | Where-Object {{
 if ($unsafe.Count -gt 0) {{ $unsafe | Format-List | Out-String | Write-Error; exit 42 }}
 """
     result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", script],
+        [windows_powershell(), "-NoProfile", "-Command", script],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -719,7 +724,7 @@ def signing_status(path: Path, required: bool) -> dict[str, Any]:
         "[pscustomobject]@{Status=[string]$s.Status;Publisher=$publisher}|ConvertTo-Json -Compress"
     )
     result = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", script],
+        [windows_powershell(), "-NoProfile", "-Command", script],
         capture_output=True,
         text=True,
         encoding="utf-8",
