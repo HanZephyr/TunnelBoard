@@ -215,7 +215,7 @@ def verify_bundle_root(
     root: Path,
     execute_caddy: bool = False,
     supply_chain_lock: Path = LOCK_PATH,
-    allowed_runtime_files: set[PurePosixPath] | None = None,
+    allowed_runtime_files: set[str] | None = None,
 ) -> dict[str, Any]:
     manifest_path = locate_manifest(root)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -421,7 +421,7 @@ def verify_windows_installer(installer: Path, require_signing: bool) -> None:
         verify_bundle_root(
             install_dir,
             execute_caddy=True,
-            allowed_runtime_files={PurePosixPath("Uninstall.exe")},
+            allowed_runtime_files={"Uninstall.exe"},
         )
         if service_exists():
             raise ReleaseError("installer created a forbidden persistent TunnelBoardHelper service")
