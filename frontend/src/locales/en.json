@@ -153,7 +153,10 @@
             "descriptionPlaceholder": "Optional",
             "newHostToggle": "New Host",
             "newHostSave": "Save & Add",
-            "newHostPersists": "Saving a host is independent. It remains saved even if you cancel this Forward."
+            "newHostPersists": "Saving a host is independent. It remains saved even if you cancel this Forward.",
+            "testConnection": "Test connection",
+            "testing": "Testing…",
+            "testPassedWithLatency": "Connection test passed. SSH latency: {latency}."
         },
         "errors": {
             "nameRequired": "Name is required.",
@@ -238,7 +241,10 @@
             "hostKeyAlgorithms": "Host Key Algorithms",
             "hostKeyAlgorithmsPlaceholder": "e.g. ssh-ed25519,rsa-sha2-512",
             "notes": "Notes",
-            "notesPlaceholder": "Optional"
+            "notesPlaceholder": "Optional",
+            "testConnection": "Test connection",
+            "testing": "Testing…",
+            "testPassed": "SSH connection test passed."
         },
         "errors": {
             "nameRequired": "Name is required.",

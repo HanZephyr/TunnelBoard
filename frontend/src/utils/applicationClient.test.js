@@ -32,6 +32,23 @@ test('SSH Host 变更确认只提交一次性 token', async () => {
   assert.deepEqual(received, command)
 })
 
+test('连通性检查通过高层命令且不需要回退到旧绑定', async () => {
+  const received = []
+  const client = createApplicationClient({
+    TestSSHHostConnectionCommand: async (command) => { received.push(['host', command]); return {} },
+    TestForwardConnectionCommand: async (command) => { received.push(['forward', command]); return { latencyMs: 12 } }
+  })
+
+  await client.testSSHHostConnection({ host: { id: 1 } })
+  const result = await client.testForwardConnection({ forward: { chainHostIds: [1] } })
+
+  assert.deepEqual(received, [
+    ['host', { host: { id: 1 } }],
+    ['forward', { forward: { chainHostIds: [1] } }]
+  ])
+  assert.equal(result.latencyMs, 12)
+})
+
 test('Route 变更只调用绑定 revision 的高层命令', async () => {
   const calls = []
   const client = createApplicationClient({

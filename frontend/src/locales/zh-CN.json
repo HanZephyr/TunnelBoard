@@ -153,7 +153,10 @@
             "descriptionPlaceholder": "可选",
             "newHostToggle": "新建主机",
             "newHostSave": "保存并加入",
-            "newHostPersists": "保存主机是独立操作；即使随后取消 Forward，该主机仍会保留。"
+            "newHostPersists": "保存主机是独立操作；即使随后取消 Forward，该主机仍会保留。",
+            "testConnection": "测试连接",
+            "testing": "测试中…",
+            "testPassedWithLatency": "连接测试通过，SSH 延迟：{latency}。"
         },
         "errors": {
             "nameRequired": "名称不能为空。",
@@ -238,7 +241,10 @@
             "hostKeyAlgorithms": "主机密钥算法",
             "hostKeyAlgorithmsPlaceholder": "例如：ssh-ed25519,rsa-sha2-512",
             "notes": "备注",
-            "notesPlaceholder": "可选"
+            "notesPlaceholder": "可选",
+            "testConnection": "测试连接",
+            "testing": "测试中…",
+            "testPassed": "SSH 连接测试通过。"
         },
         "errors": {
             "nameRequired": "名称不能为空。",

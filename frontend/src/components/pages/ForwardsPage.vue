@@ -46,6 +46,12 @@ const emit = defineEmits(['vault-changed', 'notify'])
 
 const { t } = useI18n()
 const application = createApplicationClient()
+const forwardTest = reactive({ status: 'idle', message: '' })
+
+function resetForwardTest() {
+  forwardTest.status = 'idle'
+  forwardTest.message = ''
+}
 
 // ---- 文件夹树（最多两层，parentId=0 为顶层）----
 function bySortThenId(a, b) {
@@ -302,6 +308,7 @@ function openNewForward() {
     folderId: selectedFolderId.value || topFolders.value[0]?.id || 0
   })
   forwardValidationError.value = ''
+  resetForwardTest()
   forwardModalOpen.value = true
 }
 
@@ -323,6 +330,7 @@ function editForward(forward) {
     description: forward.description || ''
   })
   forwardValidationError.value = ''
+  resetForwardTest()
   forwardModalOpen.value = true
 }
 
@@ -338,9 +346,8 @@ function validateForwardPayload(payload) {
   return ''
 }
 
-async function saveForward() {
-  if (props.configurationLocked) return
-  const payload = {
+function buildForwardPayload() {
+  return {
     id: editingForwardId.value || 0,
     folderId: Number(forwardForm.folderId),
     name: forwardForm.name.trim(),
@@ -353,6 +360,32 @@ async function saveForward() {
     autoStart: !!forwardForm.autoStart,
     description: forwardForm.description.trim()
   }
+}
+
+async function testForwardConnection() {
+  if (props.configurationLocked) return
+  const payload = buildForwardPayload()
+  const error = validateForwardPayload(payload)
+  if (error) {
+    forwardValidationError.value = error
+    return
+  }
+  forwardValidationError.value = ''
+  forwardTest.status = 'testing'
+  forwardTest.message = ''
+  try {
+    const result = await application.testForwardConnection({ forward: payload })
+    forwardTest.status = 'success'
+    forwardTest.message = t('forwards.modal.testPassedWithLatency', { latency: formatLatencyUtil(result?.latencyMs) })
+  } catch (err) {
+    forwardTest.status = 'error'
+    forwardTest.message = errorMessage(err)
+  }
+}
+
+async function saveForward() {
+  if (props.configurationLocked) return
+  const payload = buildForwardPayload()
   const error = validateForwardPayload(payload)
   if (error) {
     forwardValidationError.value = error
@@ -998,8 +1031,12 @@ function chainLabel(forward) {
     :ssh-host-defaults="sshHostDefaults"
     :vault-revision="vaultRevision"
     :validation-error="forwardValidationError"
+    :busy="forwardTest.status === 'testing'"
+    :test-status="forwardTest.status"
+    :test-message="forwardTest.message"
     @close="forwardModalOpen = false"
     @submit="saveForward"
+    @test-connection="testForwardConnection"
     @host-created="onHostCreated"
   />
 

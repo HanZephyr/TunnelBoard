@@ -59,18 +59,23 @@ func (m *memStore) Update(fn func(*model.VaultData) error) (model.VaultData, err
 }
 
 type fakeRuntime struct {
-	affected     []biz.AffectedForward
-	preflight    map[int]string
-	operations   []string
-	suspendErr   error
-	resumeErrors map[int]string
-	suspended    []int
-	retired      int
-	resumed      int
-	starts       int
-	startErrors  map[int]error
-	stops        int
-	autoStarts   int
+	affected           []biz.AffectedForward
+	preflight          map[int]string
+	operations         []string
+	suspendErr         error
+	resumeErrors       map[int]string
+	suspended          []int
+	retired            int
+	resumed            int
+	starts             int
+	startErrors        map[int]error
+	stops              int
+	autoStarts         int
+	testedHost         model.SSHHost
+	testedForward      model.Forward
+	testHostErr        error
+	testForwardLatency time.Duration
+	testForwardErr     error
 }
 
 func (f *fakeRuntime) Snapshot() ([]biz.RuntimeStatus, error) {
@@ -119,6 +124,53 @@ func (f *fakeRuntime) RetireHost(id int) {
 func (f *fakeRuntime) PreflightHostChange(_ context.Context, _ model.SSHHost, _ []biz.AffectedForward) map[int]string {
 	f.operations = append(f.operations, "preflight")
 	return f.preflight
+}
+func (f *fakeRuntime) TestSSHHostConnection(_ context.Context, host model.SSHHost) error {
+	f.testedHost = host
+	return f.testHostErr
+}
+func (f *fakeRuntime) TestForwardConnection(_ context.Context, forward model.Forward) (time.Duration, error) {
+	f.testedForward = forward
+	return f.testForwardLatency, f.testForwardErr
+}
+
+func TestConnectionChecksUseResolvedSecretsWithoutMutatingVault(t *testing.T) {
+	store := &memStore{data: model.VaultData{Version: 1, SSHHosts: []model.SSHHost{{
+		ID: 1, Name: "db-bastion", Host: "bastion.example.test", Port: 22, User: "ops",
+		AuthType: "password", Password: "saved-secret",
+	}}}}
+	runtime := &fakeRuntime{testForwardLatency: 37 * time.Millisecond}
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime,
+		Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{},
+	})
+
+	_, err := service.TestSSHHostConnection(context.Background(), application.TestSSHHostConnectionCommand{
+		Host:         application.SSHHostInput{ID: 1, Name: "db-bastion", Host: "bastion.example.test", Port: 22, User: "ops", AuthType: "password"},
+		SecretAction: biz.SecretKeep,
+	})
+	if err != nil {
+		t.Fatalf("test ssh host connection: %v", err)
+	}
+	if runtime.testedHost.Password != "saved-secret" {
+		t.Fatalf("tested host secret = %q, want resolved saved secret", runtime.testedHost.Password)
+	}
+	if store.updates != 0 {
+		t.Fatalf("connection test must not mutate vault, updates=%d", store.updates)
+	}
+
+	result, err := service.TestForwardConnection(context.Background(), application.TestForwardConnectionCommand{Forward: model.Forward{
+		Name: "orders", Mode: "local", FolderID: 1, ChainHostIDs: []int{1}, LocalHost: "127.0.0.1", LocalPort: 15432, RemoteHost: "db.internal", RemotePort: 5432,
+	}})
+	if err != nil {
+		t.Fatalf("test forward connection: %v", err)
+	}
+	if result.LatencyMs != 37 {
+		t.Fatalf("latency = %d, want 37", result.LatencyMs)
+	}
+	if runtime.testedForward.RemoteHost != "db.internal" || store.updates != 0 || runtime.starts != 0 {
+		t.Fatalf("forward test caused an unexpected side effect: forward=%+v updates=%d starts=%d", runtime.testedForward, store.updates, runtime.starts)
+	}
 }
 
 type fakeRoutes struct {

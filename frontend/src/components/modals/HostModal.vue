@@ -9,9 +9,11 @@ defineProps({
   form: { type: Object, required: true },
   validationError: { type: String, default: '' },
   restartPreview: { type: Object, default: null },
-  busy: { type: Boolean, default: false }
+  busy: { type: Boolean, default: false },
+  testStatus: { type: String, default: 'idle' },
+  testMessage: { type: String, default: '' }
 })
-defineEmits(['close', 'submit', 'confirm-restart', 'back-to-edit'])
+defineEmits(['close', 'submit', 'test-connection', 'confirm-restart', 'back-to-edit'])
 const { t } = useI18n()
 </script>
 
@@ -29,6 +31,13 @@ const { t } = useI18n()
     </fieldset>
     <div v-if="validationError" class="form-error mt-2" role="alert">{{ validationError }}</div>
     <template #footer>
+      <div v-if="!restartPreview" class="dialog-left-actions">
+        <button type="button" class="btn btn-outline-primary" :disabled="busy" @click="$emit('test-connection')">
+          <span v-if="testStatus === 'testing'" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+          {{ testStatus === 'testing' ? t('hosts.modal.testing') : t('hosts.modal.testConnection') }}
+        </button>
+        <span v-if="testMessage" class="field-note ms-2" :class="testStatus === 'success' ? 'text-success' : 'text-danger'" role="status" aria-live="polite">{{ testMessage }}</span>
+      </div>
       <button v-if="restartPreview" type="button" class="btn btn-outline-secondary" data-dialog-initial-focus :disabled="busy" @click="$emit('back-to-edit')">{{ t('hosts.restart.back') }}</button>
       <button v-else type="button" class="btn btn-outline-secondary" data-dialog-initial-focus :disabled="busy" @click="$emit('close')">{{ t('app.common.cancel') }}</button>
       <button v-if="restartPreview" type="button" class="btn btn-warning" :disabled="busy" @click="$emit('confirm-restart')">{{ t('hosts.restart.confirm') }}</button>

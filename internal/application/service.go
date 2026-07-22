@@ -55,6 +55,8 @@ type RuntimePort interface {
 	Resume(context.Context, biz.RuntimeSuspendPlan) biz.RuntimeResumeResult
 	AffectedForHost(int) []biz.AffectedForward
 	PreflightHostChange(context.Context, model.SSHHost, []biz.AffectedForward) map[int]string
+	TestSSHHostConnection(context.Context, model.SSHHost) error
+	TestForwardConnection(context.Context, model.Forward) (time.Duration, error)
 	LocalListenerOwner(string, int) (int, bool)
 	RetireHost(int)
 }
@@ -684,6 +686,42 @@ func (s *Service) SaveSSHHost(ctx context.Context, command SaveSSHHostCommand) (
 		return result, nil
 	}
 	return s.saveSSHHostWithoutIdentityChange(ctx, command, preview.AcceptedRevision)
+}
+
+// TestSSHHostConnection 仅使用草稿执行 SSH 握手、认证与主机指纹核验；不写 Vault、
+// 不启动或影响任何 Forward。已有主机的 SecretKeep 会在后端从 Vault 解析秘密。
+func (s *Service) TestSSHHostConnection(ctx context.Context, command TestSSHHostConnectionCommand) (ConnectionTestResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ConnectionTestResult{}, err
+	}
+	host, _, err := s.catalog.PreviewSSHHostSecure(biz.SaveSSHHostRequest{
+		Host: command.Host.model(), SecretAction: command.SecretAction, SecretInput: command.SecretInput,
+	})
+	if err != nil {
+		return ConnectionTestResult{}, err
+	}
+	err = s.NetworkOperation(ctx, func() error {
+		return s.runtime.TestSSHHostConnection(ctx, host)
+	})
+	return ConnectionTestResult{}, err
+}
+
+// TestForwardConnection 校验未保存的 Forward 草稿所需本地监听、SSH 主机链与远端目标，
+// 并返回 SSH keepalive 往返延迟；它不写 Vault，也不会创建运行中的 Forward。
+func (s *Service) TestForwardConnection(ctx context.Context, command TestForwardConnectionCommand) (ConnectionTestResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ConnectionTestResult{}, err
+	}
+	var latency time.Duration
+	err := s.NetworkOperation(ctx, func() error {
+		var err error
+		latency, err = s.runtime.TestForwardConnection(ctx, command.Forward)
+		return err
+	})
+	if err != nil {
+		return ConnectionTestResult{}, err
+	}
+	return ConnectionTestResult{LatencyMs: latency.Milliseconds()}, nil
 }
 
 func (s *Service) saveSSHHostWithoutIdentityChange(ctx context.Context, command SaveSSHHostCommand, expectedRevision string) (SaveSSHHostResult, error) {

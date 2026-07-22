@@ -99,19 +99,26 @@ const hostValidationError = ref('')
 const hostSaveBusy = ref(false)
 const pendingHostChange = ref(null)
 const hostForm = reactive(createSSHHostDraft(props.sshHostDefaults))
+const hostTest = reactive({ status: 'idle', message: '' })
+
+function resetHostTest() {
+  hostTest.status = 'idle'
+  hostTest.message = ''
+}
 
 function resetHostChangePreview() {
   pendingHostChange.value = null
 }
 
 function closeHostModal() {
-  if (hostSaveBusy.value) return
+  if (hostSaveBusy.value || hostTest.status === 'testing') return
   finishHostModal()
 }
 
 function finishHostModal() {
   clearSSHHostTransientSecrets(hostForm)
   resetHostChangePreview()
+  resetHostTest()
   hostValidationError.value = ''
   hostModalOpen.value = false
 }
@@ -121,6 +128,7 @@ function openNewHost() {
   editingHostId.value = null
   Object.assign(hostForm, createSSHHostDraft(props.sshHostDefaults))
   resetHostChangePreview()
+  resetHostTest()
   hostValidationError.value = ''
   hostModalOpen.value = true
 }
@@ -132,12 +140,34 @@ function editHost(host) {
   editingHostId.value = host.id
   Object.assign(hostForm, createSSHHostDraft({ ...props.sshHostDefaults, ...host, hasSecret: host.hasSecret === true || !!host.password }))
   resetHostChangePreview()
+  resetHostTest()
   hostValidationError.value = ''
   hostModalOpen.value = true
 }
 
 function validationMessage(code) {
   return code ? t(`hosts.errors.${code}`) : ''
+}
+
+async function testHostConnection() {
+  if (props.configurationLocked || hostSaveBusy.value) return
+  hostForm.id = editingHostId.value || 0
+  const error = validationMessage(validateSSHHostDraft(hostForm))
+  if (error) {
+    hostValidationError.value = error
+    return
+  }
+  hostValidationError.value = ''
+  hostTest.status = 'testing'
+  hostTest.message = ''
+  try {
+    await application.testSSHHostConnection(toSaveSSHHostCommand(hostForm))
+    hostTest.status = 'success'
+    hostTest.message = t('hosts.modal.testPassed')
+  } catch (err) {
+    hostTest.status = 'error'
+    hostTest.message = errorMessage(err)
+  }
 }
 
 async function saveHost() {
@@ -301,9 +331,12 @@ function deleteHost(host) {
     :form="hostForm"
     :validation-error="hostValidationError"
     :restart-preview="pendingHostChange"
-    :busy="hostSaveBusy"
+    :busy="hostSaveBusy || hostTest.status === 'testing'"
+    :test-status="hostTest.status"
+    :test-message="hostTest.message"
     @close="closeHostModal"
     @submit="saveHost"
+    @test-connection="testHostConnection"
     @confirm-restart="commitHostChange"
     @back-to-edit="backToHostEdit"
   />

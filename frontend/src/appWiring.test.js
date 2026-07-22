@@ -48,6 +48,21 @@ test('ForwardModal 真正接入 listenerPreview 状态机', async () => {
   assert.doesNotMatch(source, /catch \(_\)[\s\S]{0,160}portConflict/)
 })
 
+test('SSH 主机和 Forward 编辑器都提供不会保存配置的连通性检查入口', async () => {
+  const [hosts, forwards, hostModal, forwardModal] = await Promise.all([
+    readFile(new URL('./components/pages/HostsPage.vue', import.meta.url), 'utf8'),
+    readFile(new URL('./components/pages/ForwardsPage.vue', import.meta.url), 'utf8'),
+    readFile(new URL('./components/modals/HostModal.vue', import.meta.url), 'utf8'),
+    readFile(new URL('./components/modals/ForwardModal.vue', import.meta.url), 'utf8')
+  ])
+  assert.match(hosts, /application\.testSSHHostConnection/)
+  assert.match(forwards, /application\.testForwardConnection/)
+  assert.match(hosts, /@test-connection="testHostConnection"/)
+  assert.match(forwards, /@test-connection="testForwardConnection"/)
+  assert.match(hostModal, /\$emit\('test-connection'\)/)
+  assert.match(forwardModal, /\$emit\('test-connection'\)/)
+})
+
 test('公共模态框标题栏将关闭按钮保持在同一行右侧', async () => {
   const source = await readFile(new URL('./styles/app-shell.css', import.meta.url), 'utf8')
   const rule = source.match(/\.dialog-head\s*\{([\s\S]*?)\}/)?.[1] || ''

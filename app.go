@@ -346,6 +346,22 @@ func (a *App) CommitSSHHostChange(command application.CommitSSHHostChangeCommand
 	return a.application.CommitSSHHostChange(context.Background(), command)
 }
 
+// TestSSHHostConnectionCommand 对未保存的 SSH 主机草稿执行真实连通性检查，不产生持久化或运行时副作用。
+func (a *App) TestSSHHostConnectionCommand(command application.TestSSHHostConnectionCommand) (application.ConnectionTestResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return application.ConnectionTestResult{}, err
+	}
+	return a.application.TestSSHHostConnection(context.Background(), command)
+}
+
+// TestForwardConnectionCommand 对未保存的 Forward 草稿检查本地监听、SSH 链路及远端目标，不启动 Forward。
+func (a *App) TestForwardConnectionCommand(command application.TestForwardConnectionCommand) (application.ConnectionTestResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return application.ConnectionTestResult{}, err
+	}
+	return a.application.TestForwardConnection(context.Background(), command)
+}
+
 // SaveForward 新建（ID 为 0）或更新 Forward；运行中的 Forward 必须先停止再编辑。
 func (a *App) SaveForward(forward model.Forward) (model.Forward, error) {
 	if err := a.ensureReady(); err != nil {

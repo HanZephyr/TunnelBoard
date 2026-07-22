@@ -553,6 +553,23 @@ func (b *RuntimeBiz) PreflightHostChange(ctx context.Context, proposed model.SSH
 	return result
 }
 
+// TestSSHHostConnection 使用独占短连接验证草稿主机的握手、认证和指纹；绝不进入连接池。
+func (b *RuntimeBiz) TestSSHHostConnection(ctx context.Context, host model.SSHHost) error {
+	return forward.TestSSHChainConnection(ctx, []model.SSHHost{host}, b.hostKeyVerifier())
+}
+
+// TestForwardConnection 使用独占短连接检查未持久化的 Forward 草稿；不修改 Runtime 状态。
+func (b *RuntimeBiz) TestForwardConnection(ctx context.Context, fw model.Forward) (time.Duration, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	hosts, err := b.catalog.ResolveChain(fw)
+	if err != nil {
+		return 0, err
+	}
+	return forward.TestForwardConnection(fw, hosts, b.hostKeyVerifier())
+}
+
 // Status 返回单条 Forward 的运行时状态；从未启动过返回 false。
 func (b *RuntimeBiz) Status(id int) (RuntimeStatus, bool) {
 	b.mu.Lock()

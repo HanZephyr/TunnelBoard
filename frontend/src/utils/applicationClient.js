@@ -23,6 +23,12 @@ export function createApplicationClient(bindings = runtimeBindings()) {
     async commitSSHHostChange(command) {
       return invoke('CommitSSHHostChange', command)
     },
+    async testSSHHostConnection(command) {
+      return invoke('TestSSHHostConnectionCommand', command)
+    },
+    async testForwardConnection(command) {
+      return invoke('TestForwardConnectionCommand', command)
+    },
     async moveForwards(command) {
       return invoke('MoveForwardsCommand', command)
     },

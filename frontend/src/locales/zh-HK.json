@@ -153,7 +153,10 @@
             "descriptionPlaceholder": "選填",
             "newHostToggle": "新增主機",
             "newHostSave": "儲存並加入",
-            "newHostPersists": "儲存主機是獨立操作；即使稍後取消 Forward，該主機仍會保留。"
+            "newHostPersists": "儲存主機是獨立操作；即使稍後取消 Forward，該主機仍會保留。",
+            "testConnection": "測試連線",
+            "testing": "測試中…",
+            "testPassedWithLatency": "連線測試通過，SSH 延遲：{latency}。"
         },
         "errors": {
             "nameRequired": "名稱不可留空。",
@@ -238,7 +241,10 @@
             "hostKeyAlgorithms": "主機金鑰演算法",
             "hostKeyAlgorithmsPlaceholder": "例如：ssh-ed25519,rsa-sha2-512",
             "notes": "備註",
-            "notesPlaceholder": "選填"
+            "notesPlaceholder": "選填",
+            "testConnection": "測試連線",
+            "testing": "測試中…",
+            "testPassed": "SSH 連線測試通過。"
         },
         "errors": {
             "nameRequired": "名稱不可留空。",

@@ -130,6 +130,24 @@ type SaveSSHHostResult struct {
 	EventSequence      uint64         `json:"eventSequence"`
 }
 
+// TestSSHHostConnectionCommand 携带一次未持久化的 SSH 主机草稿。
+// SecretAction 与保存命令一致，确保编辑已有主机时可以只在 Vault 内解析既有秘密。
+type TestSSHHostConnectionCommand struct {
+	Host         SSHHostInput     `json:"host"`
+	SecretAction biz.SecretAction `json:"secretAction"`
+	SecretInput  string           `json:"secretInput,omitempty"`
+}
+
+// TestForwardConnectionCommand 携带一次未持久化的 Forward 草稿。
+// 所引用 SSH 主机始终由 Vault 解析，浏览器端不接触其认证秘密。
+type TestForwardConnectionCommand struct {
+	Forward model.Forward `json:"forward"`
+}
+
+type ConnectionTestResult struct {
+	LatencyMs int64 `json:"latencyMs,omitempty"`
+}
+
 type SSHHostChangePreview struct {
 	Token             string                `json:"token"`
 	ExpiresAt         time.Time             `json:"expiresAt"`
