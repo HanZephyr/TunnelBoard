@@ -39,3 +39,6 @@ build/bin/
 
 # user-exported artifacts
 logs/
+
+# Local Codex code graph index and daemon state
+.codegraph/
