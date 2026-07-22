@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { errorMessage } from '../../utils/backend'
 import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
+import { routeAppliedView as deriveRouteAppliedView } from '../../modules/routeAppliedView'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import StatusChip from '../common/StatusChip.vue'
@@ -375,25 +376,7 @@ async function retryRoute(route) {
 }
 
 function routeAppliedView(route) {
-  const status = statusOf(route.id)
-  if (!status) return { status: 'reconnecting', label: t('routes.status.unknown') }
-  const state = status.state || status.status
-  const states = {
-    applied: ['running', 'routes.status.applied'],
-    hosts_only: ['running', 'routes.status.hostsOnly'],
-    pending: ['reconnecting', 'routes.status.pending'],
-    conflict: ['error', 'routes.status.portConflict'],
-    error: ['error', 'routes.status.error'],
-    unknown: ['reconnecting', 'routes.status.unknown'],
-    cleanup_pending: ['reconnecting', 'routes.status.cleanupPending'],
-    quarantined: ['reconnecting', 'routes.status.quarantined']
-  }
-  if (states[state]) return { status: states[state][0], label: t(states[state][1]) }
-  if (status.portConflict) return { status: 'error', label: t('routes.status.portConflict') }
-  if (route.caddyEnabled && status.caddyRunning) return { status: 'running', label: t('routes.status.applied') }
-  if (route.hostsEnabled && status.hostsApplied) return { status: 'running', label: t('routes.status.hostsOnly') }
-  if (!route.hostsEnabled && !route.caddyEnabled) return { status: 'stopped', label: t('routes.status.notDesired') }
-  return { status: 'reconnecting', label: t('routes.status.unknown') }
+  return deriveRouteAppliedView(route, statusOf(route.id), t)
 }
 
 // ---- Route 删除（后端负责撤销 hosts / Caddy）----

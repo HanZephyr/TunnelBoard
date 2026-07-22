@@ -28,12 +28,10 @@ test('Route 确认前隐藏表单弹窗，取消确认时恢复', async () => {
   assert.match(source, /function cancelRouteConfirm[\s\S]*routeModalOpen\.value = true/)
 })
 
-test('Route 高风险状态不降级为灰色 stopped', async () => {
+test('Route 页面使用独立的状态视图模块', async () => {
   const source = await readFile(new URL('./components/pages/RoutesPage.vue', import.meta.url), 'utf8')
-  assert.match(source, /conflict: \['error'/)
-  assert.match(source, /error: \['error'/)
-  assert.match(source, /cleanup_pending: \['reconnecting'/)
-  assert.match(source, /quarantined: \['reconnecting'/)
+  assert.match(source, /routeAppliedView as deriveRouteAppliedView/)
+  assert.match(source, /deriveRouteAppliedView\(route, statusOf\(route\.id\), t\)/)
 })
 
 test('LogsPage 传递完整 generation cursor 而不是只传 offset', async () => {

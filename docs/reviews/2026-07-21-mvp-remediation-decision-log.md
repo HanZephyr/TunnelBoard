@@ -3722,6 +3722,7 @@ interface SSHHostDraft {
 | --- | --- | --- |
 | 2026-07-21 | SEC-01 | 放弃持久 Windows 服务方案，确认采用单次应用生命周期内复用的临时高完整性 Helper |
 | 2026-07-22 | SEC-01/REL-01 | 面向轻量开源 portable 分发，取消 Authenticode 与受保护安装目录作为 hosts 能力前置；主程序启动前仍以嵌入的 Helper SHA-256 build pin 拒绝单独替换的 Helper，并保留随机管道、PID、父进程名、协议和会话生命周期校验。此模式接受未知发布者 UAC，且不承诺抵御整个用户可写 bundle 被同权限替换。 |
+| 2026-07-22 | UI-03 | `RouteAppliedState.applied` 是全局协调成功事实，单条 Route 的徽章必须再结合该 Route 的 `hostsEnabled`、`hostsApplied`、`caddyEnabled` 和 `caddyRunning` 派生；未启用 Caddy 的 Route 不得显示“hosts 与 Caddy 已生效”。 |
 | 2026-07-21 | SEC-02 | 放弃机器级根 CA；确认共享安装、每用户 Caddy 数据和 CurrentUser Root 信任模型 |
 | 2026-07-21 | SEC-01 | 受 SEC-02 影响，Helper 常规白名单收紧为 hosts 操作，CA 仅保留无任意参数的一次性旧版迁移 |
 | 2026-07-21 | SEC-03 | 固定 TCP Admin API 改为每应用 generation 的权限化 AF_UNIX socket，并以进程句柄建立 Caddy 所有权 |
