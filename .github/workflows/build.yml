@@ -43,15 +43,12 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
         working-directory: frontend
-      - name: Frontend production build
-        run: pnpm run build
-        working-directory: frontend
+      - name: Generate Wails bindings and build frontend
+        run: wails build -clean -platform windows/amd64
       - name: Go tests
         run: go test ./...
       - name: Go vet
         run: go vet ./...
-      - name: Generate Wails bindings from current Go source
-        run: wails build -clean -platform windows/amd64
       - name: Release Module contract tests
         run: uv run -m unittest scripts.tests.test_release -v
 
