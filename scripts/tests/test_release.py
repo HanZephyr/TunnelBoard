@@ -211,6 +211,14 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn("Linux: not delivered", workflow)
         self.assertNotIn("build-linux:", workflow)
 
+    def test_draft_release_includes_unsigned_macos_dmg_with_gatekeeper_notice(self) -> None:
+        workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+        draft_release = workflow.split("  draft-release:", 1)[1]
+        self.assertIn("Download the verified macOS candidate", draft_release)
+        self.assertIn("artifacts/macos/*.dmg", draft_release)
+        self.assertIn("macOS: ad-hoc signed and not notarized", draft_release)
+        self.assertIn("Gatekeeper", draft_release)
+
     def test_windows_installer_removes_legacy_service_before_copying_files(self) -> None:
         installer = (ROOT / "scripts" / "windows-installer" / "Product.wxs").read_text(encoding="utf-8")
         cleanup = installer.find('Id="CleanupLegacyService"')

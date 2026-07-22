@@ -196,6 +196,14 @@ jobs:
         with:
           name: tunnelboard-windows-${{ github.run_id }}
           path: artifacts/windows
+      - name: Download the verified macOS candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tunnelboard-macos-${{ github.run_id }}
+          path: artifacts/macos
+      - name: Combine release checksums
+        shell: bash
+        run: cat artifacts/windows/SHA256SUMS artifacts/macos/SHA256SUMS > artifacts/SHA256SUMS
       - name: Create draft Release for real-machine UAC acceptance
         env:
           GH_TOKEN: ${{ github.token }}
@@ -203,9 +211,11 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             artifacts/windows/*-setup.exe \
             artifacts/windows/*.manifest.json \
-            artifacts/windows/SHA256SUMS \
+            artifacts/macos/*.dmg \
+            artifacts/macos/*.manifest.json \
+            artifacts/SHA256SUMS \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --draft \
             --title "TunnelBoard ${GITHUB_REF_NAME}" \
-            --notes $'Windows x64 candidate. Publish only after the downloaded installer passes the real desktop UAC smoke.\n\nmacOS: withheld pending amd64/arm64 privileged real-machine validation.\nLinux: not delivered for this MVP.'
+            --notes $'Windows x64 candidate. Publish only after the downloaded installer passes the real desktop UAC smoke.\n\nmacOS: ad-hoc signed and not notarized. Gatekeeper will require a manual user override; the amd64/arm64 privileged real-machine validation remains pending.\nLinux: not delivered for this MVP.'
