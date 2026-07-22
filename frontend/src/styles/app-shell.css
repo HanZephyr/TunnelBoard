@@ -1731,6 +1731,9 @@
 }
 
 .dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 14px 20px 12px;
   border-bottom: 1px solid var(--tb-border);
   flex-shrink: 0;

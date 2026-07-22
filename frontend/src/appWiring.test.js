@@ -50,6 +50,14 @@ test('ForwardModal 真正接入 listenerPreview 状态机', async () => {
   assert.doesNotMatch(source, /catch \(_\)[\s\S]{0,160}portConflict/)
 })
 
+test('公共模态框标题栏将关闭按钮保持在同一行右侧', async () => {
+  const source = await readFile(new URL('./styles/app-shell.css', import.meta.url), 'utf8')
+  const rule = source.match(/\.dialog-head\s*\{([\s\S]*?)\}/)?.[1] || ''
+  assert.match(rule, /display:\s*flex/)
+  assert.match(rule, /align-items:\s*center/)
+  assert.match(rule, /justify-content:\s*space-between/)
+})
+
 test('更新偏好失败后保持关闭并提供重试', async () => {
   const source = await readFile(new URL('./components/pages/SettingsPage.vue', import.meta.url), 'utf8')
   assert.match(source, /updatePreferencePhase\.value = 'error'/)
