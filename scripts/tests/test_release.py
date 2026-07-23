@@ -27,6 +27,16 @@ def fake_pe(payload: bytes, machine: int = 0x8664) -> bytes:
     return bytes(data)
 
 
+def fake_elf(payload: bytes, machine: int = 0x003E) -> bytes:
+    data = bytearray(20 + len(payload))
+    data[:4] = b"\x7fELF"
+    data[4] = 2
+    data[5] = 1
+    data[18:20] = machine.to_bytes(2, "little")
+    data[20:] = payload
+    return bytes(data)
+
+
 class ReleaseVerifierCLITest(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -175,17 +185,131 @@ class ReleaseVerifierCLITest(unittest.TestCase):
         self.assertIn("unsafe", result.stderr.lower())
 
 
+class LinuxPayloadVerifierCLITest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.root = Path(self.tempdir.name) / "TunnelBoard"
+        files = {
+            "opt/tunnelboard/tunnelboard": (fake_elf(b"app"), "application", True),
+            "opt/tunnelboard/caddy/caddy": (fake_elf(b"caddy"), "caddy", True),
+            "opt/tunnelboard/LICENSES/TunnelBoard.txt": (b"license", "license", False),
+            "usr/libexec/tunnelboard/tunnelboard-linux-helper": (fake_elf(b"helper"), "privileged_helper", True),
+            "usr/share/polkit-1/actions/io.github.hanzephyr.TunnelBoard.policy": (b"policy", "polkit_policy", False),
+            "usr/share/applications/io.github.hanzephyr.TunnelBoard.desktop": (b"desktop", "desktop_entry", False),
+        }
+        manifest_files = []
+        for rel, (payload, role, executable) in files.items():
+            path = self.root / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+            manifest_files.append({"path": rel, "role": role, "size": len(payload), "sha256": digest(payload), "executable": executable})
+        manifest = {
+            "schema_version": 1,
+            "product": "TunnelBoard",
+            "version": "1.2.3",
+            "git_commit": "a" * 40,
+            "build": {"workflow": "test", "run_id": "1"},
+            "target": {
+                "name": "linux-debian-amd64",
+                "os": "linux",
+                "arch": "amd64",
+                "minimum_system": "Debian 12 / Ubuntu 24.04 LTS",
+            },
+            "files": manifest_files,
+            "embedded_assets": [],
+            "caddy": {
+                "version": "2.11.4",
+                "result_binary_sha256": digest(fake_elf(b"caddy")),
+                "inputs": [{"target": "linux-amd64", "binary_sha256": digest(fake_elf(b"caddy"))}],
+            },
+            "tools": {},
+            "signing": {"required": False, "status": "unsigned-ci"},
+            "support": {"real_machine_smoke": "pending"},
+        }
+        manifest_path = self.root / "opt" / "tunnelboard" / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        self.lock = Path(self.tempdir.name) / "test-caddy-lock.json"
+        self.lock.write_text(
+            json.dumps(
+                {"schema_version": 1, "version": "2.11.4", "targets": {"linux-amd64": {"binary_sha256": digest(fake_elf(b"caddy"))}}}
+            ),
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        self.tempdir.cleanup()
+
+    def test_linux_payload_manifest_covers_files_outside_opt(self) -> None:
+        archive = Path(self.tempdir.name) / "linux-payload.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            for path in self.root.rglob("*"):
+                if path.is_file():
+                    zf.write(path, Path("TunnelBoard") / path.relative_to(self.root))
+        result = subprocess.run(
+            [sys.executable, str(RELEASE), "verify", "--artifact", str(archive), "--supply-chain-lock", str(self.lock)],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("VERIFY PASS linux-debian-amd64", result.stdout)
+
+
 class CaddySupplyChainLockTest(unittest.TestCase):
     def test_supported_targets_have_pinned_archive_and_binary_hashes(self) -> None:
         lock = json.loads(LOCK.read_text(encoding="utf-8"))
         self.assertEqual(lock["version"], "2.11.4")
-        for target in ("windows-amd64", "darwin-amd64", "darwin-arm64", "linux-amd64"):
+        for target in ("windows-amd64", "darwin-amd64", "darwin-arm64", "linux-amd64", "linux-arm64"):
             entry = lock["targets"][target]
             self.assertTrue(entry["url"].startswith("https://github.com/caddyserver/caddy/releases/download/v2.11.4/"))
             self.assertRegex(entry["archive_sha256"], r"^[0-9a-f]{64}$")
             self.assertRegex(entry["binary_sha256"], r"^[0-9a-f]{64}$")
             self.assertGreater(entry["archive_size"], 1_000_000)
             self.assertLess(entry["max_download_bytes"], 25_000_000)
+
+
+class LinuxReleaseTargetCLITest(unittest.TestCase):
+    def test_linux_native_package_targets_are_recognized(self) -> None:
+        for target in (
+            "linux-debian-amd64",
+            "linux-debian-arm64",
+            "linux-rhel-amd64",
+            "linux-rhel-arm64",
+        ):
+            result = subprocess.run(
+                [sys.executable, str(RELEASE), "build", "--target", target, "--version", "0.0.0-ci.1"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+            )
+            self.assertNotIn("invalid choice", result.stderr, target)
+            self.assertIn("must be built on a Linux runner", result.stderr, target)
+
+
+class LinuxNativePackagingContractTest(unittest.TestCase):
+    def test_linux_package_metadata_only_installs_managed_payload_and_cleanup_hook(self) -> None:
+        packaging = ROOT / "scripts" / "linux-packaging"
+        debian_control = (packaging / "debian" / "control.in").read_text(encoding="utf-8")
+        debian_prerm = (packaging / "debian" / "prerm").read_text(encoding="utf-8")
+        rpm_spec = (packaging / "rpm" / "tunnelboard.spec.in").read_text(encoding="utf-8")
+        policy = (packaging / "io.github.hanzephyr.TunnelBoard.policy").read_text(encoding="utf-8")
+        desktop = (packaging / "io.github.hanzephyr.TunnelBoard.desktop").read_text(encoding="utf-8")
+
+        self.assertIn("Package: tunnelboard", debian_control)
+        self.assertIn("libwebkit2gtk-4.1-0", debian_control)
+        self.assertIn("/usr/libexec/tunnelboard/tunnelboard-linux-helper package-uninstall", debian_prerm)
+        self.assertIn("/usr/libexec/tunnelboard/tunnelboard-linux-helper package-uninstall", rpm_spec)
+        self.assertIn("Requires:       webkit2gtk3", rpm_spec)
+        self.assertIn("remove|deconfigure", debian_prerm)
+        self.assertNotIn("upgrade)", debian_prerm)
+        self.assertIn("%preun", rpm_spec)
+        self.assertNotIn("%postun", rpm_spec)
+        self.assertIn('[ "$1" -eq 0 ]', rpm_spec)
+        self.assertIn("io.github.hanzephyr.TunnelBoard.manage-system", policy)
+        self.assertIn("auth_admin_keep", policy)
+        self.assertIn("Exec=/opt/tunnelboard/tunnelboard", desktop)
 
 
 class GitHubActionsReleaseContractTest(unittest.TestCase):
@@ -209,10 +333,18 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertNotIn("build/bin/*.exe", workflow)
         self.assertNotIn("artifacts/**/*", workflow)
 
-    def test_linux_is_explicitly_not_published(self) -> None:
+    def test_linux_native_packages_are_built_and_verified_before_draft_release(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
-        self.assertIn("Linux: not delivered", workflow)
-        self.assertNotIn("build-linux:", workflow)
+        self.assertIn("build-linux:", workflow)
+        self.assertIn("linux-debian-amd64", workflow)
+        self.assertIn("linux-debian-arm64", workflow)
+        self.assertIn("linux-rhel-amd64", workflow)
+        self.assertIn("linux-rhel-arm64", workflow)
+        self.assertIn("verify-linux-package", workflow)
+        self.assertIn("TUNNELBOARD_GPG_SIGNING_KEY_BASE64", workflow)
+        self.assertIn("TUNNELBOARD_GPG_KEY_FINGERPRINT", workflow)
+        self.assertIn("--draft", workflow)
+        self.assertIn("Linux native packages remain draft", workflow)
 
     def test_draft_release_includes_unsigned_macos_dmg_with_gatekeeper_notice(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")

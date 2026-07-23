@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1.0/policyconfig.dtd">
+<policyconfig>
+  <vendor>TunnelBoard</vendor>
+  <vendor_url>https://github.com/HanZephyr/TunnelBoard</vendor_url>
+  <action id="io.github.hanzephyr.TunnelBoard.manage-system">
+    <description>Manage TunnelBoard local network integration</description>
+    <message>Authentication is required to update TunnelBoard managed hosts and local CA trust.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

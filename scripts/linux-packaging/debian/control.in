@@ -1,0 +1,11 @@
+Package: tunnelboard
+Version: @VERSION@
+Section: net
+Priority: optional
+Architecture: @ARCH@
+Maintainer: TunnelBoard Release Team <release@tunnelboard.local>
+Depends: libgtk-3-0, libwebkit2gtk-4.1-0 | libwebkit2gtk-4.0-37, policykit-1
+Recommends: xdg-utils
+Description: Local SSH tunnel and HTTPS route manager
+ TunnelBoard manages local SSH forwards and optional local HTTPS routes from a
+ graphical desktop session. It does not install a system service.

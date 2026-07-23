@@ -46,6 +46,17 @@
       "max_download_bytes": 19000000,
       "archive_sha256": "527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9",
       "binary_sha256": "b7105518e3ed1c0761f232e44fc09345535533c9cb0abf0e12809416c7ac64d9"
+    },
+    "linux-arm64": {
+      "os": "linux",
+      "arch": "arm64",
+      "url": "https://github.com/caddyserver/caddy/releases/download/v2.11.4/caddy_2.11.4_linux_arm64.tar.gz",
+      "archive_format": "tar.gz",
+      "archive_member": "caddy",
+      "archive_size": 15704974,
+      "max_download_bytes": 17000000,
+      "archive_sha256": "52d42ae12b3462097e9868da6dfed3c9648ae12edd3b3638102312af84cb6904",
+      "binary_sha256": "e1f904038fc11ca897ac5a12fdacfb2a7add02a8720c426d562a37f6fdad2afe"
     }
   }
 }

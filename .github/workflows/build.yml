@@ -138,6 +138,83 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  build-linux:
+    needs: quality-gate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-debian-amd64
+            runner: ubuntu-24.04
+            container: debian:12
+            family: debian
+          - target: linux-debian-arm64
+            runner: ubuntu-24.04-arm
+            container: debian:12
+            family: debian
+          - target: linux-rhel-amd64
+            runner: ubuntu-24.04
+            container: rockylinux:9
+            family: rhel
+          - target: linux-rhel-arm64
+            runner: ubuntu-24.04-arm
+            container: rockylinux:9
+            family: rhel
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install native packaging and WebKit prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.family }}" = "debian" ]; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              build-essential cpio dpkg-dev file gcc g++ git gnupg libgtk-3-dev \
+              libwebkit2gtk-4.0-dev librsvg2-dev pkg-config python3-pip python3-venv rpm
+          else
+            dnf install -y \
+              cpio file gcc gcc-c++ git gnupg2 gtk3-devel librsvg2-devel make \
+              python3-pip python3 rpm-build rpm-sign webkit2gtk3-devel
+          fi
+          python3 -m pip install --break-system-packages --no-cache-dir uv==0.8.14 || python3 -m pip install --no-cache-dir uv==0.8.14
+      - name: Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Setup pnpm
+        uses: pnpm/action-setup@a7487c7e89a18df4991f7f222e4898a00d66ddda # v4.1.0
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - name: Build unsigned native CI candidate
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: uv run scripts/release.py build --target "${{ matrix.target }}" --version "0.0.0-ci.${{ github.run_number }}"
+      - name: Build GPG-signed native tag candidate
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          TUNNELBOARD_GPG_SIGNING_KEY_BASE64: ${{ secrets.TUNNELBOARD_GPG_SIGNING_KEY_BASE64 }}
+          TUNNELBOARD_GPG_KEY_FINGERPRINT: ${{ vars.TUNNELBOARD_GPG_KEY_FINGERPRINT }}
+        run: uv run scripts/release.py build --target "${{ matrix.target }}" --version "${{ github.ref_name }}" --require-signing
+      - name: Upload exact Linux native package candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tunnelboard-${{ matrix.target }}-${{ github.run_id }}
+          path: build/release/${{ matrix.target }}/out
+          if-no-files-found: error
+          retention-days: 7
+
   verify-artifacts:
     needs: [build-windows, build-macos]
     runs-on: windows-latest
@@ -188,8 +265,85 @@ jobs:
           $bundle = $bundles[0].FullName
           uv run scripts/release.py verify --artifact $bundle
 
+  verify-linux-artifacts:
+    needs: build-linux
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-debian-amd64
+            extension: deb
+            runner: ubuntu-24.04
+            container: debian:12
+            family: debian
+          - target: linux-debian-arm64
+            extension: deb
+            runner: ubuntu-24.04-arm
+            container: debian:12
+            family: debian
+          - target: linux-rhel-amd64
+            extension: rpm
+            runner: ubuntu-24.04
+            container: rockylinux:9
+            family: rhel
+          - target: linux-rhel-arm64
+            extension: rpm
+            runner: ubuntu-24.04-arm
+            container: rockylinux:9
+            family: rhel
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    steps:
+      - name: Checkout verifier from the same commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install package verification prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.family }}" = "debian" ]; then
+            apt-get update
+            DEBIAN_FRONTEND=noninteractive apt-get install -y cpio dpkg-dev gnupg python3-pip rpm
+          else
+            dnf install -y cpio gnupg2 python3-pip rpm
+          fi
+          python3 -m pip install --break-system-packages --no-cache-dir uv==0.8.14 || python3 -m pip install --no-cache-dir uv==0.8.14
+      - name: Download exact Linux native candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tunnelboard-${{ matrix.target }}-${{ github.run_id }}
+          path: artifacts/linux/${{ matrix.target }}
+      - name: Verify package metadata, payload manifest and ELF architectures
+        shell: bash
+        run: |
+          set -euo pipefail
+          package="$(find "artifacts/linux/${{ matrix.target }}" -maxdepth 1 -type f -name "*.${{ matrix.extension }}" -print -quit)"
+          test -n "$package"
+          test "$(find "artifacts/linux/${{ matrix.target }}" -maxdepth 1 -type f -name "*.${{ matrix.extension }}" | wc -l)" -eq 1
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            public_key="$(find "artifacts/linux/${{ matrix.target }}" -maxdepth 1 -type f -name '*.SHA256SUMS.public-key.asc' -print -quit)"
+            test -n "$public_key"
+            if [ "${{ matrix.extension }}" = "rpm" ]; then
+              uv run scripts/release.py verify-linux-package --artifact "$package" --require-signing --rpm-public-key "$public_key"
+            else
+              uv run scripts/release.py verify-linux-package --artifact "$package" --require-signing
+            fi
+          else
+            uv run scripts/release.py verify-linux-package --artifact "$package"
+          fi
+      - name: Verify tag GPG checksum signature
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          directory="artifacts/linux/${{ matrix.target }}"
+          checksums="$(find "$directory" -maxdepth 1 -type f -name '*.SHA256SUMS' -print -quit)"
+          signature="$(find "$directory" -maxdepth 1 -type f -name '*.SHA256SUMS.asc' -print -quit)"
+          public_key="$(find "$directory" -maxdepth 1 -type f -name '*.SHA256SUMS.public-key.asc' -print -quit)"
+          test -n "$checksums" && test -n "$signature" && test -n "$public_key"
+          uv run scripts/release.py verify-linux-checksums --checksums "$checksums" --signature "$signature" --public-key "$public_key"
+
   draft-release:
-    needs: verify-artifacts
+    needs: [verify-artifacts, verify-linux-artifacts]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -205,10 +359,31 @@ jobs:
         with:
           name: tunnelboard-macos-${{ github.run_id }}
           path: artifacts/macos
+      - name: Download the verified Debian amd64 candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tunnelboard-linux-debian-amd64-${{ github.run_id }}
+          path: artifacts/linux/debian-amd64
+      - name: Download the verified Debian arm64 candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tunnelboard-linux-debian-arm64-${{ github.run_id }}
+          path: artifacts/linux/debian-arm64
+      - name: Download the verified RHEL amd64 candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tunnelboard-linux-rhel-amd64-${{ github.run_id }}
+          path: artifacts/linux/rhel-amd64
+      - name: Download the verified RHEL arm64 candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tunnelboard-linux-rhel-arm64-${{ github.run_id }}
+          path: artifacts/linux/rhel-arm64
       - name: Combine release checksums
         shell: bash
-        run: cat artifacts/windows/SHA256SUMS artifacts/macos/SHA256SUMS > artifacts/SHA256SUMS
-      - name: Create draft Release for real-machine UAC acceptance
+        run: |
+          cat artifacts/windows/SHA256SUMS artifacts/macos/SHA256SUMS artifacts/linux/*/*.SHA256SUMS > artifacts/SHA256SUMS
+      - name: Create draft Release for real-machine acceptance
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -217,9 +392,15 @@ jobs:
             artifacts/windows/*.manifest.json \
             artifacts/macos/*.dmg \
             artifacts/macos/*.manifest.json \
+            artifacts/linux/*/*.deb \
+            artifacts/linux/*/*.rpm \
+            artifacts/linux/*/*.manifest.json \
+            artifacts/linux/*/*.SHA256SUMS \
+            artifacts/linux/*/*.SHA256SUMS.asc \
+            artifacts/linux/*/*.SHA256SUMS.public-key.asc \
             artifacts/SHA256SUMS \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --draft \
             --title "TunnelBoard ${GITHUB_REF_NAME}" \
-            --notes $'Windows x64 candidate. Publish only after the downloaded installer passes the real desktop UAC smoke.\n\nmacOS: ad-hoc signed and not notarized. Gatekeeper will require a manual user override; the amd64/arm64 privileged real-machine validation remains pending.\nLinux: not delivered for this MVP.'
+            --notes $'Windows x64 candidate. Publish only after the downloaded installer passes the real desktop UAC smoke.\n\nmacOS: ad-hoc signed and not notarized. Gatekeeper will require a manual user override; the amd64/arm64 privileged real-machine validation remains pending.\n\nLinux native packages remain draft until all four packages have GNOME/KDE Wayland real-machine evidence for polkit, system CA, native Firefox/Chromium, tray behavior, XDG autostart, upgrade and uninstall. The attached GPG public key and fingerprint are the verification identity; no APT/DNF repository or in-app updater is implied.'

@@ -1,0 +1,41 @@
+Name:           tunnelboard
+Version:        @VERSION@
+Release:        1%{?dist}
+Summary:        Local SSH tunnel and HTTPS route manager
+License:        Apache-2.0
+BuildArch:      @RPM_ARCH@
+Source0:        tunnelboard-payload.tar.gz
+Requires:       gtk3
+Requires:       webkit2gtk3
+Requires:       polkit
+
+%description
+TunnelBoard manages local SSH forwards and optional local HTTPS routes from a
+graphical desktop session. It does not install a system service.
+
+%prep
+%setup -q -c -T
+tar -xzf %{SOURCE0}
+
+%install
+mkdir -p %{buildroot}
+cp -a opt usr %{buildroot}/
+
+%preun
+if [ "$1" -eq 0 ]; then
+  /usr/libexec/tunnelboard/tunnelboard-linux-helper package-uninstall
+fi
+
+%files
+%dir /opt/tunnelboard
+/opt/tunnelboard/tunnelboard
+/opt/tunnelboard/manifest.json
+%dir /opt/tunnelboard/caddy
+/opt/tunnelboard/caddy/caddy
+%dir /opt/tunnelboard/LICENSES
+/opt/tunnelboard/LICENSES/TunnelBoard.txt
+/opt/tunnelboard/LICENSES/Caddy.txt
+%attr(0755,root,root) /usr/libexec/tunnelboard/tunnelboard-linux-helper
+/usr/share/polkit-1/actions/io.github.hanzephyr.TunnelBoard.policy
+/usr/share/applications/io.github.hanzephyr.TunnelBoard.desktop
+/usr/share/icons/hicolor/256x256/apps/io.github.hanzephyr.TunnelBoard.png

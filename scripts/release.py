@@ -14,6 +14,7 @@ import io
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -31,11 +32,27 @@ from typing import Any
 ROOT = Path(__file__).resolve().parent.parent
 LOCK_PATH = ROOT / "scripts" / "caddy-lock.json"
 RELEASE_ROOT = ROOT / "build" / "release"
+LINUX_PACKAGING_ROOT = ROOT / "scripts" / "linux-packaging"
 MAX_ARTIFACT_BYTES = 1_000_000_000
 RELEASE_TARGETS = {
     "windows-amd64": {"os": "windows", "arch": "amd64", "minimum_system": "Windows 10 1809"},
     "darwin-universal": {"os": "darwin", "arch": "universal", "minimum_system": "macOS 10.15"},
-    "linux-amd64": {"os": "linux", "arch": "amd64", "minimum_system": "not-delivered"},
+    "linux-debian-amd64": {
+        "os": "linux", "arch": "amd64", "package_format": "deb", "distribution": "debian",
+        "minimum_system": "Debian 12 / Ubuntu 24.04 LTS",
+    },
+    "linux-debian-arm64": {
+        "os": "linux", "arch": "arm64", "package_format": "deb", "distribution": "debian",
+        "minimum_system": "Debian 12 / Ubuntu 24.04 LTS",
+    },
+    "linux-rhel-amd64": {
+        "os": "linux", "arch": "amd64", "package_format": "rpm", "distribution": "rhel",
+        "minimum_system": "RHEL-compatible 9+",
+    },
+    "linux-rhel-arm64": {
+        "os": "linux", "arch": "arm64", "package_format": "rpm", "distribution": "rhel",
+        "minimum_system": "RHEL-compatible 9+",
+    },
 }
 
 
@@ -190,10 +207,10 @@ def extract_artifact(artifact: Path, destination: Path) -> Path:
 
 
 def locate_manifest(root: Path) -> Path:
-    manifest = root / "manifest.json"
-    if not manifest.is_file():
-        raise ReleaseError("artifact bundle root must contain manifest.json")
-    return manifest
+    for manifest in (root / "manifest.json", root / "opt" / "tunnelboard" / "manifest.json"):
+        if manifest.is_file():
+            return manifest
+    raise ReleaseError("artifact bundle root must contain manifest.json")
 
 
 def validate_manifest_shape(manifest: dict[str, Any], lock: dict[str, Any]) -> None:
@@ -221,7 +238,7 @@ def verify_bundle_root(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     lock = load_lock(supply_chain_lock)
     validate_manifest_shape(manifest, lock)
-    bundle_root = manifest_path.parent
+    bundle_root = root
     declared: set[str] = set()
     roles: set[str] = set()
     caddy_path: Path | None = None
@@ -247,6 +264,8 @@ def verify_bundle_root(
                 raise ReleaseError("manifest declares multiple Caddy binaries")
             caddy_path = path
         if record.get("role") == "privileged_helper":
+            if helper_path is not None:
+                raise ReleaseError("manifest declares multiple privileged helpers")
             helper_path = path
         if record.get("role") == "application":
             app_path = path
@@ -265,8 +284,21 @@ def verify_bundle_root(
 
     os_name = manifest["target"]["os"]
     required = {"application", "caddy", "license"}
-    if os_name == "windows":
+    if os_name in {"windows", "linux"}:
         required.add("privileged_helper")
+    if os_name == "linux":
+        required.update({"polkit_policy", "desktop_entry"})
+        required_paths = {
+            "opt/tunnelboard/tunnelboard": "application",
+            "opt/tunnelboard/caddy/caddy": "caddy",
+            "usr/libexec/tunnelboard/tunnelboard-linux-helper": "privileged_helper",
+            "usr/share/polkit-1/actions/io.github.hanzephyr.TunnelBoard.policy": "polkit_policy",
+            "usr/share/applications/io.github.hanzephyr.TunnelBoard.desktop": "desktop_entry",
+        }
+        for path, role in required_paths.items():
+            matching = [record for record in manifest["files"] if record.get("path") == path and record.get("role") == role]
+            if len(matching) != 1:
+                raise ReleaseError(f"Linux artifact must declare exactly one {role} at {path}")
     absent_roles = sorted(required - roles)
     if absent_roles:
         raise ReleaseError(f"manifest missing required roles: {', '.join(absent_roles)}")
@@ -277,6 +309,14 @@ def verify_bundle_root(
             if executable is None:
                 raise ReleaseError("Windows artifact is missing a required executable")
             verify_windows_pe_machine(executable, 0x8664)
+    if os_name == "linux":
+        expected_machine = {"amd64": 0x3E, "arm64": 0xB7}.get(manifest["target"]["arch"])
+        if expected_machine is None:
+            raise ReleaseError("unsupported Linux artifact architecture")
+        for executable in (app_path, helper_path, caddy_path):
+            if executable is None:
+                raise ReleaseError("Linux artifact is missing a required executable")
+            verify_linux_elf_machine(executable, expected_machine)
     caddy_record = manifest.get("caddy", {})
     result_digest = sha256_file(caddy_path)
     if result_digest != caddy_record.get("result_binary_sha256"):
@@ -330,6 +370,19 @@ def verify_windows_pe_machine(path: Path, expected: int) -> None:
     machine = int.from_bytes(signature[4:6], "little")
     if machine != expected:
         raise ReleaseError(f"Windows executable architecture mismatch for {path.name}: 0x{machine:04x}")
+
+
+def verify_linux_elf_machine(path: Path, expected: int) -> None:
+    with path.open("rb") as stream:
+        header = stream.read(20)
+    if len(header) < 20 or header[:4] != b"\x7fELF" or header[4] != 2:
+        raise ReleaseError(f"invalid 64-bit ELF executable: {path.name}")
+    endian = {1: "little", 2: "big"}.get(header[5])
+    if endian is None:
+        raise ReleaseError(f"invalid ELF byte order: {path.name}")
+    machine = int.from_bytes(header[18:20], endian)
+    if machine != expected:
+        raise ReleaseError(f"Linux executable architecture mismatch for {path.name}: 0x{machine:04x}")
 
 
 def service_exists() -> bool:
@@ -631,7 +684,7 @@ def command_version(command: list[str]) -> str:
     return text[0] if result.returncode == 0 and text else "unavailable"
 
 
-def run(command: list[str], cwd: Path = ROOT) -> None:
+def run(command: list[str], cwd: Path = ROOT, env: dict[str, str] | None = None) -> None:
     display = subprocess.list2cmdline(command)
     started = time.monotonic()
     print(f"[{datetime.now():%H:%M:%S}] START {display}", flush=True)
@@ -644,6 +697,7 @@ def run(command: list[str], cwd: Path = ROOT) -> None:
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        env=env,
     )
     assert process.stdout is not None
     try:
@@ -696,10 +750,18 @@ def file_role(relative: str, target_os: str) -> str:
         return "license"
     if lowered.endswith("tunnelboard-helper.exe"):
         return "privileged_helper"
+    if lowered.endswith("usr/libexec/tunnelboard/tunnelboard-linux-helper"):
+        return "privileged_helper"
+    if lowered.endswith("usr/share/polkit-1/actions/io.github.hanzephyr.tunnelboard.policy"):
+        return "polkit_policy"
+    if lowered.endswith("usr/share/applications/io.github.hanzephyr.tunnelboard.desktop"):
+        return "desktop_entry"
     if lowered.endswith("caddy.exe") or lowered.endswith("/caddy"):
         return "caddy"
     if (target_os == "windows" and lowered.endswith("tunnelboard.exe")) or (
-        target_os != "windows" and "/macos/tunnelboard" in lowered
+        target_os == "darwin" and "/macos/tunnelboard" in lowered
+    ) or (
+        target_os == "linux" and lowered.endswith("opt/tunnelboard/tunnelboard")
     ):
         return "application"
     return "runtime"
@@ -835,7 +897,7 @@ def write_manifest(
         "helper": helper or {"protocol_version": "not-applicable", "persistent_service": False},
         "support": {
             "real_machine_smoke": "pending",
-            "linux": "not-delivered" if target["os"] != "linux" else "experimental-not-published",
+            "linux": "not-applicable" if target["os"] != "linux" else "candidate-pending-desktop-acceptance",
             "macos_privileged_smoke": "pending" if target["os"] == "darwin" else "not-applicable",
         },
     }
@@ -874,6 +936,308 @@ def prepare_release_root(target: str) -> tuple[Path, Path]:
     stage.mkdir(parents=True)
     output.mkdir(parents=True)
     return stage, output
+
+
+def prepare_linux_release_root(target: str) -> tuple[Path, Path, Path]:
+    target_root = RELEASE_ROOT / target
+    if target_root.exists():
+        shutil.rmtree(target_root)
+    payload = target_root / "payload"
+    output = target_root / "out"
+    scratch = target_root / "scratch"
+    payload.mkdir(parents=True)
+    output.mkdir()
+    scratch.mkdir()
+    return payload, output, scratch
+
+
+def render_template(template: Path, destination: Path, replacements: dict[str, str]) -> None:
+    text = template.read_text(encoding="utf-8")
+    for key, value in replacements.items():
+        text = text.replace(f"@{key}@", value)
+    if re.search(r"@[A-Z_]+@", text):
+        raise ReleaseError(f"unresolved placeholder in {template.name}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text, encoding="utf-8", newline="\n")
+
+
+def linux_arches(arch: str) -> tuple[str, str]:
+    mapping = {"amd64": ("amd64", "x86_64"), "arm64": ("arm64", "aarch64")}
+    try:
+        return mapping[arch]
+    except KeyError as exc:
+        raise ReleaseError(f"unsupported Linux architecture: {arch}") from exc
+
+
+def linux_package_basename(target: str, version: str) -> str:
+    target_info = RELEASE_TARGETS[target]
+    return f"TunnelBoard-{version}-linux-{target_info['distribution']}-{target_info['arch']}"
+
+
+def rpm_version(version: str) -> str:
+    value = version.removeprefix("v").replace("-", ".").replace("_", ".")
+    if not value or any(ch not in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.+" for ch in value):
+        raise ReleaseError("version cannot be represented in an RPM")
+    return value
+
+
+def stage_linux_payload(
+    payload: Path,
+    app: Path,
+    helper: Path,
+    caddy: Path,
+    caddy_version: str,
+) -> None:
+    app_dir = payload / "opt" / "tunnelboard"
+    caddy_dir = app_dir / "caddy"
+    helper_dir = payload / "usr" / "libexec" / "tunnelboard"
+    policy_dir = payload / "usr" / "share" / "polkit-1" / "actions"
+    desktop_dir = payload / "usr" / "share" / "applications"
+    icon_dir = payload / "usr" / "share" / "icons" / "hicolor" / "256x256" / "apps"
+    for directory in (app_dir, caddy_dir, helper_dir, policy_dir, desktop_dir, icon_dir):
+        directory.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(app, app_dir / "tunnelboard")
+    shutil.copy2(helper, helper_dir / "tunnelboard-linux-helper")
+    shutil.copy2(caddy, caddy_dir / "caddy")
+    for executable in (app_dir / "tunnelboard", helper_dir / "tunnelboard-linux-helper", caddy_dir / "caddy"):
+        executable.chmod(0o755)
+    shutil.copy2(
+        LINUX_PACKAGING_ROOT / "io.github.hanzephyr.TunnelBoard.policy",
+        policy_dir / "io.github.hanzephyr.TunnelBoard.policy",
+    )
+    shutil.copy2(
+        LINUX_PACKAGING_ROOT / "io.github.hanzephyr.TunnelBoard.desktop",
+        desktop_dir / "io.github.hanzephyr.TunnelBoard.desktop",
+    )
+    icon = ROOT / "build" / "appicon.png"
+    if not icon.is_file():
+        raise ReleaseError("build/appicon.png is missing")
+    shutil.copy2(icon, icon_dir / "io.github.hanzephyr.TunnelBoard.png")
+    write_licenses(app_dir / "LICENSES", caddy_version)
+
+
+def build_debian_package(payload: Path, output: Path, version: str, arch: str, base: str) -> Path:
+    dpkg_deb = shutil.which("dpkg-deb")
+    if not dpkg_deb:
+        raise ReleaseError("dpkg-deb is required to build Debian packages")
+    package_root = payload.parent / "debian-root"
+    shutil.copytree(payload, package_root)
+    debian = package_root / "DEBIAN"
+    debian.mkdir()
+    render_template(
+        LINUX_PACKAGING_ROOT / "debian" / "control.in",
+        debian / "control",
+        {"VERSION": version, "ARCH": arch},
+    )
+    prerm = debian / "prerm"
+    shutil.copy2(LINUX_PACKAGING_ROOT / "debian" / "prerm", prerm)
+    prerm.chmod(0o755)
+    package = output / f"{base}.deb"
+    run([dpkg_deb, "--root-owner-group", "--build", str(package_root), str(package)])
+    return package
+
+
+def write_payload_tarball(payload: Path, output: Path) -> None:
+    with tarfile.open(output, "w:gz", format=tarfile.PAX_FORMAT) as archive:
+        for path in sorted(payload.rglob("*")):
+            archive.add(path, arcname=path.relative_to(payload).as_posix(), recursive=False)
+
+
+def build_rpm_package(payload: Path, output: Path, version: str, rpm_arch: str, base: str) -> Path:
+    rpmbuild = shutil.which("rpmbuild")
+    if not rpmbuild:
+        raise ReleaseError("rpmbuild is required to build RHEL-compatible packages")
+    topdir = payload.parent / "rpmbuild"
+    for name in ("BUILD", "BUILDROOT", "RPMS", "SOURCES", "SPECS", "SRPMS"):
+        (topdir / name).mkdir(parents=True)
+    write_payload_tarball(payload, topdir / "SOURCES" / "tunnelboard-payload.tar.gz")
+    spec = topdir / "SPECS" / "tunnelboard.spec"
+    render_template(
+        LINUX_PACKAGING_ROOT / "rpm" / "tunnelboard.spec.in",
+        spec,
+        {"VERSION": rpm_version(version), "RPM_ARCH": rpm_arch},
+    )
+    run([rpmbuild, "--define", f"_topdir {topdir}", "--target", rpm_arch, "-bb", str(spec)])
+    candidates = sorted((topdir / "RPMS" / rpm_arch).glob("tunnelboard-*.rpm"))
+    if len(candidates) != 1:
+        raise ReleaseError(f"expected one RPM, found {len(candidates)}")
+    package = output / f"{base}.rpm"
+    shutil.copy2(candidates[0], package)
+    return package
+
+
+def gpg_environment(gpg_home: Path) -> dict[str, str]:
+    environment = os.environ.copy()
+    environment["GNUPGHOME"] = str(gpg_home)
+    return environment
+
+
+def prepare_linux_gpg_signer(required: bool, scratch: Path) -> tuple[Path, str] | None:
+    encoded_key = os.environ.get("TUNNELBOARD_GPG_SIGNING_KEY_BASE64", "")
+    expected_fingerprint = os.environ.get("TUNNELBOARD_GPG_KEY_FINGERPRINT", "").replace(" ", "").upper()
+    if not required:
+        return None
+    if not encoded_key or not expected_fingerprint:
+        raise ReleaseError(
+            "Linux tag build requires TUNNELBOARD_GPG_SIGNING_KEY_BASE64 and TUNNELBOARD_GPG_KEY_FINGERPRINT"
+        )
+    gpg = shutil.which("gpg")
+    if not gpg:
+        raise ReleaseError("gpg is required for a signed Linux release")
+    gpg_home = scratch / "gnupg"
+    gpg_home.mkdir(mode=0o700)
+    private_key = scratch / "release-signing-key.asc"
+    try:
+        private_key.write_bytes(base64.b64decode(encoded_key, validate=True))
+    except ValueError as exc:
+        raise ReleaseError("invalid base64 Linux GPG signing key") from exc
+    run([gpg, "--batch", "--homedir", str(gpg_home), "--import", str(private_key)])
+    result = subprocess.run(
+        [gpg, "--batch", "--homedir", str(gpg_home), "--with-colons", "--list-secret-keys"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    fingerprints = {line.split(":")[9].upper() for line in result.stdout.splitlines() if line.startswith("fpr:")}
+    if result.returncode != 0 or expected_fingerprint not in fingerprints:
+        raise ReleaseError("configured Linux GPG fingerprint is not available in the imported signing key")
+    return gpg_home, expected_fingerprint
+
+
+def sign_linux_checksums(checksums: Path, output: Path, signer: tuple[Path, str]) -> tuple[Path, Path]:
+    gpg_home, fingerprint = signer
+    gpg = shutil.which("gpg")
+    assert gpg is not None
+    signature = output / f"{checksums.name}.asc"
+    public_key = output / f"{checksums.name}.public-key.asc"
+    environment = gpg_environment(gpg_home)
+    run(
+        [gpg, "--batch", "--yes", "--armor", "--local-user", fingerprint, "--detach-sign", "--output", str(signature), str(checksums)],
+        env=environment,
+    )
+    exported = subprocess.run(
+        [gpg, "--batch", "--armor", "--export", fingerprint],
+        capture_output=True,
+        env=environment,
+    )
+    if exported.returncode != 0 or not exported.stdout:
+        raise ReleaseError("failed to export TunnelBoard GPG public key")
+    public_key.write_bytes(exported.stdout)
+    return signature, public_key
+
+
+def sign_rpm(package: Path, signer: tuple[Path, str]) -> None:
+    rpmsign = shutil.which("rpmsign")
+    if not rpmsign:
+        raise ReleaseError("rpmsign is required for a signed RHEL-compatible release")
+    gpg_home, fingerprint = signer
+    run([rpmsign, "--addsign", "--define", f"_gpg_name {fingerprint}", str(package)], env=gpg_environment(gpg_home))
+
+
+def capture(command: list[str], cwd: Path = ROOT, env: dict[str, str] | None = None) -> str:
+    result = subprocess.run(
+        platform_command(command),
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise ReleaseError(f"command failed ({result.returncode}): {command}: {detail}")
+    return result.stdout
+
+
+def verify_linux_package(
+    package: Path,
+    require_signing: bool = False,
+    rpm_public_key: Path | None = None,
+) -> dict[str, Any]:
+    if platform.system() != "Linux":
+        raise ReleaseError("Linux packages must be verified on a Linux runner")
+    if not package.is_file():
+        raise ReleaseError(f"Linux package does not exist: {package}")
+    with tempfile.TemporaryDirectory(prefix="tunnelboard-linux-package-verify-") as raw:
+        destination = Path(raw) / "payload"
+        destination.mkdir()
+        if package.suffix == ".deb":
+            dpkg_deb = shutil.which("dpkg-deb")
+            if not dpkg_deb:
+                raise ReleaseError("dpkg-deb is required to verify Debian packages")
+            fields = capture([dpkg_deb, "--field", str(package), "Package", "Architecture"]).splitlines()
+            if fields != ["tunnelboard", "amd64"] and fields != ["tunnelboard", "arm64"]:
+                raise ReleaseError("Debian package metadata is not a supported TunnelBoard architecture")
+            run([dpkg_deb, "--extract", str(package), str(destination)])
+        elif package.suffix == ".rpm":
+            rpm = shutil.which("rpm")
+            rpm2cpio = shutil.which("rpm2cpio")
+            cpio = shutil.which("cpio")
+            if not rpm or not rpm2cpio or not cpio:
+                raise ReleaseError("rpm, rpm2cpio and cpio are required to verify RHEL-compatible packages")
+            fields = capture([rpm, "--queryformat", "%{NAME}\\n%{ARCH}\\n", "-qp", str(package)]).splitlines()
+            if fields != ["tunnelboard", "x86_64"] and fields != ["tunnelboard", "aarch64"]:
+                raise ReleaseError("RPM package metadata is not a supported TunnelBoard architecture")
+            if require_signing:
+                if rpm_public_key is None or not rpm_public_key.is_file():
+                    raise ReleaseError("RPM native signature verification requires the released GPG public key")
+                rpm_database = Path(raw) / "rpmdb"
+                capture([rpm, "--dbpath", str(rpm_database), "--initdb"])
+                capture([rpm, "--dbpath", str(rpm_database), "--import", str(rpm_public_key)])
+                signature_status = capture([rpm, "--dbpath", str(rpm_database), "--checksig", str(package)])
+                status = signature_status.lower()
+                if "signature" not in status or "ok" not in status or "not ok" in status:
+                    raise ReleaseError("RPM native GPG signature is missing or invalid")
+            cpio_payload = subprocess.run([rpm2cpio, str(package)], capture_output=True)
+            if cpio_payload.returncode != 0:
+                raise ReleaseError("rpm2cpio failed while reading package")
+            listing = subprocess.run([cpio, "-it"], input=cpio_payload.stdout, capture_output=True)
+            if listing.returncode != 0:
+                raise ReleaseError("cpio failed while listing package payload")
+            for name in listing.stdout.decode("utf-8", errors="replace").splitlines():
+                safe_relative(name.removeprefix("./").lstrip("/"))
+            extracted = subprocess.run(
+                [cpio, "--extract", "--make-directories", "--no-absolute-filenames"],
+                cwd=destination,
+                input=cpio_payload.stdout,
+                capture_output=True,
+            )
+            if extracted.returncode != 0:
+                raise ReleaseError("cpio failed while extracting package payload")
+        else:
+            raise ReleaseError("Linux package must be a .deb or .rpm")
+        manifest = verify_bundle_root(destination)
+        package_format = RELEASE_TARGETS[manifest["target"]["name"]].get("package_format")
+        expected_suffix = ".deb" if package_format == "deb" else ".rpm"
+        if package.suffix != expected_suffix:
+            raise ReleaseError("package extension disagrees with artifact manifest target")
+        return manifest
+
+
+def verify_linux_release_checksums(checksums: Path, signature: Path, public_key: Path) -> None:
+    if platform.system() != "Linux":
+        raise ReleaseError("Linux release signatures must be verified on a Linux runner")
+    for path in (checksums, signature, public_key):
+        if not path.is_file():
+            raise ReleaseError(f"required release signature asset is missing: {path}")
+    gpg = shutil.which("gpg")
+    if not gpg:
+        raise ReleaseError("gpg is required to verify Linux release signatures")
+    with tempfile.TemporaryDirectory(prefix="tunnelboard-linux-gpg-verify-") as raw:
+        gpg_home = Path(raw) / "gnupg"
+        gpg_home.mkdir(mode=0o700)
+        environment = gpg_environment(gpg_home)
+        run([gpg, "--batch", "--import", str(public_key)], env=environment)
+        run([gpg, "--batch", "--verify", str(signature), str(checksums)], env=environment)
+    for line in checksums.read_text(encoding="utf-8").splitlines():
+        digest, separator, filename = line.partition("  ")
+        if separator != "  " or len(digest) != 64 or not filename:
+            raise ReleaseError("invalid Linux SHA256SUMS format")
+        artifact = checksums.parent / filename
+        if not artifact.is_file() or sha256_file(artifact) != digest:
+            raise ReleaseError(f"Linux release checksum mismatch: {filename}")
 
 
 def find_wix() -> str | None:
@@ -997,7 +1361,7 @@ def build_windows(version: str, require_signing: bool, skip_installer: bool) -> 
         if require_signing and setup_sign.get("publisher") != app_sign.get("publisher"):
             raise ReleaseError("installer and application Authenticode publishers differ")
         outputs.append(setup)
-    checksums = output / "SHA256SUMS"
+    checksums = output / f"{base}.SHA256SUMS"
     write_checksums([path for path in outputs if not path.name.endswith(".bundle.zip")], checksums)
     outputs.append(checksums)
     verify_bundle_root(stage, execute_caddy=True)
@@ -1079,6 +1443,78 @@ def build_darwin(version: str) -> list[Path]:
     return [bundle, sidecar, dmg, checksums]
 
 
+def build_linux(target: str, version: str, require_signing: bool) -> list[Path]:
+    if platform.system() != "Linux":
+        raise ReleaseError(f"{target} must be built on a Linux runner")
+    target_info = RELEASE_TARGETS[target]
+    if target_info["os"] != "linux":
+        raise ReleaseError(f"not a Linux release target: {target}")
+    deb_arch, rpm_arch = linux_arches(target_info["arch"])
+    payload, output, scratch = prepare_linux_release_root(target)
+    app = scratch / "tunnelboard"
+    helper = scratch / "tunnelboard-linux-helper"
+    caddy = scratch / "caddy"
+    helper_source = ROOT / "cmd" / "linux-helper"
+    if not helper_source.is_dir():
+        raise ReleaseError("cmd/linux-helper is required for a Linux package")
+    run(["go", "build", "-v", "-trimpath", "-o", str(helper), "./cmd/linux-helper"])
+    helper_digest = sha256_file(helper)
+    caddy_entry = fetch_caddy(f"linux-{target_info['arch']}", caddy)
+    ldflags = (
+        f"-X main.helperBundleSHA256={helper_digest} "
+        f"-X main.caddyBundleVersion={caddy_entry['version']} "
+        f"-X main.caddyBundleSHA256={caddy_entry['binary_sha256']}"
+    )
+    webkit_tag = "webkit2_41" if target_info["distribution"] == "debian" else "webkit2_40"
+    run(
+        [
+            "wails", "build", "-clean", "-platform", f"linux/{target_info['arch']}", "-tags", webkit_tag,
+            "-o", app.name, "-ldflags", ldflags,
+        ]
+    )
+    built_app = ROOT / "build" / "bin" / app.name
+    if not built_app.is_file():
+        raise ReleaseError(f"Wails did not produce {built_app}")
+    shutil.copy2(built_app, app)
+    stage_linux_payload(payload, app, helper, caddy, caddy_entry["version"])
+    signing: dict[str, Any] = {
+        "required": require_signing,
+        "status": "gpg-detached-checksums" if require_signing else "unsigned-ci",
+        "package_signature": "rpm-native-and-gpg-checksums" if target_info["package_format"] == "rpm" else "gpg-checksums",
+    }
+    signer = prepare_linux_gpg_signer(require_signing, scratch)
+    if signer is not None:
+        signing["fingerprint"] = signer[1]
+    manifest = payload / "opt" / "tunnelboard" / "manifest.json"
+    write_manifest(
+        payload,
+        manifest,
+        target,
+        version,
+        caddy_entry,
+        frontend_inventory(),
+        signing,
+        {"protocol_version": "linux-polkit-v1", "persistent_service": False},
+    )
+    base = linux_package_basename(target, version)
+    if target_info["package_format"] == "deb":
+        package = build_debian_package(payload, output, version, deb_arch, base)
+    else:
+        package = build_rpm_package(payload, output, version, rpm_arch, base)
+        if signer is not None:
+            sign_rpm(package, signer)
+    sidecar = output / f"{base}.manifest.json"
+    shutil.copy2(manifest, sidecar)
+    checksums = output / "SHA256SUMS"
+    write_checksums([package, sidecar], checksums)
+    outputs = [package, sidecar, checksums]
+    if signer is not None:
+        signature, public_key = sign_linux_checksums(checksums, output, signer)
+        outputs.extend([signature, public_key])
+    verify_bundle_root(payload)
+    return outputs
+
+
 def build_target(target: str, version: str, require_signing: bool, skip_installer: bool) -> list[Path]:
     if not version or any(ch not in "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.-_" for ch in version):
         raise ReleaseError("version contains unsafe characters")
@@ -1086,8 +1522,8 @@ def build_target(target: str, version: str, require_signing: bool, skip_installe
         return build_windows(version, require_signing, skip_installer)
     if target == "darwin-universal":
         return build_darwin(version)
-    if target == "linux-amd64":
-        raise ReleaseError("Linux is explicitly not delivered for this MVP; no placeholder artifact is allowed")
+    if target in RELEASE_TARGETS and RELEASE_TARGETS[target]["os"] == "linux":
+        return build_linux(target, version, require_signing)
     raise ReleaseError(f"unsupported release target: {target}")
 
 
@@ -1111,8 +1547,18 @@ def cli() -> int:
     installer.add_argument("--installer", type=Path, required=True)
     installer.add_argument("--require-signing", action="store_true")
 
+    linux_package = subparsers.add_parser("verify-linux-package", help="解包并验证最终 Linux 原生包")
+    linux_package.add_argument("--artifact", type=Path, required=True)
+    linux_package.add_argument("--require-signing", action="store_true")
+    linux_package.add_argument("--rpm-public-key", type=Path)
+
+    linux_checksums = subparsers.add_parser("verify-linux-checksums", help="验证 Linux 发布校验清单及 GPG 签名")
+    linux_checksums.add_argument("--checksums", type=Path, required=True)
+    linux_checksums.add_argument("--signature", type=Path, required=True)
+    linux_checksums.add_argument("--public-key", type=Path, required=True)
+
     build = subparsers.add_parser("build", help="从空 staging 构建指定平台正式候选产物")
-    build.add_argument("--target", required=True, choices=["windows-amd64", "darwin-universal", "linux-amd64"])
+    build.add_argument("--target", required=True, choices=sorted(RELEASE_TARGETS))
     build.add_argument("--version", required=True)
     build.add_argument("--require-signing", action="store_true")
     build.add_argument("--skip-installer", action="store_true", help=argparse.SUPPRESS)
@@ -1137,6 +1583,16 @@ def cli() -> int:
         elif args.command == "verify-windows-installer":
             verify_windows_installer(args.installer.resolve(), args.require_signing)
             print("WINDOWS INSTALLER VERIFY PASS")
+        elif args.command == "verify-linux-package":
+            manifest = verify_linux_package(
+                args.artifact.resolve(),
+                args.require_signing,
+                args.rpm_public_key.resolve() if args.rpm_public_key else None,
+            )
+            print(f"LINUX PACKAGE VERIFY PASS {manifest['target']['name']} {manifest['version']}")
+        elif args.command == "verify-linux-checksums":
+            verify_linux_release_checksums(args.checksums.resolve(), args.signature.resolve(), args.public_key.resolve())
+            print("LINUX CHECKSUM SIGNATURE VERIFY PASS")
         elif args.command == "build":
             outputs = build_target(args.target, args.version, args.require_signing, args.skip_installer)
             for output in outputs:

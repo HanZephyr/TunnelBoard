@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=TunnelBoard
+Comment=Local SSH tunnel and HTTPS route manager
+Exec=/opt/tunnelboard/tunnelboard
+Icon=io.github.hanzephyr.TunnelBoard
+Terminal=false
+Categories=Network;Development;
+StartupNotify=true

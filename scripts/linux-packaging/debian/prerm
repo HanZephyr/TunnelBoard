@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+# This hook runs while the package-owned helper is still present. It only runs
+# on removal/deconfiguration, never an upgrade, and removes only TunnelBoard's
+# managed hosts block and its exact local CA.
+case "${1:-}" in
+  remove|deconfigure)
+    /usr/libexec/tunnelboard/tunnelboard-linux-helper package-uninstall
+    ;;
+esac
