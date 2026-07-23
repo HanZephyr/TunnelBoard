@@ -37,7 +37,7 @@ func main() {
 	// Create an instance of the app structure
 	app := NewApp()
 	lifecycle := desktop.NewLifecycle(desktop.Platform(runtime.GOOS), desktop.SystemTrayAvailable())
-	app.SetDesktopLifecycle(lifecycle)
+	app.setDesktopLifecycle(lifecycle)
 
 	showMainWindow := func() {
 		if app == nil || app.ctx == nil {

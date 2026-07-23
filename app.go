@@ -139,9 +139,10 @@ func NewApp() *App {
 	return app
 }
 
-// SetDesktopLifecycle configures the capabilities established before Wails starts.
-// It is deliberately separate from App startup so tests and platform adapters share one seam.
-func (a *App) SetDesktopLifecycle(lifecycle desktop.Lifecycle) {
+// setDesktopLifecycle configures the capabilities established before Wails
+// starts. It stays internal so Wails does not generate a frontend binding for
+// a bootstrap-only platform seam.
+func (a *App) setDesktopLifecycle(lifecycle desktop.Lifecycle) {
 	a.desktopLifecycle = lifecycle
 }
 
