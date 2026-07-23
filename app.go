@@ -22,6 +22,7 @@ import (
 	"github.com/HanZephyr/TunnelBoard/internal/autostart"
 	"github.com/HanZephyr/TunnelBoard/internal/biz"
 	"github.com/HanZephyr/TunnelBoard/internal/caddy"
+	"github.com/HanZephyr/TunnelBoard/internal/desktop"
 	"github.com/HanZephyr/TunnelBoard/internal/diag"
 	"github.com/HanZephyr/TunnelBoard/internal/forward"
 	"github.com/HanZephyr/TunnelBoard/internal/helper"
@@ -58,6 +59,10 @@ type App struct {
 	trayQuit *systray.MenuItem
 
 	allowClose atomic.Bool
+
+	desktopLifecycle desktop.Lifecycle
+	closePrompt      func(context.Context, desktop.ClosePrompt) (desktop.CloseChoice, error)
+	hideWindow       func(context.Context)
 }
 
 // NewApp 打开默认数据目录下的 Vault 并组装应用 Module。
@@ -120,11 +125,18 @@ func NewApp() *App {
 		logStore:       logStore,
 		caddy:          caddyAdapter,
 		updater:        updateService,
+		desktopLifecycle: desktop.NewLifecycle(desktop.Platform(runtime.GOOS), true),
 	}
 	if closer, ok := helperOperator.(interface{ Close(context.Context) error }); ok {
 		app.helperClose = closer.Close
 	}
 	return app
+}
+
+// SetDesktopLifecycle configures the capabilities established before Wails starts.
+// It is deliberately separate from App startup so tests and platform adapters share one seam.
+func (a *App) SetDesktopLifecycle(lifecycle desktop.Lifecycle) {
+	a.desktopLifecycle = lifecycle
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -209,19 +221,74 @@ func (a *App) PrepareForQuit() {
 	a.allowClose.Store(true)
 }
 
-// beforeClose 在 Windows 上把关窗拦截为隐藏到托盘；显式退出（allowClose）才放行。
-// macOS 由 HideWindowOnClose 处理，不经过此分支。
+// beforeClose applies the session lifecycle policy. Linux without a usable tray asks on every
+// normal close; tray-capable sessions hide, and explicit exit always proceeds to shutdown.
 func (a *App) beforeClose(ctx context.Context) (prevent bool) {
-	if runtime.GOOS != "windows" {
+	switch a.desktopLifecycle.CloseAction(a.allowClose.Load()) {
+	case desktop.CloseExit:
+		return false
+	case desktop.CloseHide:
+		a.hideMainWindow(ctx)
+		return true
+	case desktop.CloseAskUser:
+		choice, err := a.askCloseChoice(ctx)
+		if err != nil {
+			slog.Error("ask no-tray close choice failed; keep window open", "err", err)
+			return true
+		}
+		switch choice {
+		case desktop.CloseChoiceExit:
+			a.allowClose.Store(true)
+			return false
+		case desktop.CloseChoiceHide:
+			a.hideMainWindow(ctx)
+			return true
+		default:
+			return true
+		}
+	default:
 		return false
 	}
-	if a.allowClose.Load() {
-		return false
+}
+
+func (a *App) askCloseChoice(ctx context.Context) (desktop.CloseChoice, error) {
+	prompt := desktop.ClosePromptForLocale(a.UILocale())
+	if a.closePrompt != nil {
+		return a.closePrompt(ctx, prompt)
 	}
-	slog.Info("window close intercepted; hiding to tray")
+	answer, err := wailsruntime.MessageDialog(ctx, wailsruntime.MessageDialogOptions{
+		Type:          wailsruntime.QuestionDialog,
+		Title:         prompt.Title,
+		Message:       prompt.Message,
+		Buttons:       []string{prompt.ExitLabel, prompt.HideLabel, prompt.CancelLabel},
+		DefaultButton: prompt.HideLabel,
+		CancelButton:  prompt.CancelLabel,
+	})
+	if err != nil {
+		return desktop.CloseChoiceCancel, err
+	}
+	return closeChoiceFromDialogAnswer(prompt, answer), nil
+}
+
+func closeChoiceFromDialogAnswer(prompt desktop.ClosePrompt, answer string) desktop.CloseChoice {
+	switch answer {
+	case prompt.ExitLabel, "Yes":
+		return desktop.CloseChoiceExit
+	case prompt.HideLabel, "No":
+		return desktop.CloseChoiceHide
+	default:
+		return desktop.CloseChoiceCancel
+	}
+}
+
+func (a *App) hideMainWindow(ctx context.Context) {
+	if a.hideWindow != nil {
+		a.hideWindow(ctx)
+		return
+	}
+	slog.Info("window close intercepted; hiding main window")
 	wailsruntime.Hide(ctx)
 	wailsruntime.WindowHide(ctx)
-	return true
 }
 
 // UILocale 返回持久化的界面语言，未设置时按系统环境推断；供 main 初始化托盘文案。
