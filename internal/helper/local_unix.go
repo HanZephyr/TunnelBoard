@@ -1,4 +1,4 @@
-//go:build darwin || linux
+//go:build darwin
 
 package helper
 
@@ -10,7 +10,7 @@ import (
 	"github.com/HanZephyr/TunnelBoard/internal/route"
 )
 
-// localElevatedClient 是 macOS/Linux 的特权直连客户端：没有常驻服务，
+// localElevatedClient 是 macOS 的特权直连客户端：没有常驻服务，
 // 每次操作单独请求系统管理员授权（交接文档的退化路径；一次授权的常驻 Helper 列为后续 POC）。
 // 代码按平台就绪，未经真机验证（迭代 5 的 macOS 验证项）。
 type localElevatedClient struct {

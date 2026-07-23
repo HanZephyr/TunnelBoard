@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -16,7 +15,6 @@ import (
 const (
 	maxPrivilegedHostsBytes = 1 << 20
 	maxPrivilegedCertBytes  = 16 << 10
-	linuxCAPath             = "/usr/local/share/ca-certificates/tunnelboard-local-ca.crt"
 	darwinSystemKeychain    = "/Library/Keychains/System.keychain"
 )
 
@@ -45,7 +43,10 @@ type platformPrivilege struct {
 }
 
 func NewPlatformPrivilege(options PlatformPrivilegeOptions) (PlatformPrivilege, error) {
-	if options.Platform != "linux" && options.Platform != "darwin" {
+	if options.Platform == "linux" {
+		return nil, errors.New("helper: Linux uses the restricted polkit session adapter, not direct privileged commands")
+	}
+	if options.Platform != "darwin" {
 		return nil, fmt.Errorf("helper: unsupported privilege platform %q", options.Platform)
 	}
 	if options.Runner == nil {
@@ -69,9 +70,6 @@ func (p *platformPrivilege) ApplyManagedHosts(ctx context.Context, content []byt
 		return err
 	}
 	defer cleanup()
-	if p.platform == "linux" {
-		return p.run(ctx, "/usr/bin/pkexec", "/bin/cp", "--", tempPath, "/etc/hosts")
-	}
 	return p.runDarwin(ctx, "copy", tempPath, "/etc/hosts", "/bin/cp")
 }
 
@@ -83,41 +81,20 @@ func (p *platformPrivilege) TrustLocalCA(ctx context.Context, certDER []byte) er
 	if err := ValidateLocalCA(certDER, hex.EncodeToString(sum[:])); err != nil {
 		return err
 	}
-	content := certDER
-	if p.platform == "linux" {
-		content = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
-	}
-	tempPath, cleanup, err := p.writePrivateTemp("ca", content)
+	tempPath, cleanup, err := p.writePrivateTemp("ca", certDER)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	if p.platform == "darwin" {
-		return p.runDarwin(ctx, "trust-ca", tempPath, darwinSystemKeychain, "/usr/bin/security")
-	}
-	if err := p.run(ctx, "/usr/bin/pkexec", "/bin/cp", "--", tempPath, linuxCAPath); err != nil {
-		return err
-	}
-	if err := p.run(ctx, "/usr/bin/pkexec", "/usr/sbin/update-ca-certificates"); err != nil {
-		removeErr := p.run(ctx, "/usr/bin/pkexec", "/bin/rm", "-f", "--", linuxCAPath)
-		refreshErr := p.run(ctx, "/usr/bin/pkexec", "/usr/sbin/update-ca-certificates")
-		return errors.Join(fmt.Errorf("helper: refresh CA trust after install: %w", err), compensationError(removeErr, refreshErr))
-	}
-	return nil
+	return p.runDarwin(ctx, "trust-ca", tempPath, darwinSystemKeychain, "/usr/bin/security")
 }
 
 func (p *platformPrivilege) UntrustLocalCA(ctx context.Context, fingerprint string) error {
 	if err := validateFingerprint(fingerprint); err != nil {
 		return err
 	}
-	if p.platform == "darwin" {
-		return p.runDarwin(ctx, "untrust-ca", fingerprint, darwinSystemKeychain, "/usr/bin/security")
-	}
-	if err := p.run(ctx, "/usr/bin/pkexec", "/bin/rm", "-f", "--", linuxCAPath); err != nil {
-		return err
-	}
-	return p.run(ctx, "/usr/bin/pkexec", "/usr/sbin/update-ca-certificates")
+	return p.runDarwin(ctx, "untrust-ca", fingerprint, darwinSystemKeychain, "/usr/bin/security")
 }
 
 func (p *platformPrivilege) writePrivateTemp(kind string, content []byte) (string, func(), error) {

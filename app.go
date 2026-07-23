@@ -90,8 +90,11 @@ func NewApp() *App {
 		_ = logStore.Close()
 		return &App{initErr: platformErr, store: store, diagBuf: diagBuf}
 	}
-	caTrust := helper.NewCurrentUserCATrustAt(platformDataDir)
-	helperOperator := helper.NewOperator()
+	helperOperator, caTrust, helperClose, integrationErr := helper.NewPlatformIntegration(platformDataDir)
+	if integrationErr != nil {
+		_ = logStore.Close()
+		return &App{initErr: integrationErr, store: store, diagBuf: diagBuf}
+	}
 	helper.SetExpectedBinarySHA256(helperBundleSHA256)
 	caddyAdapter := caddy.New(platformDataDir)
 	caddyAdapter.ExpectedSHA256 = caddyBundleSHA256
@@ -113,22 +116,25 @@ func NewApp() *App {
 		Updates: updateService, AppVersion: appVersion,
 	})
 	app := &App{
-		store:          store,
-		catalog:        catalog,
-		runtime:        runtimeBiz,
-		router:         routerBiz,
-		backup:         backupBiz,
-		application:    applicationService,
-		recovery:       recovery,
-		restoreEffects: restoreEffects,
-		diagBuf:        diagBuf,
-		logStore:       logStore,
-		caddy:          caddyAdapter,
-		updater:        updateService,
+		store:            store,
+		catalog:          catalog,
+		runtime:          runtimeBiz,
+		router:           routerBiz,
+		backup:           backupBiz,
+		application:      applicationService,
+		recovery:         recovery,
+		restoreEffects:   restoreEffects,
+		diagBuf:          diagBuf,
+		logStore:         logStore,
+		caddy:            caddyAdapter,
+		updater:          updateService,
 		desktopLifecycle: desktop.NewLifecycle(desktop.Platform(runtime.GOOS), true),
+		helperClose:      helperClose,
 	}
-	if closer, ok := helperOperator.(interface{ Close(context.Context) error }); ok {
-		app.helperClose = closer.Close
+	if app.helperClose == nil {
+		if closer, ok := helperOperator.(interface{ Close(context.Context) error }); ok {
+			app.helperClose = closer.Close
+		}
 	}
 	return app
 }
