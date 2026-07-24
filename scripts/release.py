@@ -915,7 +915,12 @@ def zip_directory(root: Path, output: Path) -> None:
 
 def write_checksums(paths: list[Path], output: Path) -> None:
     lines = [f"{sha256_file(path)}  {path.name}" for path in sorted(paths, key=lambda item: item.name)]
-    output.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    write_utf8_lf(output, "\n".join(lines) + "\n")
+
+
+def write_utf8_lf(destination: Path, text: str) -> None:
+    with destination.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(text)
 
 
 def write_licenses(destination: Path, caddy_version: str) -> None:
@@ -959,7 +964,7 @@ def render_template(template: Path, destination: Path, replacements: dict[str, s
     if re.search(r"@[A-Z_]+@", text):
         raise ReleaseError(f"unresolved placeholder in {template.name}")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(text, encoding="utf-8", newline="\n")
+    write_utf8_lf(destination, text)
 
 
 def linux_arches(arch: str) -> tuple[str, str]:
