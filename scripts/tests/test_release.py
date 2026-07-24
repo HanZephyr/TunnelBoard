@@ -302,6 +302,7 @@ class LinuxNativePackagingContractTest(unittest.TestCase):
         self.assertIn("/usr/libexec/tunnelboard/tunnelboard-linux-helper package-uninstall", debian_prerm)
         self.assertIn("/usr/libexec/tunnelboard/tunnelboard-linux-helper package-uninstall", rpm_spec)
         self.assertIn("Requires:       webkit2gtk3", rpm_spec)
+        self.assertIn("%global __os_install_post %{nil}", rpm_spec)
         self.assertIn("remove|deconfigure", debian_prerm)
         self.assertNotIn("upgrade)", debian_prerm)
         self.assertIn("%preun", rpm_spec)

@@ -9,6 +9,12 @@ Requires:       gtk3
 Requires:       webkit2gtk3
 Requires:       polkit
 
+# The payload is prebuilt and manifest-hashed. Build-root policy scripts must
+# not rewrite or strip the shipped binaries after that manifest is generated.
+%global _enable_debug_package 0
+%global debug_package %{nil}
+%global __os_install_post %{nil}
+
 %description
 TunnelBoard manages local SSH forwards and optional local HTTPS routes from a
 graphical desktop session. It does not install a system service.

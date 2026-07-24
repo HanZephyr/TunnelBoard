@@ -1173,8 +1173,9 @@ def verify_linux_package(
             dpkg_deb = shutil.which("dpkg-deb")
             if not dpkg_deb:
                 raise ReleaseError("dpkg-deb is required to verify Debian packages")
-            fields = capture([dpkg_deb, "--field", str(package), "Package", "Architecture"]).splitlines()
-            if fields != ["tunnelboard", "amd64"] and fields != ["tunnelboard", "arm64"]:
+            package_name = capture([dpkg_deb, "--field", str(package), "Package"]).strip()
+            architecture = capture([dpkg_deb, "--field", str(package), "Architecture"]).strip()
+            if (package_name, architecture) not in {("tunnelboard", "amd64"), ("tunnelboard", "arm64")}:
                 raise ReleaseError("Debian package metadata is not a supported TunnelBoard architecture")
             run([dpkg_deb, "--extract", str(package), str(destination)])
         elif package.suffix == ".rpm":
