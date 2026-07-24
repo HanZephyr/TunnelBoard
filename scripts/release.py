@@ -783,8 +783,9 @@ def frontend_inventory() -> list[dict[str, Any]]:
 def signing_status(path: Path, required: bool) -> dict[str, Any]:
     if os.name != "nt":
         return {"required": required, "status": "not-applicable"}
+    escaped_path = str(path).replace("'", "''")
     script = (
-        f"$s=Get-AuthenticodeSignature -LiteralPath '{str(path).replace("'", "''")}'; "
+        f"$s=Get-AuthenticodeSignature -LiteralPath '{escaped_path}'; "
         "$publisher=if($s.SignerCertificate){$s.SignerCertificate.Subject}else{''}; "
         "[pscustomobject]@{Status=[string]$s.Status;Publisher=$publisher}|ConvertTo-Json -Compress"
     )
