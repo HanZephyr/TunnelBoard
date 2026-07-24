@@ -1466,7 +1466,10 @@ def build_linux(target: str, version: str, require_signing: bool) -> list[Path]:
         f"-X main.caddyBundleVersion={caddy_entry['version']} "
         f"-X main.caddyBundleSHA256={caddy_entry['binary_sha256']}"
     )
-    webkit_tag = "webkit2_41" if target_info["distribution"] == "debian" else "webkit2_40"
+    # Debian 12 and RHEL 9 provide the WebKitGTK 4.0 ABI. Keep the Wails
+    # build tag at that common floor even when a newer Debian derivative also
+    # offers WebKitGTK 4.1.
+    webkit_tag = "webkit2_40"
     run(
         [
             "wails", "build", "-clean", "-platform", f"linux/{target_info['arch']}", "-tags", webkit_tag,

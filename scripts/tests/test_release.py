@@ -310,6 +310,10 @@ class LinuxNativePackagingContractTest(unittest.TestCase):
         self.assertIn("io.github.hanzephyr.TunnelBoard.manage-system", policy)
         self.assertIn("auth_admin_keep", policy)
         self.assertIn("Exec=/opt/tunnelboard/tunnelboard", desktop)
+        self.assertIn(
+            'webkit_tag = "webkit2_40"',
+            RELEASE.read_text(encoding="utf-8"),
+        )
 
 
 class GitHubActionsReleaseContractTest(unittest.TestCase):
