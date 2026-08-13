@@ -244,7 +244,9 @@
             "notesPlaceholder": "Optional",
             "testConnection": "Test connection",
             "testing": "Testing…",
-            "testPassed": "SSH connection test passed."
+            "testPassed": "SSH connection test passed.",
+            "trustAndRetest": "Trust & Retest",
+            "replaceAndRetest": "Replace & Retest"
         },
         "errors": {
             "nameRequired": "Name is required.",

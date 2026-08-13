@@ -63,6 +63,22 @@ test('SSH 主机和 Forward 编辑器都提供不会保存配置的连通性检�
   assert.match(forwardModal, /\$emit\('test-connection'\)/)
 })
 
+test('SSH 主机测试遇到未知或变更的 host key 时要求用户确认后再重新测试', async () => {
+  const [hosts, dialog] = await Promise.all([
+    readFile(new URL('./components/pages/HostsPage.vue', import.meta.url), 'utf8'),
+    readFile(new URL('./components/modals/HostKeyDialog.vue', import.meta.url), 'utf8')
+  ])
+
+  assert.match(hosts, /import \{[^}]*EnrollHostKey[^}]*ReplaceHostKey[^}]*\}/)
+  assert.match(hosts, /const hostKey = parseHostKeyError\(message\)/)
+  assert.match(hosts, /pendingHostKey\.value = hostKey/)
+  assert.match(hosts, /callBackend\(EnrollHostKey, item\.host, item\.port, '', item\.fingerprint\)/)
+  assert.match(hosts, /callBackend\(ReplaceHostKey, item\.host, item\.port, '', item\.fingerprint\)/)
+  assert.match(hosts, /await testHostConnection\(\)/)
+  assert.match(hosts, /<HostKeyDialog[\s\S]*@confirm="confirmHostKey"/)
+  assert.match(dialog, /confirmLabel/)
+})
+
 test('公共模态框标题栏将关闭按钮保持在同一行右侧', async () => {
   const source = await readFile(new URL('./styles/app-shell.css', import.meta.url), 'utf8')
   const rule = source.match(/\.dialog-head\s*\{([\s\S]*?)\}/)?.[1] || ''

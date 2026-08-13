@@ -244,7 +244,9 @@
             "notesPlaceholder": "選填",
             "testConnection": "測試連線",
             "testing": "測試中…",
-            "testPassed": "SSH 連線測試通過。"
+            "testPassed": "SSH 連線測試通過。",
+            "trustAndRetest": "信任並重新測試",
+            "replaceAndRetest": "取代並重新測試"
         },
         "errors": {
             "nameRequired": "名稱不可留空。",

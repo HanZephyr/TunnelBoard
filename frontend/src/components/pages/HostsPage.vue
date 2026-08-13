@@ -1,14 +1,16 @@
 <script setup>
 import { computed, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { DeleteSelection } from '../../../wailsjs/go/main/App'
+import { DeleteSelection, EnrollHostKey, ReplaceHostKey } from '../../../wailsjs/go/main/App'
 import { callBackend, errorMessage } from '../../utils/backend'
 import { clearSSHHostTransientSecrets, createSSHHostDraft, toSaveSSHHostCommand, validateSSHHostDraft } from '../../modules/sshHostEditor'
+import { parseHostKeyError } from '../../modules/hostKeyError'
 import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import ConfirmDialog from '../common/ConfirmDialog.vue'
 import HostModal from '../modals/HostModal.vue'
+import HostKeyDialog from '../modals/HostKeyDialog.vue'
 
 const props = defineProps({
   sshHosts: {
@@ -100,6 +102,8 @@ const hostSaveBusy = ref(false)
 const pendingHostChange = ref(null)
 const hostForm = reactive(createSSHHostDraft(props.sshHostDefaults))
 const hostTest = reactive({ status: 'idle', message: '' })
+const pendingHostKey = ref(null)
+const hostKeyBusy = ref(false)
 
 function resetHostTest() {
   hostTest.status = 'idle'
@@ -119,6 +123,7 @@ function finishHostModal() {
   clearSSHHostTransientSecrets(hostForm)
   resetHostChangePreview()
   resetHostTest()
+  pendingHostKey.value = null
   hostValidationError.value = ''
   hostModalOpen.value = false
 }
@@ -165,9 +170,44 @@ async function testHostConnection() {
     hostTest.status = 'success'
     hostTest.message = t('hosts.modal.testPassed')
   } catch (err) {
+    const message = errorMessage(err)
+    const hostKey = parseHostKeyError(message)
+    if (hostKey) {
+      // 首次信任或密钥变更均须由用户在弹窗中核验指纹；不能把它当作普通错误吞掉。
+      pendingHostKey.value = hostKey
+      hostTest.status = 'idle'
+      hostTest.message = ''
+      return
+    }
+    hostTest.status = 'error'
+    hostTest.message = message
+  }
+}
+
+async function confirmHostKey() {
+  const item = pendingHostKey.value
+  if (!item || hostKeyBusy.value) return
+  hostKeyBusy.value = true
+  try {
+    if (item.kind === 'mismatch') {
+      await callBackend(ReplaceHostKey, item.host, item.port, '', item.fingerprint)
+    } else {
+      await callBackend(EnrollHostKey, item.host, item.port, '', item.fingerprint)
+    }
+    pendingHostKey.value = null
+    // 仅信任端点指纹；必须重新完成真实 SSH 握手与认证，测试不会保存当前草稿。
+    await testHostConnection()
+  } catch (err) {
+    pendingHostKey.value = null
     hostTest.status = 'error'
     hostTest.message = errorMessage(err)
+  } finally {
+    hostKeyBusy.value = false
   }
+}
+
+function cancelHostKey() {
+  pendingHostKey.value = null
 }
 
 async function saveHost() {
@@ -331,7 +371,7 @@ function deleteHost(host) {
     :form="hostForm"
     :validation-error="hostValidationError"
     :restart-preview="pendingHostChange"
-    :busy="hostSaveBusy || hostTest.status === 'testing'"
+    :busy="hostSaveBusy || hostTest.status === 'testing' || hostKeyBusy"
     :test-status="hostTest.status"
     :test-message="hostTest.message"
     @close="closeHostModal"
@@ -339,6 +379,19 @@ function deleteHost(host) {
     @test-connection="testHostConnection"
     @confirm-restart="commitHostChange"
     @back-to-edit="backToHostEdit"
+  />
+
+  <HostKeyDialog
+    :show="!!pendingHostKey"
+    :kind="pendingHostKey?.kind || 'unknown'"
+    :host="pendingHostKey?.host || ''"
+    :port="pendingHostKey?.port || 0"
+    :fingerprint="pendingHostKey?.fingerprint || ''"
+    :stored-fingerprint="pendingHostKey?.storedFingerprint || ''"
+    :confirm-label="pendingHostKey?.kind === 'mismatch' ? t('hosts.modal.replaceAndRetest') : t('hosts.modal.trustAndRetest')"
+    :busy="hostKeyBusy"
+    @confirm="confirmHostKey"
+    @cancel="cancelHostKey"
   />
 
   <ConfirmDialog

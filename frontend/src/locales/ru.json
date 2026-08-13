@@ -244,7 +244,9 @@
             "notesPlaceholder": "Необязательно",
             "testConnection": "Проверить подключение",
             "testing": "Проверка…",
-            "testPassed": "Проверка SSH-подключения пройдена."
+            "testPassed": "Проверка SSH-подключения пройдена.",
+            "trustAndRetest": "Доверять и проверить снова",
+            "replaceAndRetest": "Заменить и проверить снова"
         },
         "errors": {
             "nameRequired": "Имя обязательно.",

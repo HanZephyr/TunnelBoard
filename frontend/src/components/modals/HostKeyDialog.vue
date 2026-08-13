@@ -31,6 +31,10 @@ const props = defineProps({
   busy: {
     type: Boolean,
     default: false
+  },
+  confirmLabel: {
+    type: String,
+    default: ''
   }
 })
 
@@ -82,7 +86,7 @@ const endpoint = computed(() => `${props.host}:${props.port}`)
           @click="emit('confirm')"
         >
           <span v-if="busy" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
-          {{ isMismatch ? $t('forwards.hostkey.replaceAndStart') : $t('forwards.hostkey.trustAndStart') }}
+          {{ confirmLabel || (isMismatch ? $t('forwards.hostkey.replaceAndStart') : $t('forwards.hostkey.trustAndStart')) }}
         </button>
     </template>
   </BaseDialog>

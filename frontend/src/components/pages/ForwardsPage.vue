@@ -15,6 +15,7 @@ import {
 import { callBackend, errorMessage, isValidPort } from '../../utils/backend'
 import { formatLatency as formatLatencyUtil } from '../../utils/format'
 import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
+import { parseHostKeyError } from '../../modules/hostKeyError'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import StatusChip from '../common/StatusChip.vue'
@@ -547,37 +548,6 @@ function setPending(forwardId, pending) {
 function forwardName(forwardId) {
   const forward = props.forwards.find((item) => item.id === forwardId)
   return forward ? forward.name : `#${forwardId}`
-}
-
-// 指纹错误消息格式见 internal/biz/runtime.go hostKeyVerifier（line 88-91）：
-//   unknown:  "biz: ssh host key unknown: <host>:<port> fingerprint <fp>"
-//   mismatch: "biz: ssh host key mismatch: <host>:<port> fingerprint changed (stored <fp>, got <fp>)"
-const HOSTKEY_UNKNOWN_RE = /ssh host key unknown: (.+):(\d+) fingerprint (\S+)/
-const HOSTKEY_MISMATCH_RE = /ssh host key mismatch: (.+):(\d+) fingerprint changed \(stored (\S+), got (\S+)\)/
-
-function parseHostKeyError(message) {
-  if (typeof message !== 'string') return null
-  const mismatch = message.match(HOSTKEY_MISMATCH_RE)
-  if (mismatch) {
-    return {
-      kind: 'mismatch',
-      host: mismatch[1],
-      port: Number(mismatch[2]),
-      storedFingerprint: mismatch[3],
-      fingerprint: mismatch[4]
-    }
-  }
-  const unknown = message.match(HOSTKEY_UNKNOWN_RE)
-  if (unknown) {
-    return {
-      kind: 'unknown',
-      host: unknown[1],
-      port: Number(unknown[2]),
-      storedFingerprint: '',
-      fingerprint: unknown[3]
-    }
-  }
-  return null
 }
 
 // ---- 指纹确认队列：批量启动出现多条指纹错误时逐条依次弹窗 ----
