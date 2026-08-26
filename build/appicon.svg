@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="TunnelBoard">
+  <!--
+    Master mark: the shield carries the security meaning; the dark arch is the
+    protected tunnel entrance; the single cyan path is the active connection.
+    The three silhouettes stay legible at 16 px.
+  -->
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="#4f5dd5"/>
+  <path d="M512 136 808 268v232c0 182-115 319-296 394C331 819 216 682 216 500V268z" fill="#fff"/>
+  <path d="M512 255 692 335v175c0 113-66 211-180 268-114-57-180-155-180-268V335z" fill="#16213a"/>
+  <path d="M312 690 592 474l-54-54 288-64-64 288-56-56-280 216z" fill="#34d399"/>
+</svg>
