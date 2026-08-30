@@ -19,8 +19,8 @@ const (
 )
 
 var (
-	semverExtractRe = regexp.MustCompile(`(?i)v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?`)
-	semverParseRe   = regexp.MustCompile(`(?i)^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$`)
+	semverExtractRe = regexp.MustCompile(`(?i)v?\d+\.\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?`)
+	semverParseRe   = regexp.MustCompile(`(?i)^v?(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?$`)
 )
 
 type GithubReleaseProvider struct {
@@ -51,6 +51,7 @@ type semVersion struct {
 	Major      int
 	Minor      int
 	Patch      int
+	Revision   int
 	Prerelease []string
 }
 
@@ -276,7 +277,7 @@ func parseSemver(raw string) (semVersion, bool) {
 	}
 
 	matches := semverParseRe.FindStringSubmatch(normalized)
-	if len(matches) != 5 {
+	if len(matches) != 6 {
 		return semVersion{}, false
 	}
 
@@ -292,15 +293,23 @@ func parseSemver(raw string) (semVersion, bool) {
 	if err != nil {
 		return semVersion{}, false
 	}
+	revision := 0
+	if matches[4] != "" {
+		revision, err = strconv.Atoi(matches[4])
+		if err != nil {
+			return semVersion{}, false
+		}
+	}
 
 	var prerelease []string
-	if strings.TrimSpace(matches[4]) != "" {
-		prerelease = strings.Split(matches[4], ".")
+	if strings.TrimSpace(matches[5]) != "" {
+		prerelease = strings.Split(matches[5], ".")
 	}
 	return semVersion{
 		Major:      major,
 		Minor:      minor,
 		Patch:      patch,
+		Revision:   revision,
 		Prerelease: prerelease,
 	}, true
 }
@@ -320,6 +329,12 @@ func compareSemver(a, b semVersion) int {
 	}
 	if a.Patch != b.Patch {
 		if a.Patch > b.Patch {
+			return 1
+		}
+		return -1
+	}
+	if a.Revision != b.Revision {
+		if a.Revision > b.Revision {
 			return 1
 		}
 		return -1
