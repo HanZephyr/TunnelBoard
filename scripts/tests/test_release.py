@@ -377,6 +377,10 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn("-name 'SHA256SUMS.public-key.asc'", workflow)
         self.assertIn("-name 'SHA256SUMS.asc'", workflow)
         self.assertNotIn("-name '*.SHA256SUMS", workflow)
+        self.assertIn("artifacts/linux/*/SHA256SUMS", workflow)
+        self.assertIn("artifacts/linux/*/SHA256SUMS.asc", workflow)
+        self.assertIn("artifacts/linux/*/SHA256SUMS.public-key.asc", workflow)
+        self.assertNotIn("artifacts/linux/*/*.SHA256SUMS", workflow)
         self.assertIn("--draft", workflow)
         self.assertIn("Linux native packages remain draft", workflow)
 

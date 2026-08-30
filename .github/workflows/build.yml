@@ -382,7 +382,7 @@ jobs:
       - name: Combine release checksums
         shell: bash
         run: |
-          cat artifacts/windows/SHA256SUMS artifacts/macos/SHA256SUMS artifacts/linux/*/*.SHA256SUMS > artifacts/SHA256SUMS
+          cat artifacts/windows/SHA256SUMS artifacts/macos/SHA256SUMS artifacts/linux/*/SHA256SUMS > artifacts/SHA256SUMS
       - name: Create draft Release for real-machine acceptance
         env:
           GH_TOKEN: ${{ github.token }}
@@ -395,9 +395,9 @@ jobs:
             artifacts/linux/*/*.deb \
             artifacts/linux/*/*.rpm \
             artifacts/linux/*/*.manifest.json \
-            artifacts/linux/*/*.SHA256SUMS \
-            artifacts/linux/*/*.SHA256SUMS.asc \
-            artifacts/linux/*/*.SHA256SUMS.public-key.asc \
+            artifacts/linux/*/SHA256SUMS \
+            artifacts/linux/*/SHA256SUMS.asc \
+            artifacts/linux/*/SHA256SUMS.public-key.asc \
             artifacts/SHA256SUMS \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
