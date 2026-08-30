@@ -1,7 +1,7 @@
 """Build a PNG-backed macOS ICNS file from square PNG source images.
 
-This keeps iconfile.icns reproducible from build/appicon.svg even when the
-current host does not have macOS's iconutil installed.
+This keeps iconfile.icns reproducible from build/appicon-source.png even when
+the current host does not have macOS's iconutil installed.
 """
 
 from __future__ import annotations
