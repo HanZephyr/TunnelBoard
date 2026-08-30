@@ -424,6 +424,7 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn('cat "$windows_checksums" artifacts/macos/SHA256SUMS artifacts/linux/*/SHA256SUMS', workflow)
         self.assertNotIn("artifacts/windows/SHA256SUMS", workflow)
         draft_release = workflow.split("  draft-release:", 1)[1]
+        self.assertIn("Checkout release assembler from the same commit", draft_release)
         self.assertIn("prepare-linux-release-assets", draft_release)
         self.assertIn("artifacts/release-assets/*.SHA256SUMS", draft_release)
         self.assertIn("artifacts/release-assets/*.SHA256SUMS.asc", draft_release)
