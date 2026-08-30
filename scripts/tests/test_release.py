@@ -485,6 +485,31 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         )
         self.assertIn('<MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />', bundle)
 
+    def test_windows_installer_exposes_directory_and_shortcut_choices_with_one_icon(self) -> None:
+        bundle = (ROOT / "scripts" / "windows-installer" / "Bundle.wxs").read_text(encoding="utf-8")
+        product = (ROOT / "scripts" / "windows-installer" / "Product.wxs").read_text(encoding="utf-8")
+        theme_path = ROOT / "scripts" / "windows-installer" / "installer-theme.xml"
+        self.assertTrue(theme_path.is_file(), "installer must ship an explicit installation-options page")
+        theme = theme_path.read_text(encoding="utf-8")
+
+        self.assertIn('ThemeFile="scripts\\windows-installer\\installer-theme.xml"', bundle)
+        self.assertIn('<MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="[CreateStartMenuShortcut]" />', bundle)
+        self.assertIn('<MsiProperty Name="CREATE_DESKTOP_SHORTCUT" Value="[CreateDesktopShortcut]" />', bundle)
+        self.assertIn('<Editbox Name="InstallFolder"', theme)
+        self.assertIn('<BrowseDirectoryAction VariableName="InstallFolder" />', theme)
+        self.assertIn('<Checkbox Name="CreateStartMenuShortcut"', theme)
+        self.assertIn('<Checkbox Name="CreateDesktopShortcut"', theme)
+        self.assertIn('<Property Id="CREATE_START_MENU_SHORTCUT" Value="1" />', product)
+        self.assertIn('<Property Id="CREATE_DESKTOP_SHORTCUT" Value="0" />', product)
+        self.assertIn('Condition="CREATE_START_MENU_SHORTCUT = &quot;1&quot;"', product)
+        self.assertIn('Condition="CREATE_DESKTOP_SHORTCUT = &quot;1&quot;"', product)
+        self.assertIn('Id="StartMenuShortcut"', product)
+        self.assertIn('Id="DesktopShortcut"', product)
+        self.assertIn('Target="[INSTALLFOLDER]TunnelBoard.exe"', product)
+        self.assertIn('Icon="ApplicationIcon"', product)
+        self.assertIn('<Icon Id="ApplicationIcon" SourceFile="build\\windows\\icon.ico" />', product)
+        self.assertIn('IconSourceFile="build\\windows\\icon.ico"', bundle)
+
 
 if __name__ == "__main__":
     unittest.main()

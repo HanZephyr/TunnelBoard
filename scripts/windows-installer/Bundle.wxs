@@ -11,10 +11,13 @@
       AboutUrl="https://github.com/HanZephyr/TunnelBoard"
       Compressed="yes">
     <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]\TunnelBoard" bal:Overridable="yes" />
+    <Variable Name="CreateStartMenuShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
+    <Variable Name="CreateDesktopShortcut" Type="numeric" Value="0" bal:Overridable="yes" />
 
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication
           Theme="hyperlinkLargeLicense"
+          ThemeFile="scripts\windows-installer\installer-theme.xml"
           LicenseUrl=""
           LogoFile="build\appicon-512-rounded.png"
           ShowVersion="yes"
@@ -25,6 +28,8 @@
     <Chain>
       <MsiPackage Id="TunnelBoardMsi" SourceFile="$(var.MsiPath)" Vital="yes">
         <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
+        <MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="[CreateStartMenuShortcut]" />
+        <MsiProperty Name="CREATE_DESKTOP_SHORTCUT" Value="[CreateDesktopShortcut]" />
       </MsiPackage>
     </Chain>
   </Bundle>

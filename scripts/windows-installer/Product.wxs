@@ -12,6 +12,9 @@
     <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 TunnelBoard，无法降级。" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
     <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
+    <Property Id="CREATE_START_MENU_SHORTCUT" Value="1" />
+    <Property Id="CREATE_DESKTOP_SHORTCUT" Value="0" />
+    <Icon Id="ApplicationIcon" SourceFile="build\windows\icon.ico" />
 
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="TunnelBoard">
@@ -35,6 +38,41 @@
           <RegistryValue Root="HKLM" Key="Software\TunnelBoard" Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
         </Component>
       </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="TunnelBoardStartMenuFolder" Name="TunnelBoard">
+        <Component
+            Id="StartMenuShortcut"
+            Guid="{B9F493E8-F4CE-422A-9F79-A0B0A5AFC4BE}"
+            Condition="CREATE_START_MENU_SHORTCUT = &quot;1&quot;">
+          <Shortcut
+              Id="StartMenuShortcutLink"
+              Name="TunnelBoard"
+              Description="TunnelBoard SSH 隧道管理"
+              Target="[INSTALLFOLDER]TunnelBoard.exe"
+              WorkingDirectory="INSTALLFOLDER"
+              Icon="ApplicationIcon" />
+          <RemoveFolder Id="RemoveStartMenuFolder" On="uninstall" />
+          <RegistryValue Root="HKLM" Key="Software\TunnelBoard" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder">
+      <Component
+          Id="DesktopShortcut"
+          Guid="{A3CB41C1-FF8A-433A-8F04-AD442B906AE3}"
+          Condition="CREATE_DESKTOP_SHORTCUT = &quot;1&quot;">
+        <Shortcut
+            Id="DesktopShortcutLink"
+            Name="TunnelBoard"
+            Description="TunnelBoard SSH 隧道管理"
+            Target="[INSTALLFOLDER]TunnelBoard.exe"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="ApplicationIcon" />
+        <RegistryValue Root="HKLM" Key="Software\TunnelBoard" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
     </StandardDirectory>
 
     <Binary Id="MigrationHelper" SourceFile="$(var.SourceDir)\tunnelboard-helper.exe" />
@@ -63,6 +101,8 @@
       <ComponentRef Id="CaddyFiles" />
       <ComponentRef Id="LicenseFiles" />
       <ComponentRef Id="ProductRegistry" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="DesktopShortcut" />
     </Feature>
   </Package>
 </Wix>
