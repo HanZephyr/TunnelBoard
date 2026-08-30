@@ -239,6 +239,7 @@ func indexSSHHost(hosts []model.SSHHost, id int) int {
 func (b *CatalogBiz) SaveWebRoute(r model.WebRoute) (model.WebRoute, error) {
 	r.Domain = strings.TrimSpace(strings.ToLower(r.Domain))
 	r.TLSSNI = strings.TrimSpace(r.TLSSNI)
+	r.UpstreamHost = strings.TrimSpace(r.UpstreamHost)
 	if r.UpstreamScheme == "" {
 		r.UpstreamScheme = "http"
 	}

@@ -409,7 +409,10 @@
             "caddyEnabled": "透過 Caddy 提供服務（443）",
             "upstreamScheme": "上游協定",
             "tlsSni": "TLS SNI",
-            "tlsSniPlaceholder": "例如 backend.internal"
+            "tlsSniPlaceholder": "例如 backend.internal",
+            "upstreamHost": "上游 HTTP Host",
+            "upstreamHostPlaceholder": "例如 localhost:38443",
+            "upstreamHostHint": "留空時預設使用 TLS SNI；僅在上游依 HTTP Host 路由時需要覆寫。"
         },
         "errors": {
             "domainRequired": "網域不可為空。",

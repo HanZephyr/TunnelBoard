@@ -67,6 +67,8 @@ type WebRoute struct {
 	CaddyEnabled   bool   `json:"caddyEnabled"`
 	UpstreamScheme string `json:"upstreamScheme"` // http | https
 	TLSSNI         string `json:"tlsSni,omitempty"`
+	// UpstreamHost 是 HTTPS 上游请求的 HTTP Host 头。为空时兼容旧路由，回退使用 TLSSNI。
+	UpstreamHost string `json:"upstreamHost,omitempty"`
 }
 
 // HostKey 是 TOFU 指纹库条目；同一 (Host, Port) 仅一条。

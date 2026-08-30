@@ -133,12 +133,12 @@ func TestCompileCaddyHTTPUpstream(t *testing.T) {
 	}
 }
 
-// HTTPS 上游：transport 带显式 SNI，请求头重写 Host，且不出现跳过校验与 ACME。
-func TestCompileCaddyHTTPSUpstream(t *testing.T) {
+// HTTPS 上游：TLS SNI 与 HTTP Host 可分别配置，且不出现跳过校验与 ACME。
+func TestCompileCaddyHTTPSUpstreamSeparatesSNIAndHost(t *testing.T) {
 	data := model.VaultData{
 		Forwards: []model.Forward{localForward(1, 8443)},
 		WebRoutes: []model.WebRoute{
-			{ID: 1, ForwardID: 1, Domain: "grafana.example.com", CaddyEnabled: true, UpstreamScheme: "https", TLSSNI: "grafana.internal"},
+			{ID: 1, ForwardID: 1, Domain: "grafana.example.com", CaddyEnabled: true, UpstreamScheme: "https", TLSSNI: "grafana.internal", UpstreamHost: "localhost:8443"},
 		},
 	}
 	raw, err := route.CompileCaddy(data)
@@ -160,8 +160,8 @@ func TestCompileCaddyHTTPSUpstream(t *testing.T) {
 	if h.Headers == nil {
 		t.Fatal("https upstream must rewrite Host header")
 	}
-	if got := h.Headers.Request.Set["Host"]; len(got) != 1 || got[0] != "grafana.internal" {
-		t.Fatalf("Host header = %v, want [grafana.internal]", got)
+	if got := h.Headers.Request.Set["Host"]; len(got) != 1 || got[0] != "localhost:8443" {
+		t.Fatalf("Host header = %v, want [localhost:8443]", got)
 	}
 	if len(h.Upstreams) != 1 || h.Upstreams[0].Dial != "127.0.0.1:8443" {
 		t.Fatalf("upstreams = %+v, want dial 127.0.0.1:8443", h.Upstreams)
@@ -175,6 +175,24 @@ func TestCompileCaddyHTTPSUpstream(t *testing.T) {
 	policies := cfg.Apps.TLS.Automation.Policies
 	if len(policies) != 1 || len(policies[0].Issuers) != 1 || policies[0].Issuers[0].Module != "internal" {
 		t.Fatalf("policies = %+v, want single internal issuer", policies)
+	}
+}
+
+// 旧 Vault 没有 upstreamHost 时维持既有语义：Host 回退到 TLS SNI，升级不会静默改变路由。
+func TestCompileCaddyHTTPSUpstreamFallsBackToSNIHost(t *testing.T) {
+	data := model.VaultData{
+		Forwards: []model.Forward{localForward(1, 8443)},
+		WebRoutes: []model.WebRoute{
+			{ID: 1, ForwardID: 1, Domain: "grafana.example.com", CaddyEnabled: true, UpstreamScheme: "https", TLSSNI: "grafana.internal"},
+		},
+	}
+	raw, err := route.CompileCaddy(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := decodeCaddy(t, raw).Apps.HTTP.Servers["tunnelboard"].Routes[0].Handle[0]
+	if got := h.Headers.Request.Set["Host"]; len(got) != 1 || got[0] != "grafana.internal" {
+		t.Fatalf("legacy Host header = %v, want [grafana.internal]", got)
 	}
 }
 

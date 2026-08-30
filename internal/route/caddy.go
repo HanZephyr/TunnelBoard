@@ -171,19 +171,23 @@ func CompileCaddy(data model.VaultData) ([]byte, error) {
 }
 
 // proxyHandler 生成单个 Route 的 reverse_proxy handler。HTTPS 上游按 ADR 0002 设置显式
-// SNI 与上游 Host 请求头，并保持默认严格校验（绝不写 insecure_skip_verify）。
+// SNI；HTTP Host 可独立配置，旧 Route 未配置时回退到 SNI，并保持默认严格校验。
 func proxyHandler(r model.WebRoute, f model.Forward) caddyHandler {
 	h := caddyHandler{
 		Handler:   "reverse_proxy",
 		Upstreams: []caddyUpstream{{Dial: fmt.Sprintf("127.0.0.1:%d", f.LocalPort)}},
 	}
 	if r.UpstreamScheme == "https" {
+		upstreamHost := r.UpstreamHost
+		if upstreamHost == "" {
+			upstreamHost = r.TLSSNI
+		}
 		h.Transport = &caddyTransport{
 			Protocol: "http",
 			TLS:      caddyTransportTLS{ServerName: r.TLSSNI},
 		}
 		h.Headers = &caddyHeaders{
-			Request: caddyHeadersRequest{Set: map[string][]string{"Host": {r.TLSSNI}}},
+			Request: caddyHeadersRequest{Set: map[string][]string{"Host": {upstreamHost}}},
 		}
 	}
 	return h

@@ -66,7 +66,7 @@ UI → 应用 Module → 本地路由 Module（biz/router）
 - 无启用 Caddy 的 Route → 不生成配置也不启动进程。
 - 每个启用 Route 一个 server 块：listen `[127.0.0.1:443]`，host matcher = 域名；`tls internal`（Caddy 本地 CA，ADR 0002 禁 ACME——admin 配置同时关闭全局 ACME automation）。
 - HTTP 上游：`reverse_proxy http://127.0.0.1:<forwardPort>`。
-- HTTPS 上游：`reverse_proxy https://127.0.0.1:<port>`，transport `tls.server_name = <TLSSNI>`，并设置上游 `Host: <TLSSNI>` 请求头（ADR 0002）；不写任何 `insecure_skip_verify`，默认严格校验。
+- HTTPS 上游：`reverse_proxy https://127.0.0.1:<port>`，transport `tls.server_name = <TLSSNI>`；上游 `Host` 可独立配置，未填写时兼容旧 Route 回退为 `<TLSSNI>`（ADR 0002）；不写任何 `insecure_skip_verify`，默认严格校验。
 - 443 冲突（`DiagnosePort`）：启用首个 Route 前实际绑定 `127.0.0.1:443` 预检；冲突则不启动 Caddy，Route 保持 hosts-only（“域名 + Forward 端口”访问），返回占用错误（占用进程识别列为后续增强）。
 
 **生命周期与 CA 信任编排**：
@@ -89,10 +89,10 @@ Route 的创建/编辑沿用 `CatalogBiz`（WebRoute 模型已在 Vault，迭代
 ## 6. 切片与验收对应
 
 1. 本设计文档（`docs:`）。
-2. hosts 规划器 + Caddy 配置编译器（纯函数 TDD：确定性输出、SNI/Host 头、ACME 关闭、确认标记）。
+2. hosts 规划器 + Caddy 配置编译器（纯函数 TDD：确定性输出、独立 SNI/Host 头、ACME 关闭、确认标记）。
 3. 特权 helper：协议 + 白名单 + hosts 区块读写/回滚 + CA 信任（文件操作全部 TDD，管道/服务安装手工验证）。
 4. Caddy Adapter：二进制定位/校验、进程管理、admin API 重载、443 诊断（用 `TUNNELBOARD_CADDY_PATH` 指到假二进制桩测试）。
 5. biz/router：Preview/Apply/Remove/Status 编排（fake helper/caddy 接缝 TDD）+ app 绑定。
-6. UI：Route 管理（域名、hosts/Caddy 开关、HTTPS SNI）+ 非本地域名确认对话框 + RouteStatus 展示。
+6. UI：Route 管理（域名、hosts/Caddy 开关、HTTPS SNI、上游 HTTP Host）+ 非本地域名确认对话框 + RouteStatus 展示。
 
 迭代验收：同机多域名访问不同 Forward；hosts/Caddy 失败可解释、可精确回滚。端到端验证（真实浏览器访问 `https://db.test`）在 Windows 桌面会话手工完成并记录。

@@ -409,7 +409,10 @@
             "caddyEnabled": "Обслуживать через Caddy (443)",
             "upstreamScheme": "Схема апстрима",
             "tlsSni": "TLS SNI",
-            "tlsSniPlaceholder": "например backend.internal"
+            "tlsSniPlaceholder": "например backend.internal",
+            "upstreamHost": "HTTP Host апстрима",
+            "upstreamHostPlaceholder": "например localhost:38443",
+            "upstreamHostHint": "Оставьте пустым, чтобы использовать TLS SNI. Переопределяйте только если апстрим маршрутизирует по HTTP Host."
         },
         "errors": {
             "domainRequired": "Укажите домен.",

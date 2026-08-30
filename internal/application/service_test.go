@@ -1209,3 +1209,26 @@ func TestRouteUpsertEnforcesCaddyHostsInvariantInBackend(t *testing.T) {
 		t.Fatalf("backend did not enforce caddy -> hosts: %+v", preview.Route)
 	}
 }
+
+func TestRouteUpsertNormalizesUpstreamHost(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
+	snapshot, err := service.GetSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := service.PreviewRouteChange(context.Background(), application.RouteChangeIntent{
+		ExpectedRevision: snapshot.Revisions.Vault,
+		Action:           application.RouteChangeUpsert,
+		Route: &model.WebRoute{
+			ID: 1, ForwardID: 1, Domain: "demo.example.com", UpstreamScheme: "https",
+			TLSSNI: "backend.internal", UpstreamHost: " localhost:8443 ",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Route == nil || preview.Route.UpstreamHost != "localhost:8443" {
+		t.Fatalf("normalized preview route = %+v", preview.Route)
+	}
+}

@@ -96,6 +96,17 @@ const forwardOptions = computed(() =>
               :placeholder="t('routes.modal.tlsSniPlaceholder')"
             />
           </div>
+          <div v-if="form.upstreamScheme === 'https'" class="col-12">
+            <label class="form-label" for="routeUpstreamHost">{{ t('routes.modal.upstreamHost') }}</label>
+            <input
+              id="routeUpstreamHost"
+              v-model="form.upstreamHost"
+              type="text"
+              class="form-control"
+              :placeholder="t('routes.modal.upstreamHostPlaceholder')"
+            />
+            <div class="form-text">{{ t('routes.modal.upstreamHostHint') }}</div>
+          </div>
         </div>
         <div v-if="validationError" class="form-error mt-2">{{ validationError }}</div>
     </fieldset>

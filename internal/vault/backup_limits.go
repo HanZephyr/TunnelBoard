@@ -140,6 +140,9 @@ func validateBackupPayload(data model.VaultData, keyFiles map[string][]byte) err
 		if err := check("route tls sni bytes", route.TLSSNI, maxBackupHostString); err != nil {
 			return err
 		}
+		if err := check("route upstream host bytes", route.UpstreamHost, maxBackupHostString); err != nil {
+			return err
+		}
 	}
 	for _, key := range data.HostKeys {
 		if err := check("host key host bytes", key.Host, maxBackupHostString); err != nil {

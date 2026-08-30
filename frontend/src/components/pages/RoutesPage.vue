@@ -60,13 +60,15 @@ function forwardName(forwardId) {
   return forward ? forward.name : `#${forwardId}`
 }
 
-// 上游目标完整描述：scheme → forward 名 (host:port)，https 附 SNI（仅展示，不影响逻辑）
+// 上游目标完整描述：scheme → forward 名 (host:port)，https 附 SNI 与有效 Host（仅展示，不影响逻辑）
 function upstreamDetail(route) {
   const forward = props.forwards.find((item) => item.id === route.forwardId)
   const scheme = route.upstreamScheme === 'https' ? 'https' : 'http'
   const target = forward ? `${forward.name} (${forward.localHost}:${forward.localPort})` : forwardName(route.forwardId)
   const sni = route.upstreamScheme === 'https' && route.tlsSni ? ` · SNI ${route.tlsSni}` : ''
-  return `${scheme} → ${target}${sni}`
+  const upstreamHost = route.upstreamScheme === 'https' ? (route.upstreamHost || route.tlsSni || '') : ''
+  const host = upstreamHost ? ` · Host ${upstreamHost}` : ''
+  return `${scheme} → ${target}${sni}${host}`
 }
 
 // ---- 系统状态：只消费根 AppSnapshot，页面不再独立轮询或猜测 ----
@@ -284,7 +286,8 @@ function defaultRouteForm() {
     hostsEnabled: true,
     caddyEnabled: false,
     upstreamScheme: 'http',
-    tlsSni: ''
+    tlsSni: '',
+    upstreamHost: ''
   }
 }
 
@@ -311,7 +314,8 @@ function editRoute(route) {
     hostsEnabled: !!route.hostsEnabled,
     caddyEnabled: !!route.caddyEnabled,
     upstreamScheme: route.upstreamScheme || 'http',
-    tlsSni: route.tlsSni || ''
+    tlsSni: route.tlsSni || '',
+    upstreamHost: route.upstreamHost || route.tlsSni || ''
   })
   routeValidationError.value = ''
   routeModalOpen.value = true
@@ -334,7 +338,8 @@ async function saveRoute() {
     hostsEnabled: !!routeForm.hostsEnabled,
     caddyEnabled: !!routeForm.caddyEnabled,
     upstreamScheme: routeForm.upstreamScheme,
-    tlsSni: routeForm.upstreamScheme === 'https' ? routeForm.tlsSni.trim() : ''
+    tlsSni: routeForm.upstreamScheme === 'https' ? routeForm.tlsSni.trim() : '',
+    upstreamHost: routeForm.upstreamScheme === 'https' ? routeForm.upstreamHost.trim() : ''
   }
   const error = validateRoutePayload(payload)
   if (error) {

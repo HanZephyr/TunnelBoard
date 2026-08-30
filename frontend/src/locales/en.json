@@ -409,7 +409,10 @@
             "caddyEnabled": "Serve via Caddy (443)",
             "upstreamScheme": "Upstream Scheme",
             "tlsSni": "TLS SNI",
-            "tlsSniPlaceholder": "e.g. backend.internal"
+            "tlsSniPlaceholder": "e.g. backend.internal",
+            "upstreamHost": "Upstream HTTP Host",
+            "upstreamHostPlaceholder": "e.g. localhost:38443",
+            "upstreamHostHint": "Leave empty to use the TLS SNI. Override it only when the upstream routes by HTTP Host."
         },
         "errors": {
             "domainRequired": "Domain is required.",

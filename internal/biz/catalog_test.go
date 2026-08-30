@@ -32,6 +32,7 @@ func newCatalog() *biz.CatalogBiz {
 }
 
 // SaveWebRoute 新建/更新 Web Route：仅允许引用 local 模式 Forward，HTTPS 上游必须带 SNI；
+// 独立上游 Host 在写入时去除首尾空白。
 // DeleteWebRoute 删除并级联校验。
 func TestSaveAndDeleteWebRoute(t *testing.T) {
 	c := newCatalog()
@@ -42,11 +43,14 @@ func TestSaveAndDeleteWebRoute(t *testing.T) {
 	remote, _ := c.SaveForward(model.Forward{FolderID: folder.ID, Name: "r", Mode: "remote", ChainHostIDs: []int{host.ID},
 		LocalHost: "127.0.0.1", LocalPort: 8081, RemoteHost: "x", RemotePort: 81})
 
-	created, err := c.SaveWebRoute(model.WebRoute{ForwardID: local.ID, Domain: " DB.Test ", HostsEnabled: true})
+	created, err := c.SaveWebRoute(model.WebRoute{
+		ForwardID: local.ID, Domain: " DB.Test ", HostsEnabled: true,
+		UpstreamScheme: "https", TLSSNI: " backend.internal ", UpstreamHost: " localhost:8443 ",
+	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if created.ID == 0 || created.Domain != "db.test" || created.UpstreamScheme != "http" {
+	if created.ID == 0 || created.Domain != "db.test" || created.UpstreamScheme != "https" || created.TLSSNI != "backend.internal" || created.UpstreamHost != "localhost:8443" {
 		t.Fatalf("normalize failed: %+v", created)
 	}
 
