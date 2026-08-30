@@ -1149,6 +1149,48 @@ def sign_rpm(package: Path, signer: tuple[Path, str]) -> None:
     run([rpmsign, "--addsign", "--define", f"_gpg_name {fingerprint}", str(package)], env=gpg_environment(gpg_home))
 
 
+def prepare_linux_release_assets(source: Path, output: Path) -> list[Path]:
+    """为 GitHub Release 生成名称唯一且可验签的 Linux checksum 资产。"""
+    expected_targets = {
+        f"{target['distribution']}-{target['arch']}"
+        for target in RELEASE_TARGETS.values()
+        if target["os"] == "linux"
+    }
+    if not source.is_dir():
+        raise ReleaseError(f"Linux release asset source directory does not exist: {source}")
+    actual_targets = {path.name for path in source.iterdir() if path.is_dir()}
+    if actual_targets != expected_targets:
+        raise ReleaseError("Linux release asset directories do not match the supported targets")
+    if output.exists() and any(output.iterdir()):
+        raise ReleaseError(f"Linux release asset output directory must be empty: {output}")
+    output.mkdir(parents=True, exist_ok=True)
+
+    outputs: list[Path] = []
+    shared_public_key: bytes | None = None
+    for target in sorted(expected_targets):
+        directory = source / target
+        checksums = directory / "SHA256SUMS"
+        signature = directory / "SHA256SUMS.asc"
+        public_key = directory / "SHA256SUMS.public-key.asc"
+        for path in (checksums, signature, public_key):
+            if not path.is_file() or path.is_symlink():
+                raise ReleaseError(f"required Linux release asset is missing or unsafe: {path}")
+        for path in (checksums, signature):
+            destination = output / f"TunnelBoard-{target}.{path.name}"
+            shutil.copy2(path, destination)
+            outputs.append(destination)
+        content = public_key.read_bytes()
+        if shared_public_key is None:
+            shared_public_key = content
+        elif content != shared_public_key:
+            raise ReleaseError("Linux release packages do not share one GPG public key")
+    assert shared_public_key is not None
+    public_key_destination = output / "TunnelBoard-linux-gpg-public-key.asc"
+    public_key_destination.write_bytes(shared_public_key)
+    outputs.append(public_key_destination)
+    return outputs
+
+
 def capture(command: list[str], cwd: Path = ROOT, env: dict[str, str] | None = None) -> str:
     result = subprocess.run(
         platform_command(command),
@@ -1575,6 +1617,10 @@ def cli() -> int:
     linux_checksums.add_argument("--signature", type=Path, required=True)
     linux_checksums.add_argument("--public-key", type=Path, required=True)
 
+    release_assets = subparsers.add_parser("prepare-linux-release-assets", help="生成名称唯一的 Linux Release checksum 与签名资产")
+    release_assets.add_argument("--source", type=Path, required=True)
+    release_assets.add_argument("--output", type=Path, required=True)
+
     build = subparsers.add_parser("build", help="从空 staging 构建指定平台正式候选产物")
     build.add_argument("--target", required=True, choices=sorted(RELEASE_TARGETS))
     build.add_argument("--version", required=True)
@@ -1611,6 +1657,10 @@ def cli() -> int:
         elif args.command == "verify-linux-checksums":
             verify_linux_release_checksums(args.checksums.resolve(), args.signature.resolve(), args.public_key.resolve())
             print("LINUX CHECKSUM SIGNATURE VERIFY PASS")
+        elif args.command == "prepare-linux-release-assets":
+            outputs = prepare_linux_release_assets(args.source.resolve(), args.output.resolve())
+            for output in outputs:
+                print(f"RELEASE ASSET {output} sha256={sha256_file(output)}")
         elif args.command == "build":
             outputs = build_target(args.target, args.version, args.require_signing, args.skip_installer)
             for output in outputs:

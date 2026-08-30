@@ -387,6 +387,10 @@ jobs:
           test -n "$windows_checksums"
           test "$(find artifacts/windows -maxdepth 1 -type f -name '*.SHA256SUMS' | wc -l)" -eq 1
           cat "$windows_checksums" artifacts/macos/SHA256SUMS artifacts/linux/*/SHA256SUMS > artifacts/SHA256SUMS
+      - name: Prepare unique Linux checksum release assets
+        run: |
+          pipx install uv==0.8.14
+          uv run scripts/release.py prepare-linux-release-assets --source artifacts/linux --output artifacts/release-assets
       - name: Create draft Release for real-machine acceptance
         env:
           GH_TOKEN: ${{ github.token }}
@@ -399,9 +403,9 @@ jobs:
             artifacts/linux/*/*.deb \
             artifacts/linux/*/*.rpm \
             artifacts/linux/*/*.manifest.json \
-            artifacts/linux/*/SHA256SUMS \
-            artifacts/linux/*/SHA256SUMS.asc \
-            artifacts/linux/*/SHA256SUMS.public-key.asc \
+            artifacts/release-assets/*.SHA256SUMS \
+            artifacts/release-assets/*.SHA256SUMS.asc \
+            artifacts/release-assets/TunnelBoard-linux-gpg-public-key.asc \
             artifacts/SHA256SUMS \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \

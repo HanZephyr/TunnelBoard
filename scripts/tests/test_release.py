@@ -62,6 +62,43 @@ class ReleaseVersionNormalizationTests(unittest.TestCase):
             self.release.debian_version("vnext")
 
 
+class LinuxReleaseAssetTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.release = load_release_module()
+
+    def setUp(self) -> None:
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.source = Path(self.tempdir.name) / "linux"
+        self.output = Path(self.tempdir.name) / "release-assets"
+        self.targets = ("debian-amd64", "debian-arm64", "rhel-amd64", "rhel-arm64")
+        for target in self.targets:
+            directory = self.source / target
+            directory.mkdir(parents=True)
+            (directory / "SHA256SUMS").write_text(f"checksum {target}\n", encoding="utf-8")
+            (directory / "SHA256SUMS.asc").write_text(f"signature {target}\n", encoding="utf-8")
+            (directory / "SHA256SUMS.public-key.asc").write_text("shared release public key\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.tempdir.cleanup()
+
+    def test_prepares_unique_checksum_assets_and_one_shared_public_key(self) -> None:
+        outputs = self.release.prepare_linux_release_assets(self.source, self.output)
+        expected = {
+            *(f"TunnelBoard-{target}.SHA256SUMS" for target in self.targets),
+            *(f"TunnelBoard-{target}.SHA256SUMS.asc" for target in self.targets),
+            "TunnelBoard-linux-gpg-public-key.asc",
+        }
+        self.assertEqual({path.name for path in outputs}, expected)
+        self.assertEqual((self.output / "TunnelBoard-debian-amd64.SHA256SUMS").read_text(encoding="utf-8"), "checksum debian-amd64\n")
+        self.assertEqual((self.output / "TunnelBoard-linux-gpg-public-key.asc").read_text(encoding="utf-8"), "shared release public key\n")
+
+    def test_rejects_mismatched_linux_public_keys(self) -> None:
+        (self.source / "rhel-arm64" / "SHA256SUMS.public-key.asc").write_text("unexpected key\n", encoding="utf-8")
+        with self.assertRaises(self.release.ReleaseError):
+            self.release.prepare_linux_release_assets(self.source, self.output)
+
+
 class ReleaseVerifierCLITest(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -375,18 +412,22 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn("verify-linux-package", workflow)
         self.assertIn("TUNNELBOARD_GPG_SIGNING_KEY_BASE64", workflow)
         self.assertIn("TUNNELBOARD_GPG_KEY_FINGERPRINT", workflow)
-        self.assertIn("-name 'SHA256SUMS.public-key.asc'", workflow)
-        self.assertIn("-name 'SHA256SUMS.asc'", workflow)
+        linux_verification = workflow.split("  verify-linux-artifacts:", 1)[1].split("  draft-release:", 1)[0]
+        self.assertIn("-name 'SHA256SUMS.public-key.asc'", linux_verification)
+        self.assertIn("-name 'SHA256SUMS.asc'", linux_verification)
+        self.assertNotIn("-name '*.SHA256SUMS", linux_verification)
         windows_checksum_lookup = "find artifacts/windows -maxdepth 1 -type f -name '*.SHA256SUMS'"
         self.assertEqual(workflow.count(windows_checksum_lookup), 2)
-        self.assertIn("artifacts/linux/*/SHA256SUMS", workflow)
-        self.assertIn("artifacts/linux/*/SHA256SUMS.asc", workflow)
-        self.assertIn("artifacts/linux/*/SHA256SUMS.public-key.asc", workflow)
         self.assertNotIn("artifacts/linux/*/*.SHA256SUMS", workflow)
         self.assertIn("checksums = output / f\"{base}.SHA256SUMS\"", release_script)
         self.assertIn("checksums = output / \"SHA256SUMS\"", release_script)
         self.assertIn('cat "$windows_checksums" artifacts/macos/SHA256SUMS artifacts/linux/*/SHA256SUMS', workflow)
         self.assertNotIn("artifacts/windows/SHA256SUMS", workflow)
+        draft_release = workflow.split("  draft-release:", 1)[1]
+        self.assertIn("prepare-linux-release-assets", draft_release)
+        self.assertIn("artifacts/release-assets/*.SHA256SUMS", draft_release)
+        self.assertIn("artifacts/release-assets/*.SHA256SUMS.asc", draft_release)
+        self.assertIn("artifacts/release-assets/TunnelBoard-linux-gpg-public-key.asc", draft_release)
         self.assertIn("--draft", workflow)
         self.assertIn("Linux native packages remain draft", workflow)
 
