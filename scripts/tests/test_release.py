@@ -471,6 +471,20 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn("def find_wix", release)
         self.assertIn('"/quiet", "/norestart"', release)
 
+    def test_windows_installer_expands_default_path_and_allows_folder_selection(self) -> None:
+        bundle = (ROOT / "scripts" / "windows-installer" / "Bundle.wxs").read_text(encoding="utf-8")
+        self.assertIn(
+            'Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]\\TunnelBoard"',
+            bundle,
+            "WiX v4 must expand the Program Files variable before passing it to MSI",
+        )
+        self.assertIn(
+            'SuppressOptionsUI="no"',
+            bundle,
+            "the interactive installer must expose the Options page for selecting an install folder",
+        )
+        self.assertIn('<MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />', bundle)
+
 
 if __name__ == "__main__":
     unittest.main()

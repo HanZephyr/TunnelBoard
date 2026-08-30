@@ -10,7 +10,7 @@
       IconSourceFile="build\windows\icon.ico"
       AboutUrl="https://github.com/HanZephyr/TunnelBoard"
       Compressed="yes">
-    <Variable Name="InstallFolder" Type="string" Value="[ProgramFiles64Folder]\TunnelBoard" bal:Overridable="yes" />
+    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]\TunnelBoard" bal:Overridable="yes" />
 
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication
@@ -19,7 +19,7 @@
           LogoFile="build\appicon-512-rounded.png"
           ShowVersion="yes"
           SuppressRepair="no"
-          SuppressOptionsUI="yes" />
+          SuppressOptionsUI="no" />
     </BootstrapperApplication>
 
     <Chain>
