@@ -374,6 +374,9 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn("verify-linux-package", workflow)
         self.assertIn("TUNNELBOARD_GPG_SIGNING_KEY_BASE64", workflow)
         self.assertIn("TUNNELBOARD_GPG_KEY_FINGERPRINT", workflow)
+        self.assertIn("-name 'SHA256SUMS.public-key.asc'", workflow)
+        self.assertIn("-name 'SHA256SUMS.asc'", workflow)
+        self.assertNotIn("-name '*.SHA256SUMS", workflow)
         self.assertIn("--draft", workflow)
         self.assertIn("Linux native packages remain draft", workflow)
 

@@ -320,7 +320,7 @@ jobs:
           test -n "$package"
           test "$(find "artifacts/linux/${{ matrix.target }}" -maxdepth 1 -type f -name "*.${{ matrix.extension }}" | wc -l)" -eq 1
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            public_key="$(find "artifacts/linux/${{ matrix.target }}" -maxdepth 1 -type f -name '*.SHA256SUMS.public-key.asc' -print -quit)"
+            public_key="$(find "artifacts/linux/${{ matrix.target }}" -maxdepth 1 -type f -name 'SHA256SUMS.public-key.asc' -print -quit)"
             test -n "$public_key"
             if [ "${{ matrix.extension }}" = "rpm" ]; then
               uv run scripts/release.py verify-linux-package --artifact "$package" --require-signing --rpm-public-key "$public_key"
@@ -336,9 +336,9 @@ jobs:
         run: |
           set -euo pipefail
           directory="artifacts/linux/${{ matrix.target }}"
-          checksums="$(find "$directory" -maxdepth 1 -type f -name '*.SHA256SUMS' -print -quit)"
-          signature="$(find "$directory" -maxdepth 1 -type f -name '*.SHA256SUMS.asc' -print -quit)"
-          public_key="$(find "$directory" -maxdepth 1 -type f -name '*.SHA256SUMS.public-key.asc' -print -quit)"
+          checksums="$(find "$directory" -maxdepth 1 -type f -name 'SHA256SUMS' -print -quit)"
+          signature="$(find "$directory" -maxdepth 1 -type f -name 'SHA256SUMS.asc' -print -quit)"
+          public_key="$(find "$directory" -maxdepth 1 -type f -name 'SHA256SUMS.public-key.asc' -print -quit)"
           test -n "$checksums" && test -n "$signature" && test -n "$public_key"
           uv run scripts/release.py verify-linux-checksums --checksums "$checksums" --signature "$signature" --public-key "$public_key"
 
