@@ -366,6 +366,7 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
 
     def test_linux_native_packages_are_built_and_verified_before_draft_release(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
+        release_script = (ROOT / "scripts" / "release.py").read_text(encoding="utf-8")
         self.assertIn("build-linux:", workflow)
         self.assertIn("linux-debian-amd64", workflow)
         self.assertIn("linux-debian-arm64", workflow)
@@ -376,11 +377,16 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn("TUNNELBOARD_GPG_KEY_FINGERPRINT", workflow)
         self.assertIn("-name 'SHA256SUMS.public-key.asc'", workflow)
         self.assertIn("-name 'SHA256SUMS.asc'", workflow)
-        self.assertNotIn("-name '*.SHA256SUMS", workflow)
+        windows_checksum_lookup = "find artifacts/windows -maxdepth 1 -type f -name '*.SHA256SUMS'"
+        self.assertEqual(workflow.count(windows_checksum_lookup), 2)
         self.assertIn("artifacts/linux/*/SHA256SUMS", workflow)
         self.assertIn("artifacts/linux/*/SHA256SUMS.asc", workflow)
         self.assertIn("artifacts/linux/*/SHA256SUMS.public-key.asc", workflow)
         self.assertNotIn("artifacts/linux/*/*.SHA256SUMS", workflow)
+        self.assertIn("checksums = output / f\"{base}.SHA256SUMS\"", release_script)
+        self.assertIn("checksums = output / \"SHA256SUMS\"", release_script)
+        self.assertIn('cat "$windows_checksums" artifacts/macos/SHA256SUMS artifacts/linux/*/SHA256SUMS', workflow)
+        self.assertNotIn("artifacts/windows/SHA256SUMS", workflow)
         self.assertIn("--draft", workflow)
         self.assertIn("Linux native packages remain draft", workflow)
 

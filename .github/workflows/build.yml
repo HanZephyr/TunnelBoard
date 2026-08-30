@@ -382,7 +382,11 @@ jobs:
       - name: Combine release checksums
         shell: bash
         run: |
-          cat artifacts/windows/SHA256SUMS artifacts/macos/SHA256SUMS artifacts/linux/*/SHA256SUMS > artifacts/SHA256SUMS
+          set -euo pipefail
+          windows_checksums="$(find artifacts/windows -maxdepth 1 -type f -name '*.SHA256SUMS' -print -quit)"
+          test -n "$windows_checksums"
+          test "$(find artifacts/windows -maxdepth 1 -type f -name '*.SHA256SUMS' | wc -l)" -eq 1
+          cat "$windows_checksums" artifacts/macos/SHA256SUMS artifacts/linux/*/SHA256SUMS > artifacts/SHA256SUMS
       - name: Create draft Release for real-machine acceptance
         env:
           GH_TOKEN: ${{ github.token }}
