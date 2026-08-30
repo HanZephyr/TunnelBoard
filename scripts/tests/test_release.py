@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import json
 import subprocess
 import sys
@@ -11,6 +12,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 RELEASE = ROOT / "scripts" / "release.py"
 LOCK = ROOT / "scripts" / "caddy-lock.json"
+
+
+def load_release_module():
+    spec = importlib.util.spec_from_file_location("tunnelboard_release", RELEASE)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def digest(data: bytes) -> str:
@@ -35,6 +44,22 @@ def fake_elf(payload: bytes, machine: int = 0x003E) -> bytes:
     data[18:20] = machine.to_bytes(2, "little")
     data[20:] = payload
     return bytes(data)
+
+
+class ReleaseVersionNormalizationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.release = load_release_module()
+
+    def test_debian_version_removes_tag_prefix(self) -> None:
+        self.assertEqual(self.release.debian_version("v1.0.6"), "1.0.6")
+
+    def test_debian_version_preserves_ci_version(self) -> None:
+        self.assertEqual(self.release.debian_version("0.0.0-ci.42"), "0.0.0-ci.42")
+
+    def test_debian_version_requires_numeric_prefix(self) -> None:
+        with self.assertRaises(self.release.ReleaseError):
+            self.release.debian_version("vnext")
 
 
 class ReleaseVerifierCLITest(unittest.TestCase):

@@ -987,6 +987,14 @@ def rpm_version(version: str) -> str:
     return value
 
 
+def debian_version(version: str) -> str:
+    value = version.removeprefix("v")
+    allowed = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.+:~-"
+    if not value or not value[0].isdigit() or any(ch not in allowed for ch in value):
+        raise ReleaseError("version cannot be represented in a Debian package")
+    return value
+
+
 def stage_linux_payload(
     payload: Path,
     app: Path,
@@ -1033,7 +1041,7 @@ def build_debian_package(payload: Path, output: Path, version: str, arch: str, b
     render_template(
         LINUX_PACKAGING_ROOT / "debian" / "control.in",
         debian / "control",
-        {"VERSION": version, "ARCH": arch},
+        {"VERSION": debian_version(version), "ARCH": arch},
     )
     prerm = debian / "prerm"
     shutil.copy2(LINUX_PACKAGING_ROOT / "debian" / "prerm", prerm)
