@@ -25,6 +25,10 @@ func TestGenerateSSHKeyPairWritesParseableOpenSSHKey(t *testing.T) {
 	if result.KeyPath != filepath.Clean(destination) {
 		t.Fatalf("key path = %q, want %q", result.KeyPath, filepath.Clean(destination))
 	}
+	publicKeyDestination := destination + ".pub"
+	if result.PublicKeyPath != filepath.Clean(publicKeyDestination) {
+		t.Fatalf("public key path = %q, want %q", result.PublicKeyPath, filepath.Clean(publicKeyDestination))
+	}
 	if !strings.HasPrefix(result.PublicKey, "ssh-ed25519 ") || !strings.HasSuffix(result.PublicKey, " test@host") {
 		t.Fatalf("public key line unexpected: %q", result.PublicKey)
 	}
@@ -45,6 +49,20 @@ func TestGenerateSSHKeyPairWritesParseableOpenSSHKey(t *testing.T) {
 	if len(fileKey) < 2 || len(resultKey) < 2 || fileKey[0] != resultKey[0] || fileKey[1] != resultKey[1] {
 		t.Fatalf("public key mismatch: file=%q result=%q", fileKey, resultKey)
 	}
+	publicRaw, err := os.ReadFile(publicKeyDestination)
+	if err != nil {
+		t.Fatalf("read public key: %v", err)
+	}
+	if string(publicRaw) != result.PublicKey+"\n" {
+		t.Fatalf("public key file = %q, want %q", publicRaw, result.PublicKey+"\n")
+	}
+	parsedPublic, _, _, _, err := ssh.ParseAuthorizedKey(publicRaw)
+	if err != nil {
+		t.Fatalf("parse public key file: %v", err)
+	}
+	if strings.TrimSpace(string(ssh.MarshalAuthorizedKey(parsedPublic))) != string(authorizedKeyBytes(signer.PublicKey())) {
+		t.Fatalf("public key file does not match private key")
+	}
 
 	if runtime.GOOS != "windows" {
 		info, err := os.Stat(destination)
@@ -54,7 +72,18 @@ func TestGenerateSSHKeyPairWritesParseableOpenSSHKey(t *testing.T) {
 		if perm := info.Mode().Perm(); perm != 0o600 {
 			t.Fatalf("private key perm = %o, want 600", perm)
 		}
+		publicInfo, err := os.Stat(publicKeyDestination)
+		if err != nil {
+			t.Fatalf("stat public key: %v", err)
+		}
+		if perm := publicInfo.Mode().Perm(); perm != 0o644 {
+			t.Fatalf("public key perm = %o, want 644", perm)
+		}
 	}
+}
+
+func authorizedKeyBytes(public ssh.PublicKey) []byte {
+	return []byte(strings.TrimSpace(string(ssh.MarshalAuthorizedKey(public))))
 }
 
 func pemBlockType(raw []byte) (string, error) {
@@ -84,6 +113,25 @@ func TestGenerateSSHKeyPairRefusesOverwrite(t *testing.T) {
 	}
 	if string(raw) != string(after) {
 		t.Fatal("existing private key was overwritten")
+	}
+	if _, err := os.Stat(destination + ".pub"); err != nil {
+		t.Fatalf("generated public key missing after first generation: %v", err)
+	}
+}
+
+func TestGenerateSSHKeyPairRefusesExistingPublicKey(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "id_ed25519_test")
+	publicDestination := destination + ".pub"
+	want := []byte("existing public key\n")
+	if err := os.WriteFile(publicDestination, want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := GenerateSSHKeyPair(context.Background(), GenerateSSHKeyRequest{Destination: destination})
+	if !errors.Is(err, ErrSSHKeyExists) {
+		t.Fatalf("error = %v, want ErrSSHKeyExists", err)
+	}
+	if _, err := os.Stat(destination); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("private key should not be created when public key exists: %v", err)
 	}
 }
 

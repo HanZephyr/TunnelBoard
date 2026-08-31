@@ -229,6 +229,7 @@
             "generateKey": "Создать ключ",
             "generatingKey": "Создание…",
             "publicKeyTitle": "Открытый ключ — добавьте его в ~/.ssh/authorized_keys на сервере",
+            "publicKeySavedTo": "Сохранено в: {path}",
             "copyPublicKey": "Копировать открытый ключ",
             "publicKeyCopied": "Скопировано",
             "keygenFailed": "Не удалось создать ключ: {message}",

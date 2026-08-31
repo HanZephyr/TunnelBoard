@@ -229,6 +229,7 @@
             "generateKey": "產生金鑰",
             "generatingKey": "產生中…",
             "publicKeyTitle": "公鑰 —— 請將其新增至伺服器的 ~/.ssh/authorized_keys",
+            "publicKeySavedTo": "公鑰已儲存至：{path}",
             "copyPublicKey": "複製公鑰",
             "publicKeyCopied": "已複製",
             "keygenFailed": "產生金鑰失敗：{message}",

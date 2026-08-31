@@ -229,6 +229,7 @@
             "generateKey": "生成密钥",
             "generatingKey": "生成中…",
             "publicKeyTitle": "公钥 —— 请将其添加到服务器的 ~/.ssh/authorized_keys",
+            "publicKeySavedTo": "公钥已保存到：{path}",
             "copyPublicKey": "复制公钥",
             "publicKeyCopied": "已复制",
             "keygenFailed": "生成密钥失败：{message}",

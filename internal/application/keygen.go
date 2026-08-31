@@ -17,8 +17,8 @@ import (
 // DefaultSSHKeyFilename 是生成私钥时保存对话框的默认文件名。
 const DefaultSSHKeyFilename = "id_ed25519_tunnelboard"
 
-// ErrSSHKeyExists 表示目标私钥文件已存在；生成流程从不覆盖既有密钥。
-var ErrSSHKeyExists = errors.New("application: private key file already exists")
+// ErrSSHKeyExists 表示目标私钥或公钥文件已存在；生成流程从不覆盖既有密钥。
+var ErrSSHKeyExists = errors.New("application: SSH key file already exists")
 
 type GenerateSSHKeyRequest struct {
 	// Destination 是私钥目标路径（支持 ~ 前缀）；由前端保存对话框提供，必填。
@@ -32,12 +32,15 @@ type GenerateSSHKeyRequest struct {
 type GenerateSSHKeyResult struct {
 	// KeyPath 是实际写入的私钥绝对路径，前端直接回填到 SSHHost.KeyPath。
 	KeyPath string `json:"keyPath"`
-	// PublicKey 是单行 OpenSSH authorized_keys 格式公钥；只做展示，不落盘。
+	// PublicKeyPath 是与私钥同目录的 OpenSSH 公钥文件路径。
+	PublicKeyPath string `json:"publicKeyPath"`
+	// PublicKey 是单行 OpenSSH authorized_keys 格式公钥；同时写入 PublicKeyPath 供复制或部署。
 	PublicKey string `json:"publicKey"`
 }
 
 // GenerateSSHKeyPair 生成 ed25519 SSH 密钥对：私钥以 OpenSSH PEM 格式原子写入
-// 目标路径（0600/受限 ACL），公钥仅返回给前端展示。目标已存在时拒绝覆盖。
+// 目标路径（0600/受限 ACL），公钥以 authorized_keys 格式写入目标路径 + ".pub"。
+// 任一目标已存在时拒绝覆盖。
 func GenerateSSHKeyPair(ctx context.Context, request GenerateSSHKeyRequest) (GenerateSSHKeyResult, error) {
 	if err := ctx.Err(); err != nil {
 		return GenerateSSHKeyResult{}, err
@@ -49,8 +52,12 @@ func GenerateSSHKeyPair(ctx context.Context, request GenerateSSHKeyRequest) (Gen
 	if destination == "" {
 		return GenerateSSHKeyResult{}, errors.New("application: private key destination is required")
 	}
+	publicKeyDestination := destination + ".pub"
 	if _, err := os.Stat(destination); err == nil {
 		return GenerateSSHKeyResult{}, fmt.Errorf("%w: %s", ErrSSHKeyExists, destination)
+	}
+	if _, err := os.Stat(publicKeyDestination); err == nil {
+		return GenerateSSHKeyResult{}, fmt.Errorf("%w: %s", ErrSSHKeyExists, publicKeyDestination)
 	}
 	if dir := filepath.Dir(destination); dir != "" {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -86,9 +93,15 @@ func GenerateSSHKeyPair(ctx context.Context, request GenerateSSHKeyRequest) (Gen
 		return GenerateSSHKeyResult{}, fmt.Errorf("application: derive public key: %w", err)
 	}
 	keyLine := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(authorizedKey)))
+	publicKey := fmt.Sprintf("%s %s\n", keyLine, comment)
+	if err := writePublicKeyAtomicExclusive(ctx, publicKeyDestination, []byte(publicKey)); err != nil {
+		_ = os.Remove(destination)
+		return GenerateSSHKeyResult{}, err
+	}
 	return GenerateSSHKeyResult{
-		KeyPath:   filepath.Clean(destination),
-		PublicKey: fmt.Sprintf("%s %s", keyLine, comment),
+		KeyPath:       filepath.Clean(destination),
+		PublicKeyPath: filepath.Clean(publicKeyDestination),
+		PublicKey:     strings.TrimSpace(publicKey),
 	}, nil
 }
 

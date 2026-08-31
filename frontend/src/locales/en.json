@@ -229,6 +229,7 @@
             "generateKey": "Generate Key",
             "generatingKey": "Generating…",
             "publicKeyTitle": "Public key — add it to the server's ~/.ssh/authorized_keys",
+            "publicKeySavedTo": "Saved to {path}",
             "copyPublicKey": "Copy Public Key",
             "publicKeyCopied": "Copied",
             "keygenFailed": "Key generation failed: {message}",

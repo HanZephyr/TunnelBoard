@@ -20,6 +20,7 @@ const authDrafts = reactive(createSSHAuthDrafts(props.draft))
 
 const generatingKey = ref(false)
 const generatedPublicKey = ref('')
+const generatedPublicKeyPath = ref('')
 const keyActionError = ref('')
 const publicKeyCopied = ref(false)
 let copyResetTimer = null
@@ -41,6 +42,7 @@ async function browseKeyFile() {
 async function generateKeyPair() {
   keyActionError.value = ''
   generatedPublicKey.value = ''
+  generatedPublicKeyPath.value = ''
   generatingKey.value = true
   try {
     // 保存对话框提供目标路径：默认 ~/.ssh，用户可自由修改；取消则中止。
@@ -51,6 +53,7 @@ async function generateKeyPair() {
     props.draft.keyPath = result.keyPath
     props.draft.secretAction = passphrase ? 'replace' : 'clear'
     generatedPublicKey.value = result.publicKey
+    generatedPublicKeyPath.value = result.publicKeyPath || `${result.keyPath}.pub`
     publicKeyCopied.value = false
   } catch (error) {
     const message = errorMessage(error)
@@ -126,6 +129,7 @@ onBeforeUnmount(() => {
             {{ publicKeyCopied ? t('hosts.modal.publicKeyCopied') : t('hosts.modal.copyPublicKey') }}
           </button>
         </div>
+        <div class="field-note mb-1">{{ t('hosts.modal.publicKeySavedTo', { path: generatedPublicKeyPath }) }}</div>
         <code class="generated-key-value d-block">{{ generatedPublicKey }}</code>
       </div>
     </div>
