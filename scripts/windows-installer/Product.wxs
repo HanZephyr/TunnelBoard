@@ -15,10 +15,20 @@
         Id="CloseTunnelBoard"
         Target="TunnelBoard.exe"
         Description="请先关闭 TunnelBoard 主程序。"
-        PromptToContinue="yes"
         CloseMessage="yes"
+        ElevatedCloseMessage="yes"
         Timeout="5"
-        RebootPrompt="yes" />
+        RebootPrompt="no"
+        Sequence="1" />
+    <util:CloseApplication
+        Id="CloseTunnelBoardHelper"
+        Target="tunnelboard-helper.exe"
+        Description="请先关闭 TunnelBoard Helper。"
+        CloseMessage="yes"
+        ElevatedCloseMessage="yes"
+        Timeout="5"
+        RebootPrompt="no"
+        Sequence="2" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
     <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
     <Property Id="CREATE_START_MENU_SHORTCUT" Value="1" />

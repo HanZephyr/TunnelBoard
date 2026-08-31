@@ -472,14 +472,17 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn("--cleanup-current-user-ca", installer[cleanup:delete_helper])
         self.assertIn('Return="check"', installer[cleanup:delete_helper], "failed trust cleanup must not silently orphan a root CA")
 
-    def test_windows_installer_prompts_to_close_tunnelboard_before_replacing_files(self) -> None:
+    def test_windows_installer_closes_apps_before_replacing_files(self) -> None:
         installer = (ROOT / "scripts" / "windows-installer" / "Product.wxs").read_text(encoding="utf-8")
         self.assertIn('xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"', installer)
         self.assertIn('Codepage="65001"', installer)
         self.assertIn('<util:CloseApplication', installer)
         self.assertIn('Target="TunnelBoard.exe"', installer)
-        self.assertIn('PromptToContinue="yes"', installer)
         self.assertIn('CloseMessage="yes"', installer)
+        self.assertIn('ElevatedCloseMessage="yes"', installer)
+        self.assertIn('Target="tunnelboard-helper.exe"', installer)
+        self.assertNotIn('PromptToContinue="yes"', installer)
+        self.assertIn('RebootPrompt="no"', installer)
 
     def test_windows_installer_uses_wix_burn_instead_of_nsis(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
