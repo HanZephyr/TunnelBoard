@@ -1847,6 +1847,21 @@
   padding: 10px 12px;
 }
 
+/* SSH 私钥生成结果（SSHHostFields 在用） */
+.generated-key-box {
+  border: 1px solid var(--tb-border);
+  border-radius: var(--tb-radius-ctl);
+  background: var(--tb-surface-2);
+  padding: 8px 10px;
+}
+
+.generated-key-value {
+  font-size: 12px;
+  word-break: break-all;
+  white-space: normal;
+}
+
+
 /* Forward 主机链编辑器（ForwardModal 在用） */
 .chain-editor {
   border: 1px solid var(--tb-border);

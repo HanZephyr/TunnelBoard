@@ -3,7 +3,9 @@
 package application
 
 import (
+	"errors"
 	"fmt"
+	"os"
 
 	"golang.org/x/sys/windows"
 )
@@ -42,4 +44,22 @@ func replacePrivateKeyFile(source, destination string) error {
 	const moveFileReplaceExisting = 0x1
 	const moveFileWriteThrough = 0x8
 	return windows.MoveFileEx(sourcePointer, destinationPointer, moveFileReplaceExisting|moveFileWriteThrough)
+}
+
+func linkPrivateKeyFile(source, destination string) error {
+	sourcePointer, err := windows.UTF16PtrFromString(source)
+	if err != nil {
+		return err
+	}
+	destinationPointer, err := windows.UTF16PtrFromString(destination)
+	if err != nil {
+		return err
+	}
+	if err := windows.CreateHardLink(destinationPointer, sourcePointer, 0); err != nil {
+		if errors.Is(err, windows.ERROR_FILE_EXISTS) || errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+			return os.ErrExist
+		}
+		return err
+	}
+	return nil
 }

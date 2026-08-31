@@ -1,7 +1,8 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { createSSHAuthDrafts, switchSSHHostAuthDraft } from '../../modules/sshHostEditor'
+import { GenerateSSHKeyPair, SelectSSHKeyFile, SelectSSHKeySavePath } from '../../../wailsjs/go/main/App'
 
 const props = defineProps({
   draft: { type: Object, required: true },
@@ -17,9 +18,72 @@ const showsSecret = computed(() => props.draft.authType === 'password' || props.
 const showsAgent = computed(() => props.draft.authType === 'ssh_agent')
 const authDrafts = reactive(createSSHAuthDrafts(props.draft))
 
+const generatingKey = ref(false)
+const generatedPublicKey = ref('')
+const generatedPublicKeyPath = ref('')
+const keyActionError = ref('')
+const publicKeyCopied = ref(false)
+let copyResetTimer = null
+
 function changeAuthType(event) {
   switchSSHHostAuthDraft(props.draft, authDrafts, event.target.value)
 }
+
+async function browseKeyFile() {
+  keyActionError.value = ''
+  try {
+    const selected = await SelectSSHKeyFile()
+    if (selected) props.draft.keyPath = selected
+  } catch (error) {
+    keyActionError.value = t('hosts.modal.browseFailed', { message: errorMessage(error) })
+  }
+}
+
+async function generateKeyPair() {
+  keyActionError.value = ''
+  generatedPublicKey.value = ''
+  generatedPublicKeyPath.value = ''
+  generatingKey.value = true
+  try {
+    // 保存对话框提供目标路径：默认 ~/.ssh，用户可自由修改；取消则中止。
+    const destination = await SelectSSHKeySavePath()
+    if (!destination) return
+    const passphrase = String(props.draft.secretInput || '')
+    // 保存对话框已经让用户确认了覆盖行为；后端仍默认拒绝覆盖，避免绕过该交互直接覆盖密钥。
+    const result = await GenerateSSHKeyPair({ destination, overwrite: true, ...(passphrase ? { passphrase } : {}) })
+    props.draft.keyPath = result.keyPath
+    props.draft.secretAction = passphrase ? 'replace' : 'clear'
+    generatedPublicKey.value = result.publicKey
+    generatedPublicKeyPath.value = result.publicKeyPath || `${result.keyPath}.pub`
+    publicKeyCopied.value = false
+  } catch (error) {
+    const message = errorMessage(error)
+    keyActionError.value = message.includes('already exists')
+      ? t('hosts.modal.keyExists')
+      : t('hosts.modal.keygenFailed', { message })
+  } finally {
+    generatingKey.value = false
+  }
+}
+
+async function copyPublicKey() {
+  try {
+    await navigator.clipboard.writeText(generatedPublicKey.value)
+    publicKeyCopied.value = true
+    clearTimeout(copyResetTimer)
+    copyResetTimer = setTimeout(() => { publicKeyCopied.value = false }, 2000)
+  } catch (error) {
+    keyActionError.value = t('hosts.modal.copyFailed', { message: errorMessage(error) })
+  }
+}
+
+function errorMessage(error) {
+  return String(error?.message || error || '')
+}
+
+onBeforeUnmount(() => {
+  if (copyResetTimer) clearTimeout(copyResetTimer)
+})
 </script>
 
 <template>
@@ -50,7 +114,25 @@ function changeAuthType(event) {
     </div>
     <div v-if="showsKeyPath" class="col-12">
       <label class="form-label" :for="`${idPrefix}-key`">{{ t('hosts.modal.keyPath') }}</label>
-      <input :id="`${idPrefix}-key`" v-model="draft.keyPath" type="text" class="form-control" :class="small" :placeholder="t('hosts.modal.keyPathPlaceholder')" />
+      <div class="input-group">
+        <input :id="`${idPrefix}-key`" v-model="draft.keyPath" type="text" class="form-control" :class="small" :placeholder="t('hosts.modal.keyPathPlaceholder')" />
+        <button type="button" class="btn btn-outline-secondary" :disabled="generatingKey" @click="browseKeyFile">{{ t('hosts.modal.browseKeyFile') }}</button>
+        <button type="button" class="btn btn-outline-primary" :disabled="generatingKey" @click="generateKeyPair">
+          <span v-if="generatingKey" class="spinner-border spinner-border-sm me-1" aria-hidden="true"></span>
+          {{ generatingKey ? t('hosts.modal.generatingKey') : t('hosts.modal.generateKey') }}
+        </button>
+      </div>
+      <div v-if="keyActionError" class="form-error mt-1" role="alert">{{ keyActionError }}</div>
+      <div v-if="generatedPublicKey" class="generated-key-box mt-2">
+        <div class="d-flex align-items-center justify-content-between mb-1">
+          <span class="field-note">{{ t('hosts.modal.publicKeyTitle') }}</span>
+          <button type="button" class="btn btn-sm btn-outline-secondary" @click="copyPublicKey">
+            {{ publicKeyCopied ? t('hosts.modal.publicKeyCopied') : t('hosts.modal.copyPublicKey') }}
+          </button>
+        </div>
+        <div class="field-note mb-1">{{ t('hosts.modal.publicKeySavedTo', { path: generatedPublicKeyPath }) }}</div>
+        <code class="generated-key-value d-block">{{ generatedPublicKey }}</code>
+      </div>
     </div>
     <div v-if="showsSecret" class="col-12">
       <label class="form-label" :for="`${idPrefix}-secret`">{{ draft.authType === 'ssh_key' ? t('hosts.modal.keyPassphrase') : t('hosts.modal.password') }}</label>
