@@ -82,20 +82,20 @@
         <Text>#(loc.SuccessHeader)</Text>
         <Text Condition="WixBundleAction = 2">#(loc.SuccessLayoutHeader)</Text>
         <Text Condition="WixBundleAction = 3">#(loc.SuccessUninstallHeader)</Text>
-        <Text Condition="WixBundleAction = 5">#(loc.SuccessInstallHeader)</Text>
+        <Text Condition="WixBundleAction = 6">#(loc.SuccessInstallHeader)</Text>
         <Text Condition="WixBundleAction = 7">#(loc.SuccessRepairHeader)</Text>
       </Label>
-      <Label X="11" Y="121" Width="-11" Height="34" FontId="3" DisablePrefix="yes" VisibleCondition="WixBundleAction = 5">#(loc.SuccessInstallMessage)</Label>
-      <Checkbox Name="LaunchAfterInstall" X="11" Y="174" Width="-11" Height="20" TabStop="yes" FontId="3" Visible="yes" VisibleCondition="WixBundleAction = 5">#(loc.SuccessLaunchCheckbox)</Checkbox>
+      <Label X="11" Y="121" Width="-11" Height="34" FontId="3" DisablePrefix="yes" VisibleCondition="WixBundleAction = 6">#(loc.SuccessInstallMessage)</Label>
+      <Checkbox Name="LaunchAfterInstall" X="11" Y="174" Width="-11" Height="20" TabStop="yes" FontId="3" Visible="yes" VisibleCondition="WixBundleAction = 6">#(loc.SuccessLaunchCheckbox)</Checkbox>
       <Label X="11" Y="211" Width="-22" Height="34" FontId="3" DisablePrefix="yes" VisibleCondition="WixStdBARestartRequired">
         <Text>#(loc.SuccessRestartText)</Text>
         <Text Condition="WixBundleAction = 3">#(loc.SuccessUninstallRestartText)</Text>
       </Label>
       <Button Name="SuccessRestartButton" X="-91" Y="-11" Width="75" Height="23" TabStop="yes" FontId="0" HideWhenDisabled="yes">#(loc.SuccessRestartButton)</Button>
-      <Button Name="LaunchButton" X="-11" Y="-11" Width="95" Height="23" TabStop="yes" FontId="0" HideWhenDisabled="yes" VisibleCondition="WixBundleAction = 5 AND LaunchAfterInstall">
-        <Text>#(loc.SuccessCloseButton)</Text>
+      <Button Name="LaunchButton" X="-11" Y="-11" Width="95" Height="23" TabStop="yes" FontId="0" HideWhenDisabled="yes" VisibleCondition="WixBundleAction = 6 AND LaunchAfterInstall">
+        <Text>#(loc.SuccessLaunchButton)</Text>
       </Button>
-      <Button Name="SuccessCloseButton" X="-11" Y="-11" Width="95" Height="23" TabStop="yes" FontId="0" VisibleCondition="WixBundleAction != 5 OR NOT LaunchAfterInstall">
+      <Button Name="SuccessCloseButton" X="-11" Y="-11" Width="95" Height="23" TabStop="yes" FontId="0" VisibleCondition="WixBundleAction &lt;&gt; 6 OR NOT LaunchAfterInstall">
         <Text>#(loc.SuccessCloseButton)</Text>
         <CloseWindowAction />
       </Button>

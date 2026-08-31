@@ -21,7 +21,7 @@
           ThemeFile="scripts\windows-installer\installer-theme.xml"
           LocalizationFile="scripts\windows-installer\1033\thm.wxl"
           LicenseUrl=""
-          LaunchTarget="[InstallFolder]TunnelBoard.exe"
+          LaunchTarget="[InstallFolder]\TunnelBoard.exe"
           LaunchWorkingFolder="[InstallFolder]"
           LogoFile="build\appicon-512-rounded.png"
           ShowVersion="yes"
