@@ -154,6 +154,41 @@ func TestGenerateSSHKeyPairRefusesExistingDestinationWithoutChangingIt(t *testin
 	}
 }
 
+func TestGenerateSSHKeyPairOverwritesAfterExplicitConfirmation(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "id_ed25519_test")
+	if err := os.WriteFile(destination, []byte("old private key"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination+".pub", []byte("old public key\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := GenerateSSHKeyPair(context.Background(), GenerateSSHKeyRequest{
+		Destination: destination,
+		Overwrite:   true,
+		Comment:     "replacement@test",
+	})
+	if err != nil {
+		t.Fatalf("overwrite generate: %v", err)
+	}
+	privateRaw, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(privateRaw) == "old private key" {
+		t.Fatal("private key was not replaced")
+	}
+	publicRaw, err := os.ReadFile(destination + ".pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(publicRaw) != result.PublicKey+"\n" || !strings.HasSuffix(result.PublicKey, " replacement@test") {
+		t.Fatalf("public key was not replaced: %q", publicRaw)
+	}
+	if _, err := ssh.ParsePrivateKey(privateRaw); err != nil {
+		t.Fatalf("replacement private key is not parseable: %v", err)
+	}
+}
+
 func TestGenerateSSHKeyPairExpandsHomePath(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

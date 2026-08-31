@@ -49,7 +49,8 @@ async function generateKeyPair() {
     const destination = await SelectSSHKeySavePath()
     if (!destination) return
     const passphrase = String(props.draft.secretInput || '')
-    const result = await GenerateSSHKeyPair({ destination, ...(passphrase ? { passphrase } : {}) })
+    // 保存对话框已经让用户确认了覆盖行为；后端仍默认拒绝覆盖，避免绕过该交互直接覆盖密钥。
+    const result = await GenerateSSHKeyPair({ destination, overwrite: true, ...(passphrase ? { passphrase } : {}) })
     props.draft.keyPath = result.keyPath
     props.draft.secretAction = passphrase ? 'replace' : 'clear'
     generatedPublicKey.value = result.publicKey

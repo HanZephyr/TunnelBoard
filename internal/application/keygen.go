@@ -17,7 +17,7 @@ import (
 // DefaultSSHKeyFilename 是生成私钥时保存对话框的默认文件名。
 const DefaultSSHKeyFilename = "id_ed25519_tunnelboard"
 
-// ErrSSHKeyExists 表示目标私钥或公钥文件已存在；生成流程从不覆盖既有密钥。
+// ErrSSHKeyExists 表示目标私钥或公钥文件已存在，且本次请求未明确允许覆盖。
 var ErrSSHKeyExists = errors.New("application: SSH key file already exists")
 
 type GenerateSSHKeyRequest struct {
@@ -27,6 +27,8 @@ type GenerateSSHKeyRequest struct {
 	Passphrase string `json:"passphrase,omitempty"`
 	// Comment 是公钥行尾的注释；为空时使用 tunnelboard@<hostname>。
 	Comment string `json:"comment,omitempty"`
+	// Overwrite 仅应由用户明确通过保存对话框确认覆盖后设置为 true。
+	Overwrite bool `json:"overwrite,omitempty"`
 }
 
 type GenerateSSHKeyResult struct {
@@ -40,7 +42,7 @@ type GenerateSSHKeyResult struct {
 
 // GenerateSSHKeyPair 生成 ed25519 SSH 密钥对：私钥以 OpenSSH PEM 格式原子写入
 // 目标路径（0600/受限 ACL），公钥以 authorized_keys 格式写入目标路径 + ".pub"。
-// 任一目标已存在时拒绝覆盖。
+// 默认不覆盖既有文件；只有请求明确允许时才替换私钥和公钥文件。
 func GenerateSSHKeyPair(ctx context.Context, request GenerateSSHKeyRequest) (GenerateSSHKeyResult, error) {
 	if err := ctx.Err(); err != nil {
 		return GenerateSSHKeyResult{}, err
@@ -53,11 +55,13 @@ func GenerateSSHKeyPair(ctx context.Context, request GenerateSSHKeyRequest) (Gen
 		return GenerateSSHKeyResult{}, errors.New("application: private key destination is required")
 	}
 	publicKeyDestination := destination + ".pub"
-	if _, err := os.Stat(destination); err == nil {
-		return GenerateSSHKeyResult{}, fmt.Errorf("%w: %s", ErrSSHKeyExists, destination)
-	}
-	if _, err := os.Stat(publicKeyDestination); err == nil {
-		return GenerateSSHKeyResult{}, fmt.Errorf("%w: %s", ErrSSHKeyExists, publicKeyDestination)
+	if !request.Overwrite {
+		if _, err := os.Stat(destination); err == nil {
+			return GenerateSSHKeyResult{}, fmt.Errorf("%w: %s", ErrSSHKeyExists, destination)
+		}
+		if _, err := os.Stat(publicKeyDestination); err == nil {
+			return GenerateSSHKeyResult{}, fmt.Errorf("%w: %s", ErrSSHKeyExists, publicKeyDestination)
+		}
 	}
 	if dir := filepath.Dir(destination); dir != "" {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -84,7 +88,11 @@ func GenerateSSHKeyPair(ctx context.Context, request GenerateSSHKeyRequest) (Gen
 	}
 	privatePEM := pem.EncodeToMemory(block)
 	defer clear(privatePEM)
-	if err := writePrivateKeyAtomicExclusive(ctx, destination, privatePEM); err != nil {
+	if request.Overwrite {
+		if err := writePrivateKeyAtomic(ctx, destination, privatePEM); err != nil {
+			return GenerateSSHKeyResult{}, err
+		}
+	} else if err := writePrivateKeyAtomicExclusive(ctx, destination, privatePEM); err != nil {
 		return GenerateSSHKeyResult{}, err
 	}
 
@@ -94,7 +102,11 @@ func GenerateSSHKeyPair(ctx context.Context, request GenerateSSHKeyRequest) (Gen
 	}
 	keyLine := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(authorizedKey)))
 	publicKey := fmt.Sprintf("%s %s\n", keyLine, comment)
-	if err := writePublicKeyAtomicExclusive(ctx, publicKeyDestination, []byte(publicKey)); err != nil {
+	if request.Overwrite {
+		if err := writeKeyAtomic(ctx, publicKeyDestination, []byte(publicKey), 0o644, func(string) error { return nil }, replacePrivateKeyFile, "replace public key"); err != nil {
+			return GenerateSSHKeyResult{}, err
+		}
+	} else if err := writePublicKeyAtomicExclusive(ctx, publicKeyDestination, []byte(publicKey)); err != nil {
 		_ = os.Remove(destination)
 		return GenerateSSHKeyResult{}, err
 	}

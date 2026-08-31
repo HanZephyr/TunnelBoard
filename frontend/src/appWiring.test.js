@@ -81,6 +81,7 @@ test('SSH 主机编辑器提供文件选择和 Ed25519 密钥生成功能', asyn
   assert.match(source, /\.\.\/\.\.\/\.\.\/wailsjs\/go\/main\/App/)
   assert.match(source, /@click="browseKeyFile"/)
   assert.match(source, /@click="generateKeyPair"/)
+  assert.match(source, /overwrite: true/)
   assert.match(source, /generatedPublicKey/)
 })
 

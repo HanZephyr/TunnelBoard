@@ -674,7 +674,7 @@ func defaultSSHKeyDirectory(create bool) string {
 	return home
 }
 
-// GenerateSSHKeyPair 生成 ed25519 密钥对并写入私钥文件；公钥仅返回给前端展示。
+// GenerateSSHKeyPair 生成 ed25519 密钥对并写入私钥和 .pub 公钥文件，同时返回公钥供前端展示。
 func (a *App) GenerateSSHKeyPair(request application.GenerateSSHKeyRequest) (application.GenerateSSHKeyResult, error) {
 	if err := a.ensureReady(); err != nil {
 		return application.GenerateSSHKeyResult{}, err
