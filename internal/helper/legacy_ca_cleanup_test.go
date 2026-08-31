@@ -30,7 +30,8 @@ func (s *cleanupCertificateStore) RemoveSHA256(_ context.Context, fingerprint st
 
 func TestRemoveCAAuthorityAndKeysDeletesExactTrustAndPrivateMaterial(t *testing.T) {
 	root := t.TempDir()
-	authority := filepath.Join(root, "pki", "authorities", "local", "root.crt")
+	caddyDir := filepath.Join(root, "caddy")
+	authority := filepath.Join(caddyDir, "pki", "authorities", "local", "root.crt")
 	if err := os.MkdirAll(filepath.Dir(authority), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -42,6 +43,13 @@ func TestRemoveCAAuthorityAndKeysDeletesExactTrustAndPrivateMaterial(t *testing.
 	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	leafCache := filepath.Join(caddyDir, "certificates", "local", "demo.localhost", "demo.localhost.crt")
+	if err := os.MkdirAll(filepath.Dir(leafCache), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(leafCache, []byte("obsolete leaf certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	store := &cleanupCertificateStore{}
 	if err := removeCAAuthorityAndKeys(context.Background(), authority, store); err != nil {
 		t.Fatal(err)
@@ -50,8 +58,11 @@ func TestRemoveCAAuthorityAndKeysDeletesExactTrustAndPrivateMaterial(t *testing.
 	if len(store.removed) != 1 || store.removed[0] != fmt.Sprintf("%x", want[:]) {
 		t.Fatalf("removed=%v", store.removed)
 	}
-	if _, err := os.Stat(filepath.Join(root, "pki")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(caddyDir, "pki")); !os.IsNotExist(err) {
 		t.Fatalf("PKI directory still exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(caddyDir, "certificates")); !os.IsNotExist(err) {
+		t.Fatalf("certificate cache still exists: %v", err)
 	}
 }
 

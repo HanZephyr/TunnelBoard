@@ -61,6 +61,12 @@ func removeCAAuthorityAndKeys(ctx context.Context, authorityPath string, store C
 	if err := os.RemoveAll(pkiDir); err != nil {
 		return fmt.Errorf("helper: remove Caddy CA private material: %w", err)
 	}
+	// 叶子证书及其私钥同样与刚删除的 authority 绑定；若保留它们，Caddy
+	// 可能继续为相同域名提供一条由旧中间证书签发的缓存链。
+	certificateCache := filepath.Join(filepath.Dir(pkiDir), "certificates")
+	if err := os.RemoveAll(certificateCache); err != nil {
+		return fmt.Errorf("helper: remove Caddy certificate cache: %w", err)
+	}
 	return nil
 }
 

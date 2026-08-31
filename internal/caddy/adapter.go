@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -259,6 +260,18 @@ func (a *Adapter) Apply(ctx context.Context, revision string, routeConfig []byte
 	if err := a.ValidateConfig(ctx, bin, candidate, a.DataDir, env, &validation); err != nil {
 		return ApplyResult{}, a.failLocked(fmt.Errorf("caddy: validate config: %w: %s", err, strings.TrimSpace(validation.String())))
 	}
+	// Caddy 在同一证书缓存目录中复用叶子证书。若安装、清理或迁移刚刚
+	// 轮换了本地根 CA，旧叶子虽然域名相同，但其链不能再由当前根验证；
+	// 必须在启动/热加载前剔除，交由 Caddy 签发新链。
+	purged, err := a.purgeStaleLocalCertificateCache()
+	if err != nil {
+		return ApplyResult{}, a.failLocked(err)
+	}
+	if purged && a.ownedRunningLocked() {
+		if err := a.stopOwnedLocked(ctx); err != nil {
+			return ApplyResult{}, a.failLocked(fmt.Errorf("caddy: restart after local CA rotation: %w", err))
+		}
+	}
 
 	if a.ownedRunningLocked() {
 		oldSocket, oldClient := a.adminSocket, a.httpClient
@@ -327,6 +340,10 @@ func (a *Adapter) Apply(ctx context.Context, revision string, routeConfig []byte
 func (a *Adapter) Stop(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.stopOwnedLocked(ctx)
+}
+
+func (a *Adapter) stopOwnedLocked(ctx context.Context) error {
 	if !a.ownedRunningLocked() {
 		a.clearProcessLocked()
 		return nil
@@ -439,6 +456,122 @@ func (a *Adapter) rootCACert(timeout time.Duration) ([]byte, error) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+// purgeStaleLocalCertificateCache 删除无法由当前 local 根 CA 验证的叶子证书
+// 缓存。该缓存只覆盖 Caddy 的 internal/local issuer，公开 ACME 证书不在
+// 此目录内。没有 root 或缓存时保持无副作用，便于普通配置校验路径复用。
+func (a *Adapter) purgeStaleLocalCertificateCache() (bool, error) {
+	rootPath := filepath.Join(a.DataDir, "caddy", "pki", "authorities", "local", "root.crt")
+	rootPEM, err := os.ReadFile(rootPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("caddy: read local root CA: %w", err)
+	}
+	rootCertificates, err := parsePEMCertificates(rootPEM)
+	if err != nil {
+		return false, fmt.Errorf("caddy: parse local root CA: %w", err)
+	}
+	if len(rootCertificates) != 1 || !rootCertificates[0].IsCA {
+		return false, errors.New("caddy: local root CA must contain exactly one CA certificate")
+	}
+
+	certificateRoot := filepath.Join(a.DataDir, "caddy", "certificates", "local")
+	entries, err := os.ReadDir(certificateRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("caddy: read local certificate cache: %w", err)
+	}
+
+	purged := false
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		directory := filepath.Join(certificateRoot, entry.Name())
+		valid, found, err := certificateCacheChainsToRoot(directory, rootCertificates[0])
+		if err != nil {
+			return false, err
+		}
+		if !found || valid {
+			continue
+		}
+		if err := os.RemoveAll(directory); err != nil {
+			return false, fmt.Errorf("caddy: remove stale local certificate cache %s: %w", entry.Name(), err)
+		}
+		purged = true
+	}
+	return purged, nil
+}
+
+func certificateCacheChainsToRoot(directory string, root *x509.Certificate) (valid, found bool, retErr error) {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return false, false, fmt.Errorf("caddy: read local certificate cache entry: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(strings.ToLower(entry.Name()), ".crt") {
+			continue
+		}
+		found = true
+		contents, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+		if err != nil {
+			return false, found, fmt.Errorf("caddy: read cached certificate %s: %w", entry.Name(), err)
+		}
+		certificates, err := parsePEMCertificates(contents)
+		if err != nil || !certificateChainVerifiesToRoot(certificates, root) {
+			return false, found, nil
+		}
+	}
+	return found, found, nil
+}
+
+func parsePEMCertificates(contents []byte) ([]*x509.Certificate, error) {
+	var certificates []*x509.Certificate
+	for len(contents) > 0 {
+		block, rest := pem.Decode(contents)
+		if block == nil {
+			if len(bytes.TrimSpace(contents)) == 0 {
+				break
+			}
+			return nil, errors.New("invalid certificate PEM")
+		}
+		if block.Type != "CERTIFICATE" {
+			return nil, fmt.Errorf("unexpected PEM block %q", block.Type)
+		}
+		certificate, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		certificates = append(certificates, certificate)
+		contents = rest
+	}
+	if len(certificates) == 0 {
+		return nil, errors.New("no certificates in PEM")
+	}
+	return certificates, nil
+}
+
+func certificateChainVerifiesToRoot(certificates []*x509.Certificate, root *x509.Certificate) bool {
+	if len(certificates) < 2 {
+		return false
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(root)
+	intermediates := x509.NewCertPool()
+	for _, certificate := range certificates[1:] {
+		intermediates.AddCert(certificate)
+	}
+	_, err := certificates[0].Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	})
+	return err == nil
 }
 
 func injectAdmin(config []byte, listen string) ([]byte, error) {
