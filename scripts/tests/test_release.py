@@ -467,6 +467,9 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertNotIn("choco install nsis", workflow)
         self.assertIn('WixStandardBootstrapperApplication', bundle)
         self.assertIn('Theme="hyperlinkLargeLicense"', bundle)
+        self.assertIn('LocalizationFile="scripts\\windows-installer\\1033\\thm.wxl"', bundle)
+        for language_id in ("1033", "2052", "1028", "3076", "1049"):
+            self.assertIn(f'Name="{language_id}\\thm.wxl"', bundle)
         self.assertIn('bal:Overridable="yes"', bundle)
         self.assertIn("def find_wix", release)
         self.assertIn('"/quiet", "/norestart"', release)
@@ -493,6 +496,7 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         theme = theme_path.read_text(encoding="utf-8")
 
         self.assertIn('ThemeFile="scripts\\windows-installer\\installer-theme.xml"', bundle)
+        self.assertIn('LocalizationFile="scripts\\windows-installer\\1033\\thm.wxl"', bundle)
         self.assertIn('<MsiProperty Name="CREATE_START_MENU_SHORTCUT" Value="[CreateStartMenuShortcut]" />', bundle)
         self.assertIn('<MsiProperty Name="CREATE_DESKTOP_SHORTCUT" Value="[CreateDesktopShortcut]" />', bundle)
         self.assertIn('<Editbox Name="InstallFolder"', theme)
@@ -509,6 +513,21 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn('Icon="ApplicationIcon"', product)
         self.assertIn('<Icon Id="ApplicationIcon" SourceFile="build\\windows\\icon.ico" />', product)
         self.assertIn('IconSourceFile="build\\windows\\icon.ico"', bundle)
+
+    def test_windows_installer_localizes_theme_and_offers_default_launch_choice(self) -> None:
+        bundle = (ROOT / "scripts" / "windows-installer" / "Bundle.wxs").read_text(encoding="utf-8")
+        theme = (ROOT / "scripts" / "windows-installer" / "installer-theme.xml").read_text(encoding="utf-8")
+        self.assertIn('<Variable Name="LaunchAfterInstall" Type="numeric" Value="1"', bundle)
+        self.assertIn('LaunchTarget="[InstallFolder]TunnelBoard.exe"', bundle)
+        self.assertIn('<Checkbox Name="LaunchAfterInstall"', theme)
+        self.assertIn('VisibleCondition="WixBundleAction != 5 OR LaunchAfterInstall"', theme)
+        self.assertIn('VisibleCondition="WixBundleAction != 5 OR NOT LaunchAfterInstall"', theme)
+        for language_id in ("1033", "2052", "1028", "3076", "1049"):
+            locale = ROOT / "scripts" / "windows-installer" / language_id / "thm.wxl"
+            self.assertTrue(locale.is_file(), f"missing installer locale {language_id}")
+            content = locale.read_text(encoding="utf-8-sig")
+            self.assertIn('Id="SuccessLaunchCheckbox"', content)
+            self.assertIn('Id="OptionsShortcutLabel"', content)
 
 
 if __name__ == "__main__":

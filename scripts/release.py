@@ -1406,6 +1406,8 @@ def build_windows(version: str, require_signing: bool, skip_installer: bool) -> 
             "x64",
             "-ext",
             "WixToolset.Bal.wixext",
+            "-loc",
+            str(installer_root / "1033" / "thm.wxl"),
             "-d",
             f"MsiPath={msi}",
             "-d",

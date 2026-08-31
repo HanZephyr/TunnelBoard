@@ -13,16 +13,25 @@
     <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]\TunnelBoard" bal:Overridable="yes" />
     <Variable Name="CreateStartMenuShortcut" Type="numeric" Value="1" bal:Overridable="yes" />
     <Variable Name="CreateDesktopShortcut" Type="numeric" Value="0" bal:Overridable="yes" />
+    <Variable Name="LaunchAfterInstall" Type="numeric" Value="1" bal:Overridable="yes" />
 
     <BootstrapperApplication>
       <bal:WixStandardBootstrapperApplication
           Theme="hyperlinkLargeLicense"
           ThemeFile="scripts\windows-installer\installer-theme.xml"
+          LocalizationFile="scripts\windows-installer\1033\thm.wxl"
           LicenseUrl=""
+          LaunchTarget="[InstallFolder]TunnelBoard.exe"
+          LaunchWorkingFolder="[InstallFolder]"
           LogoFile="build\appicon-512-rounded.png"
           ShowVersion="yes"
           SuppressRepair="no"
           SuppressOptionsUI="no" />
+      <Payload Id="ThemeLocalizationEnUs" Name="1033\thm.wxl" SourceFile="scripts\windows-installer\1033\thm.wxl" Compressed="yes" />
+      <Payload Id="ThemeLocalizationZhCn" Name="2052\thm.wxl" SourceFile="scripts\windows-installer\2052\thm.wxl" Compressed="yes" />
+      <Payload Id="ThemeLocalizationZhTw" Name="1028\thm.wxl" SourceFile="scripts\windows-installer\1028\thm.wxl" Compressed="yes" />
+      <Payload Id="ThemeLocalizationZhHk" Name="3076\thm.wxl" SourceFile="scripts\windows-installer\3076\thm.wxl" Compressed="yes" />
+      <Payload Id="ThemeLocalizationRuRu" Name="1049\thm.wxl" SourceFile="scripts\windows-installer\1049\thm.wxl" Compressed="yes" />
     </BootstrapperApplication>
 
     <Chain>
