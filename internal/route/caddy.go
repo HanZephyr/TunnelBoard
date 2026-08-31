@@ -130,9 +130,13 @@ func CompileCaddy(data model.VaultData) ([]byte, error) {
 		if f.Mode != "local" {
 			return nil, fmt.Errorf("route: web route %d (%s) references non-local forward %d (mode %q)", r.ID, r.Domain, f.ID, f.Mode)
 		}
+		handler, err := proxyHandler(r, f)
+		if err != nil {
+			return nil, err
+		}
 		routes = append(routes, caddyRoute{
 			Match:    []caddyMatcher{{Host: []string{r.Domain}}},
-			Handle:   []caddyHandler{proxyHandler(r, f)},
+			Handle:   []caddyHandler{handler},
 			Terminal: true,
 		})
 		if _, dup := seen[r.Domain]; !dup {
@@ -170,17 +174,27 @@ func CompileCaddy(data model.VaultData) ([]byte, error) {
 	return json.Marshal(cfg)
 }
 
-// proxyHandler 生成单个 Route 的 reverse_proxy handler。HTTPS 上游按 ADR 0002 设置显式
-// SNI；HTTP Host 可独立配置，旧 Route 未配置时回退到 SNI，并保持默认严格校验。
-func proxyHandler(r model.WebRoute, f model.Forward) caddyHandler {
+// proxyHandler 生成单个 Route 的 reverse_proxy handler。HTTPS 上游始终设置显式
+// TLS SNI；HTTP Host 默认保留当前请求 Host，也支持继承 SNI 或显式自定义。
+func proxyHandler(r model.WebRoute, f model.Forward) (caddyHandler, error) {
 	h := caddyHandler{
 		Handler:   "reverse_proxy",
 		Upstreams: []caddyUpstream{{Dial: fmt.Sprintf("127.0.0.1:%d", f.LocalPort)}},
 	}
 	if r.UpstreamScheme == "https" {
-		upstreamHost := r.UpstreamHost
-		if upstreamHost == "" {
+		var upstreamHost string
+		switch r.EffectiveUpstreamHostMode() {
+		case model.UpstreamHostModeOriginal:
+			upstreamHost = "{http.request.host}"
+		case model.UpstreamHostModeTLSSNI:
 			upstreamHost = r.TLSSNI
+		case model.UpstreamHostModeCustom:
+			upstreamHost = r.UpstreamHost
+			if upstreamHost == "" {
+				return caddyHandler{}, fmt.Errorf("route: custom HTTPS Host is required for route %d (%s)", r.ID, r.Domain)
+			}
+		default:
+			return caddyHandler{}, fmt.Errorf("route: invalid HTTPS Host mode %q for route %d (%s)", r.UpstreamHostMode, r.ID, r.Domain)
 		}
 		h.Transport = &caddyTransport{
 			Protocol: "http",
@@ -190,5 +204,5 @@ func proxyHandler(r model.WebRoute, f model.Forward) caddyHandler {
 			Request: caddyHeadersRequest{Set: map[string][]string{"Host": {upstreamHost}}},
 		}
 	}
-	return h
+	return h, nil
 }

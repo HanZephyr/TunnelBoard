@@ -4,6 +4,12 @@ import { useI18n } from 'vue-i18n'
 import { errorMessage } from '../../utils/backend'
 import { createApplicationClient, createCommandMeta } from '../../utils/applicationClient'
 import { routeAppliedView as deriveRouteAppliedView } from '../../modules/routeAppliedView'
+import {
+  UPSTREAM_HOST_MODES,
+  upstreamHostDisplayValue,
+  upstreamHostFieldsForForm,
+  upstreamHostModeForRoute
+} from '../../modules/upstreamHostMode'
 import TooltipText from '../common/TooltipText.vue'
 import IconActionButton from '../common/IconActionButton.vue'
 import StatusChip from '../common/StatusChip.vue'
@@ -66,7 +72,7 @@ function upstreamDetail(route) {
   const scheme = route.upstreamScheme === 'https' ? 'https' : 'http'
   const target = forward ? `${forward.name} (${forward.localHost}:${forward.localPort})` : forwardName(route.forwardId)
   const sni = route.upstreamScheme === 'https' && route.tlsSni ? ` · SNI ${route.tlsSni}` : ''
-  const upstreamHost = route.upstreamScheme === 'https' ? (route.upstreamHost || route.tlsSni || '') : ''
+  const upstreamHost = route.upstreamScheme === 'https' ? upstreamHostDisplayValue(route) : ''
   const host = upstreamHost ? ` · Host ${upstreamHost}` : ''
   return `${scheme} → ${target}${sni}${host}`
 }
@@ -287,6 +293,7 @@ function defaultRouteForm() {
     caddyEnabled: false,
     upstreamScheme: 'http',
     tlsSni: '',
+    upstreamHostMode: UPSTREAM_HOST_MODES.ORIGINAL,
     upstreamHost: ''
   }
 }
@@ -307,6 +314,7 @@ defineExpose({ openNewRoute })
 
 function editRoute(route) {
   if (props.configurationLocked) return
+  const upstreamHostMode = upstreamHostModeForRoute(route)
   editingRouteId.value = route.id
   Object.assign(routeForm, {
     domain: route.domain,
@@ -315,7 +323,8 @@ function editRoute(route) {
     caddyEnabled: !!route.caddyEnabled,
     upstreamScheme: route.upstreamScheme || 'http',
     tlsSni: route.tlsSni || '',
-    upstreamHost: route.upstreamHost || route.tlsSni || ''
+    upstreamHostMode,
+    upstreamHost: upstreamHostMode === UPSTREAM_HOST_MODES.CUSTOM ? (route.upstreamHost || '') : ''
   })
   routeValidationError.value = ''
   routeModalOpen.value = true
@@ -326,11 +335,19 @@ function validateRoutePayload(payload) {
   if (/\s/.test(payload.domain) || !payload.domain.includes('.')) return t('routes.errors.domainInvalid')
   if (!payload.forwardId) return t('routes.errors.forwardRequired')
   if (payload.upstreamScheme === 'https' && !payload.tlsSni) return t('routes.errors.tlsSniRequired')
+  if (payload.upstreamScheme === 'https' && payload.upstreamHostMode === UPSTREAM_HOST_MODES.CUSTOM && !payload.upstreamHost) {
+    return t('routes.errors.upstreamHostRequired')
+  }
   return ''
 }
 
 async function saveRoute() {
   if (props.configurationLocked || routeMutation.active) return
+  const upstreamHostFields = upstreamHostFieldsForForm({
+    upstreamScheme: routeForm.upstreamScheme,
+    upstreamHostMode: routeForm.upstreamHostMode,
+    upstreamHost: routeForm.upstreamHost
+  })
   const payload = {
     id: editingRouteId.value || 0,
     forwardId: Number(routeForm.forwardId),
@@ -339,7 +356,7 @@ async function saveRoute() {
     caddyEnabled: !!routeForm.caddyEnabled,
     upstreamScheme: routeForm.upstreamScheme,
     tlsSni: routeForm.upstreamScheme === 'https' ? routeForm.tlsSni.trim() : '',
-    upstreamHost: routeForm.upstreamScheme === 'https' ? routeForm.upstreamHost.trim() : ''
+    ...upstreamHostFields
   }
   const error = validateRoutePayload(payload)
   if (error) {

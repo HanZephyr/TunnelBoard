@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // VaultData 是 Vault 加密 payload 的顶层结构；Version 是格式演进钩子（当前为 1）。
 // 运行时状态（Status/LastError/Latency）不属于本结构，由 Forward 运行时 Module 在内存维护。
@@ -58,6 +61,15 @@ type Forward struct {
 	Description  string `json:"description,omitempty"`
 }
 
+// UpstreamHostMode 控制 HTTPS 上游请求的 Host 来源。
+type UpstreamHostMode string
+
+const (
+	UpstreamHostModeOriginal UpstreamHostMode = "original"
+	UpstreamHostModeTLSSNI   UpstreamHostMode = "tls_sni"
+	UpstreamHostModeCustom   UpstreamHostMode = "custom"
+)
+
 // WebRoute 将完整域名映射到本地转发端口；仅允许引用 Mode 为 local 的 Forward。
 type WebRoute struct {
 	ID             int    `json:"id"`
@@ -67,8 +79,40 @@ type WebRoute struct {
 	CaddyEnabled   bool   `json:"caddyEnabled"`
 	UpstreamScheme string `json:"upstreamScheme"` // http | https
 	TLSSNI         string `json:"tlsSni,omitempty"`
-	// UpstreamHost 是 HTTPS 上游请求的 HTTP Host 头。为空时兼容旧路由，回退使用 TLSSNI。
+	// UpstreamHostMode 是 HTTPS 上游请求的 Host 来源；为空时按原始 Host 处理。
+	UpstreamHostMode UpstreamHostMode `json:"upstreamHostMode,omitempty"`
+	// UpstreamHost 仅在 UpstreamHostModeCustom 时使用；旧 Vault 中存在该值时兼容为自定义 Host。
 	UpstreamHost string `json:"upstreamHost,omitempty"`
+}
+
+// EffectiveUpstreamHostMode 返回当前 Route 的 Host 模式。未写入模式的旧记录：
+// 有显式 upstreamHost 时保留自定义语义，否则使用新的原始 Host 默认值。
+func (r WebRoute) EffectiveUpstreamHostMode() UpstreamHostMode {
+	if strings.TrimSpace(string(r.UpstreamHostMode)) != "" {
+		return r.UpstreamHostMode
+	}
+	if strings.TrimSpace(r.UpstreamHost) != "" {
+		return UpstreamHostModeCustom
+	}
+	return UpstreamHostModeOriginal
+}
+
+// NormalizeUpstreamHostSelection 规范化 HTTPS 上游的 Host 选择，并清理不适用的旧值。
+// 未声明模式的旧 Route：有 upstreamHost 时保留自定义语义，否则升级为原始 Host。
+func (r WebRoute) NormalizeUpstreamHostSelection() WebRoute {
+	r.UpstreamHostMode = UpstreamHostMode(strings.TrimSpace(string(r.UpstreamHostMode)))
+	r.UpstreamHost = strings.TrimSpace(r.UpstreamHost)
+	if r.UpstreamScheme != "https" {
+		r.UpstreamHostMode = ""
+		r.UpstreamHost = ""
+		return r
+	}
+
+	r.UpstreamHostMode = r.EffectiveUpstreamHostMode()
+	if r.UpstreamHostMode != UpstreamHostModeCustom {
+		r.UpstreamHost = ""
+	}
+	return r
 }
 
 // HostKey 是 TOFU 指纹库条目；同一 (Host, Port) 仅一条。

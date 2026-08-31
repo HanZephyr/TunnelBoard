@@ -34,6 +34,18 @@ test('Route 页面使用独立的状态视图模块', async () => {
   assert.match(source, /deriveRouteAppliedView\(route, statusOf\(route\.id\), t\)/)
 })
 
+test('Route HTTPS Host 使用三种模式并仅在自定义模式显示输入框', async () => {
+  const [page, modal] = await Promise.all([
+    readFile(new URL('./components/pages/RoutesPage.vue', import.meta.url), 'utf8'),
+    readFile(new URL('./components/modals/RouteModal.vue', import.meta.url), 'utf8')
+  ])
+  assert.match(page, /upstreamHostModeForRoute/)
+  assert.match(page, /upstreamHostFieldsForForm/)
+  assert.match(modal, /routeUpstreamHostMode/)
+  assert.match(modal, /upstreamHostModeOriginal/)
+  assert.match(modal, /form\.upstreamHostMode === 'custom'/)
+})
+
 test('LogsPage 传递完整 generation cursor 而不是只传 offset', async () => {
   const source = await readFile(new URL('./components/pages/LogsPage.vue', import.meta.url), 'utf8')
   assert.match(source, /GetLogTailV2/)

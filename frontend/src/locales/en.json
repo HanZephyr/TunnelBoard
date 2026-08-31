@@ -412,15 +412,20 @@
             "upstreamScheme": "Upstream Scheme",
             "tlsSni": "TLS SNI",
             "tlsSniPlaceholder": "e.g. backend.internal",
-            "upstreamHost": "Upstream HTTP Host",
-            "upstreamHostPlaceholder": "e.g. localhost:38443",
-            "upstreamHostHint": "Leave empty to use the TLS SNI. Override it only when the upstream routes by HTTP Host."
+            "upstreamHostMode": "Upstream Host mode",
+            "upstreamHostModeOriginal": "Original Host",
+            "upstreamHostModeTlsSni": "Inherit TLS SNI",
+            "upstreamHostModeCustom": "Custom Host",
+            "upstreamHost": "Custom Host",
+            "upstreamHostPlaceholder": "e.g. localhost:8443",
+            "upstreamHostHint": "Enter a value only when Custom Host is selected."
         },
         "errors": {
             "domainRequired": "Domain is required.",
             "domainInvalid": "Domain must contain a dot and no whitespace.",
             "forwardRequired": "Please select a forward.",
-            "tlsSniRequired": "TLS SNI is required for https upstream."
+            "tlsSniRequired": "TLS SNI is required for https upstream.",
+            "upstreamHostRequired": "Custom Host requires a value."
         },
         "confirmations": {
             "deleteRouteTitle": "Delete Web Route",

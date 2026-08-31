@@ -133,12 +133,13 @@ func TestCompileCaddyHTTPUpstream(t *testing.T) {
 	}
 }
 
-// HTTPS 上游：TLS SNI 与 HTTP Host 可分别配置，且不出现跳过校验与 ACME。
-func TestCompileCaddyHTTPSUpstreamSeparatesSNIAndHost(t *testing.T) {
+// HTTPS 上游默认保留当前请求 Host；多个本地域名都使用同一个动态占位符，TLS SNI 仍独立配置。
+func TestCompileCaddyHTTPSUpstreamPreservesOriginalHost(t *testing.T) {
 	data := model.VaultData{
-		Forwards: []model.Forward{localForward(1, 8443)},
+		Forwards: []model.Forward{localForward(1, 8443), localForward(2, 9443)},
 		WebRoutes: []model.WebRoute{
-			{ID: 1, ForwardID: 1, Domain: "grafana.example.com", CaddyEnabled: true, UpstreamScheme: "https", TLSSNI: "grafana.internal", UpstreamHost: "localhost:8443"},
+			{ID: 1, ForwardID: 1, Domain: "admin.vip-duo-duo-buy.localhost", CaddyEnabled: true, UpstreamScheme: "https", TLSSNI: "vip-duo-duo-buy.lifepoem.cn", UpstreamHostMode: model.UpstreamHostModeOriginal},
+			{ID: 2, ForwardID: 2, Domain: "preview.vip-duo-duo-buy.localhost", CaddyEnabled: true, UpstreamScheme: "https", TLSSNI: "vip-duo-duo-buy.lifepoem.cn", UpstreamHostMode: model.UpstreamHostModeOriginal},
 		},
 	}
 	raw, err := route.CompileCaddy(data)
@@ -147,24 +148,30 @@ func TestCompileCaddyHTTPSUpstreamSeparatesSNIAndHost(t *testing.T) {
 	}
 	cfg := decodeCaddy(t, raw)
 
-	h := cfg.Apps.HTTP.Servers["tunnelboard"].Routes[0].Handle[0]
-	if h.Transport == nil {
-		t.Fatal("https upstream must set transport")
+	routes := cfg.Apps.HTTP.Servers["tunnelboard"].Routes
+	if len(routes) != 2 {
+		t.Fatalf("routes = %d, want 2", len(routes))
 	}
-	if h.Transport.Protocol != "http" {
-		t.Fatalf("transport.protocol = %q, want http", h.Transport.Protocol)
-	}
-	if h.Transport.TLS.ServerName != "grafana.internal" {
-		t.Fatalf("tls.server_name = %q, want grafana.internal", h.Transport.TLS.ServerName)
-	}
-	if h.Headers == nil {
-		t.Fatal("https upstream must rewrite Host header")
-	}
-	if got := h.Headers.Request.Set["Host"]; len(got) != 1 || got[0] != "localhost:8443" {
-		t.Fatalf("Host header = %v, want [localhost:8443]", got)
-	}
-	if len(h.Upstreams) != 1 || h.Upstreams[0].Dial != "127.0.0.1:8443" {
-		t.Fatalf("upstreams = %+v, want dial 127.0.0.1:8443", h.Upstreams)
+	for i, wantDial := range []string{"127.0.0.1:8443", "127.0.0.1:9443"} {
+		h := routes[i].Handle[0]
+		if h.Transport == nil {
+			t.Fatalf("route[%d] https upstream must set transport", i)
+		}
+		if h.Transport.Protocol != "http" {
+			t.Fatalf("route[%d] transport.protocol = %q, want http", i, h.Transport.Protocol)
+		}
+		if h.Transport.TLS.ServerName != "vip-duo-duo-buy.lifepoem.cn" {
+			t.Fatalf("route[%d] tls.server_name = %q, want vip-duo-duo-buy.lifepoem.cn", i, h.Transport.TLS.ServerName)
+		}
+		if h.Headers == nil {
+			t.Fatalf("route[%d] https upstream must set dynamic Host header", i)
+		}
+		if got := h.Headers.Request.Set["Host"]; len(got) != 1 || got[0] != "{http.request.host}" {
+			t.Fatalf("route[%d] Host header = %v, want [{http.request.host}]", i, got)
+		}
+		if len(h.Upstreams) != 1 || h.Upstreams[0].Dial != wantDial {
+			t.Fatalf("route[%d] upstreams = %+v, want dial %s", i, h.Upstreams, wantDial)
+		}
 	}
 	if bytes.Contains(raw, []byte("insecure_skip_verify")) {
 		t.Fatalf("config must not contain insecure_skip_verify:\n%s", raw)
@@ -178,8 +185,42 @@ func TestCompileCaddyHTTPSUpstreamSeparatesSNIAndHost(t *testing.T) {
 	}
 }
 
-// 旧 Vault 没有 upstreamHost 时维持既有语义：Host 回退到 TLS SNI，升级不会静默改变路由。
-func TestCompileCaddyHTTPSUpstreamFallsBackToSNIHost(t *testing.T) {
+// 三种 Host 模式分别生成动态 Host、TLS SNI 和自定义 Host；旧记录的显式 Host 仍保持自定义语义。
+func TestCompileCaddyHTTPSUpstreamHostModes(t *testing.T) {
+	cases := []struct {
+		name         string
+		mode         model.UpstreamHostMode
+		upstreamHost string
+		wantHost     string
+	}{
+		{name: "original", mode: model.UpstreamHostModeOriginal, wantHost: "{http.request.host}"},
+		{name: "tls sni", mode: model.UpstreamHostModeTLSSNI, wantHost: "grafana.internal"},
+		{name: "custom", mode: model.UpstreamHostModeCustom, upstreamHost: "localhost:8443", wantHost: "localhost:8443"},
+		{name: "legacy custom", upstreamHost: "legacy.internal", wantHost: "legacy.internal"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := model.VaultData{
+				Forwards:  []model.Forward{localForward(1, 8443)},
+				WebRoutes: []model.WebRoute{{ID: 1, ForwardID: 1, Domain: "grafana.example.com", CaddyEnabled: true, UpstreamScheme: "https", TLSSNI: "grafana.internal", UpstreamHostMode: tc.mode, UpstreamHost: tc.upstreamHost}},
+			}
+			raw, err := route.CompileCaddy(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := decodeCaddy(t, raw).Apps.HTTP.Servers["tunnelboard"].Routes[0].Handle[0]
+			if got := h.Headers.Request.Set["Host"]; len(got) != 1 || got[0] != tc.wantHost {
+				t.Fatalf("Host header = %v, want [%s]", got, tc.wantHost)
+			}
+			if h.Transport == nil || h.Transport.TLS.ServerName != "grafana.internal" {
+				t.Fatalf("TLS transport changed: %+v", h.Transport)
+			}
+		})
+	}
+}
+
+// 没有 upstreamHostMode 的旧 Vault：没有显式旧 Host 时按新默认保留原始 Host。
+func TestCompileCaddyHTTPSUpstreamDefaultsToOriginalHost(t *testing.T) {
 	data := model.VaultData{
 		Forwards: []model.Forward{localForward(1, 8443)},
 		WebRoutes: []model.WebRoute{
@@ -191,8 +232,8 @@ func TestCompileCaddyHTTPSUpstreamFallsBackToSNIHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := decodeCaddy(t, raw).Apps.HTTP.Servers["tunnelboard"].Routes[0].Handle[0]
-	if got := h.Headers.Request.Set["Host"]; len(got) != 1 || got[0] != "grafana.internal" {
-		t.Fatalf("legacy Host header = %v, want [grafana.internal]", got)
+	if got := h.Headers.Request.Set["Host"]; len(got) != 1 || got[0] != "{http.request.host}" {
+		t.Fatalf("default Host header = %v, want [{http.request.host}]", got)
 	}
 }
 

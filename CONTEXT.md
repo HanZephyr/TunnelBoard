@@ -20,7 +20,7 @@ _Avoid_: Tunnel
 Forward 支持本地转发（`-L`）、远程转发（`-R`）与动态转发（`-D`）。只有本地转发可以关联 hosts 与 Caddy Web Route。
 
 **Web Route**：
-将一个用户自定义的完整域名映射到本地转发端口的规则。可独立创建 hosts 映射；启用 Caddy 后以本地 HTTPS 入口提供访问。上游可为 HTTP 或 HTTPS；使用 HTTPS 时必须配置远端证书对应的 TLS SNI 名称。
+将一个用户自定义的完整域名映射到本地转发端口的规则。可独立创建 hosts 映射；启用 Caddy 后以本地 HTTPS 入口提供访问。上游可为 HTTP 或 HTTPS；使用 HTTPS 时必须配置远端证书对应的 TLS SNI 名称，并可选择上游 `Host` 使用原始请求、继承 TLS SNI 或自定义值，默认使用原始请求 `Host`。
 _Avoid_: 域名转发
 
 **特权适配器**：
@@ -100,6 +100,7 @@ _Avoid_: 可忽略的连接告警
 - 首次使用特权功能时安装受限辅助服务；主程序不以管理员权限常驻运行。
 - Web Route 允许用户配置完整域名；Caddy 对所有本地入口强制使用本地 CA，不申请公网证书。
 - Web Route 支持 HTTP 和 HTTPS 上游；HTTPS 上游由用户显式指定 TLS SNI 名称并严格校验证书。
+- HTTPS 上游的 `Host` 默认透传浏览器访问本地域名，可选继承 TLS SNI 或填写自定义 `Host`；TLS SNI 与 HTTP `Host` 独立配置。
 - 对非 `.test`、`.localhost` 的域名，受托管 hosts 写入前必须明确提示其仅在本机覆盖正常 DNS 解析，并展示将写入的记录。
 - Caddy 必须独占本机 443；启用 Web Route 前预检端口冲突，冲突时不启动 Caddy 并保留“域名 + Forward 端口”的访问方式。首版不支持 Caddy 自定义监听端口。
 - 当最后一个启用 Caddy 的 Web Route 被关闭或删除时，自动从系统信任库撤销本地 CA；再次启用时由受限辅助服务恢复信任，无需重复 UAC。

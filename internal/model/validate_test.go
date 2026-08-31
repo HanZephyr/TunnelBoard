@@ -92,6 +92,32 @@ func TestValidateWebRouteRules(t *testing.T) {
 			t.Fatalf("err = %v, want ErrRouteNeedsTLSSNI", err)
 		}
 	})
+	t.Run("HTTPS 上游默认原始 Host", func(t *testing.T) {
+		d := validGraph()
+		d.WebRoutes[0].UpstreamScheme = "https"
+		d.WebRoutes[0].TLSSNI = "backend.internal"
+		if err := d.Validate(); err != nil {
+			t.Fatalf("err = %v, want nil", err)
+		}
+	})
+	t.Run("自定义 Host 必须填写值", func(t *testing.T) {
+		d := validGraph()
+		d.WebRoutes[0].UpstreamScheme = "https"
+		d.WebRoutes[0].TLSSNI = "backend.internal"
+		d.WebRoutes[0].UpstreamHostMode = model.UpstreamHostModeCustom
+		if err := d.Validate(); !errors.Is(err, model.ErrRouteNeedsUpstreamHost) {
+			t.Fatalf("err = %v, want ErrRouteNeedsUpstreamHost", err)
+		}
+	})
+	t.Run("拒绝未知 Host 模式", func(t *testing.T) {
+		d := validGraph()
+		d.WebRoutes[0].UpstreamScheme = "https"
+		d.WebRoutes[0].TLSSNI = "backend.internal"
+		d.WebRoutes[0].UpstreamHostMode = "origin-header"
+		if err := d.Validate(); !errors.Is(err, model.ErrInvalidUpstreamHostMode) {
+			t.Fatalf("err = %v, want ErrInvalidUpstreamHostMode", err)
+		}
+	})
 }
 
 // Forward 必须归属存在的文件夹、使用合法模式、引用非空且存在的 SSH 主机链。

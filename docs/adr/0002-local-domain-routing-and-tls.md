@@ -2,4 +2,4 @@
 
 Web Route 允许用户使用任意完整域名，而非限制为 `*.test`。这是为了让本地入口可以使用远端 HTTPS 服务证书中的真实域名；当该域名经受托管 hosts 映射到回环地址时，浏览器访问本地 Caddy，而 Caddy 再通过 SSH Forward 访问远端服务。
 
-所有本地入口都强制使用 Caddy 的本地 CA（`tls internal`），不得尝试通过 ACME 申请公网证书。对 HTTPS 上游，用户必须明确配置 TLS SNI 名称，Caddy 按该名称校验远端证书。HTTP `Host` 请求头是独立配置：未填写时为兼容已有路由回退为 TLS SNI；上游依据不同 Host 路由时，用户可以覆盖为其实际期望值（例如 `localhost:38443`）。这样既支持远端 HTTPS 的正确校验，也避免对本地 hosts 覆盖域名产生意外的公网证书申请。
+所有本地入口都强制使用 Caddy 的本地 CA（`tls internal`），不得尝试通过 ACME 申请公网证书。对 HTTPS 上游，用户必须明确配置 TLS SNI 名称，Caddy 按该名称校验远端证书。HTTP `Host` 请求头与 TLS SNI 独立：默认透传浏览器访问本地入口时的原始 `Host`；用户也可以选择继承 TLS SNI，或在上游依据不同 `Host` 路由时填写自定义值（例如 `localhost:8443`）。旧 Vault 中已有 `upstreamHost` 的 Route 继续按自定义 `Host` 解释。这样既支持远端 HTTPS 的正确校验，也避免对本地 hosts 覆盖域名产生意外的公网证书申请。

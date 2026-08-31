@@ -412,15 +412,20 @@
             "upstreamScheme": "上游协议",
             "tlsSni": "TLS SNI",
             "tlsSniPlaceholder": "例如 backend.internal",
-            "upstreamHost": "上游 HTTP Host",
-            "upstreamHostPlaceholder": "例如 localhost:38443",
-            "upstreamHostHint": "留空时默认使用 TLS SNI；仅在上游按 HTTP Host 路由时需要覆盖。"
+            "upstreamHostMode": "上游 Host 处理方式",
+            "upstreamHostModeOriginal": "原始 Host",
+            "upstreamHostModeTlsSni": "继承 TLS SNI",
+            "upstreamHostModeCustom": "自定义 Host",
+            "upstreamHost": "自定义 Host",
+            "upstreamHostPlaceholder": "例如 localhost:8443",
+            "upstreamHostHint": "仅在选择“自定义 Host”时填写。"
         },
         "errors": {
             "domainRequired": "域名不能为空。",
             "domainInvalid": "域名需包含 . 且不含空白字符。",
             "forwardRequired": "请选择关联的 Forward。",
-            "tlsSniRequired": "https 上游必须填写 TLS SNI。"
+            "tlsSniRequired": "https 上游必须填写 TLS SNI。",
+            "upstreamHostRequired": "选择“自定义 Host”时必须填写 Host。"
         },
         "confirmations": {
             "deleteRouteTitle": "删除 Web 路由",

@@ -1124,10 +1124,10 @@ func applyRouteIntent(data *model.VaultData, intent RouteChangeIntent) (*model.W
 func normalizeRoute(route model.WebRoute) model.WebRoute {
 	route.Domain = strings.TrimSpace(strings.ToLower(route.Domain))
 	route.TLSSNI = strings.TrimSpace(route.TLSSNI)
-	route.UpstreamHost = strings.TrimSpace(route.UpstreamHost)
 	if route.UpstreamScheme == "" {
 		route.UpstreamScheme = "http"
 	}
+	route = route.NormalizeUpstreamHostSelection()
 	if route.CaddyEnabled {
 		route.HostsEnabled = true
 	} else if !route.HostsEnabled {

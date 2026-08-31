@@ -1270,13 +1270,36 @@ func TestRouteUpsertNormalizesUpstreamHost(t *testing.T) {
 		Action:           application.RouteChangeUpsert,
 		Route: &model.WebRoute{
 			ID: 1, ForwardID: 1, Domain: "demo.example.com", UpstreamScheme: "https",
-			TLSSNI: "backend.internal", UpstreamHost: " localhost:8443 ",
+			TLSSNI: "backend.internal", UpstreamHostMode: model.UpstreamHostModeCustom, UpstreamHost: " localhost:8443 ",
 		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if preview.Route == nil || preview.Route.UpstreamHost != "localhost:8443" {
+	if preview.Route == nil || preview.Route.UpstreamHostMode != model.UpstreamHostModeCustom || preview.Route.UpstreamHost != "localhost:8443" {
 		t.Fatalf("normalized preview route = %+v", preview.Route)
+	}
+}
+
+func TestRouteUpsertDefaultsHTTPSHostToOriginalRequestHost(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
+	snapshot, err := service.GetSnapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	preview, err := service.PreviewRouteChange(context.Background(), application.RouteChangeIntent{
+		ExpectedRevision: snapshot.Revisions.Vault,
+		Action:           application.RouteChangeUpsert,
+		Route: &model.WebRoute{
+			ID: 1, ForwardID: 1, Domain: "admin.example.localhost", UpstreamScheme: "https",
+			TLSSNI: "backend.internal",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.Route == nil || preview.Route.UpstreamHostMode != model.UpstreamHostModeOriginal || preview.Route.UpstreamHost != "" {
+		t.Fatalf("defaulted preview route = %+v", preview.Route)
 	}
 }

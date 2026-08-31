@@ -412,15 +412,20 @@
             "upstreamScheme": "Схема апстрима",
             "tlsSni": "TLS SNI",
             "tlsSniPlaceholder": "например backend.internal",
-            "upstreamHost": "HTTP Host апстрима",
-            "upstreamHostPlaceholder": "например localhost:38443",
-            "upstreamHostHint": "Оставьте пустым, чтобы использовать TLS SNI. Переопределяйте только если апстрим маршрутизирует по HTTP Host."
+            "upstreamHostMode": "Режим Host апстрима",
+            "upstreamHostModeOriginal": "Исходный Host",
+            "upstreamHostModeTlsSni": "Унаследовать TLS SNI",
+            "upstreamHostModeCustom": "Пользовательский Host",
+            "upstreamHost": "Пользовательский Host",
+            "upstreamHostPlaceholder": "например localhost:8443",
+            "upstreamHostHint": "Заполняйте только при выборе пользовательского Host."
         },
         "errors": {
             "domainRequired": "Укажите домен.",
             "domainInvalid": "Домен должен содержать точку и не содержать пробелов.",
             "forwardRequired": "Выберите форвард.",
-            "tlsSniRequired": "Для https-апстрима требуется TLS SNI."
+            "tlsSniRequired": "Для https-апстрима требуется TLS SNI.",
+            "upstreamHostRequired": "Для пользовательского Host требуется значение."
         },
         "confirmations": {
             "deleteRouteTitle": "Удалить веб-маршрут",

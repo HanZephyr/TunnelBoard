@@ -92,7 +92,7 @@ flowchart TB
 - 先实现受限特权辅助服务的安装、身份校验和操作白名单；主程序绝不提升为管理员。
 - 实现受托管 hosts 区块、回滚与非本地域名覆盖确认；单独 hosts 开关支持“域名 + 端口”。
 - 将固定版本 Caddy 加入安装包；实现全局单进程、配置编译、热重载、443 冲突诊断。
-- 实现 HTTP 上游与 HTTPS 上游 Route：后者要求 TLS SNI，设置对应上游 Host，严格校验证书。
+- 实现 HTTP 上游与 HTTPS 上游 Route：后者要求 TLS SNI，默认透传原始请求 `Host`，并支持继承 TLS SNI 或自定义 `Host`，严格校验证书。
 - 最后一个启用的 Caddy Route 关闭/删除时，停止 Caddy 并撤销本地 CA 信任。
 
 验收：同一台机器可通过多个自定义域名稳定访问不同 Forward；hosts/Caddy 失败都可解释并可精确回滚。
