@@ -75,6 +75,8 @@ type RoutePort interface {
 type StartupNetworkResult struct {
 	Skipped       bool           `json:"skipped"`
 	ForwardErrors map[int]string `json:"forwardErrors,omitempty"`
+	CATrustNeeded bool           `json:"caTrustNeeded"`
+	CAFingerprint string         `json:"caFingerprint,omitempty"`
 }
 
 type RestorePort interface {
@@ -106,26 +108,26 @@ type Dependencies struct {
 }
 
 type Service struct {
-	store        biz.VaultStore
-	catalog      *biz.CatalogBiz
-	runtime      RuntimePort
-	routes       RoutePort
-	restore      RestorePort
-	recovery     RecoveryPort
-	backup       *biz.BackupBiz
-	packages     biz.BackupPackage
-	mutation     sync.Mutex
-	importMu     sync.Mutex
-	importStage  *stagedImport
-	hostChangeMu sync.Mutex
-	hostChanges  map[string]stagedSSHHostChange
-	routeStageMu sync.Mutex
-	routeStages  map[string]stagedRouteChange
-	maintenance  atomic.Bool
-	sequence     atomic.Uint64
-	commands     *recentCommandCache
-	updates      UpdatePort
-	appVersion   string
+	store               biz.VaultStore
+	catalog             *biz.CatalogBiz
+	runtime             RuntimePort
+	routes              RoutePort
+	restore             RestorePort
+	recovery            RecoveryPort
+	backup              *biz.BackupBiz
+	packages            biz.BackupPackage
+	mutation            sync.Mutex
+	importMu            sync.Mutex
+	importStage         *stagedImport
+	hostChangeMu        sync.Mutex
+	hostChanges         map[string]stagedSSHHostChange
+	routeStageMu        sync.Mutex
+	routeStages         map[string]stagedRouteChange
+	maintenance         atomic.Bool
+	sequence            atomic.Uint64
+	commands            *recentCommandCache
+	updates             UpdatePort
+	appVersion          string
 	updateMu            sync.Mutex
 	updateFlight        *updateCheckFlight
 	startupUpdateDone   bool
@@ -378,8 +380,20 @@ func (s *Service) StartupNetwork(ctx context.Context) (StartupNetworkResult, err
 	} else if err != nil {
 		return StartupNetworkResult{}, err
 	}
+	data, err := s.store.Load()
+	if err != nil {
+		return StartupNetworkResult{}, err
+	}
+	caPreview, err := s.routes.PreviewDesired(data, 0)
+	if err != nil {
+		return StartupNetworkResult{}, err
+	}
 	errorsByID, runtimeErr := s.runtime.StartAutoStart()
-	result := StartupNetworkResult{ForwardErrors: map[int]string{}}
+	result := StartupNetworkResult{
+		ForwardErrors: map[int]string{},
+		CATrustNeeded: caPreview.CATrustNeeded,
+		CAFingerprint: caPreview.CAFingerprint,
+	}
 	for id, startErr := range errorsByID {
 		if startErr != nil {
 			result.ForwardErrors[id] = startErr.Error()
@@ -390,6 +404,41 @@ func (s *Service) StartupNetwork(ctx context.Context) (StartupNetworkResult, err
 	}
 	routeErr := s.routes.ResumeCaddy()
 	return result, errors.Join(runtimeErr, routeErr)
+}
+
+// ConfirmStartupCATrust completes the explicit trust decision that was
+// discovered during automatic startup. It rechecks the live CA fingerprint
+// under the mutation gate before any route effect is applied.
+func (s *Service) ConfirmStartupCATrust(ctx context.Context, fingerprint string) (biz.RouteApplyResult, error) {
+	if err := ctx.Err(); err != nil {
+		return biz.RouteApplyResult{}, err
+	}
+	if s.maintenance.Load() {
+		return biz.RouteApplyResult{}, ErrMaintenance
+	}
+	s.mutation.Lock()
+	defer s.mutation.Unlock()
+	if s.maintenance.Load() {
+		return biz.RouteApplyResult{}, ErrMaintenance
+	}
+	if err := s.ensureNetworkAllowedLocked(); err != nil {
+		return biz.RouteApplyResult{}, err
+	}
+	data, err := s.store.Load()
+	if err != nil {
+		return biz.RouteApplyResult{}, err
+	}
+	preview, err := s.routes.PreviewDesired(data, 0)
+	if err != nil {
+		return biz.RouteApplyResult{}, err
+	}
+	if !preview.CATrustNeeded {
+		return biz.RouteApplyResult{}, nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(fingerprint), preview.CAFingerprint) {
+		return biz.RouteApplyResult{}, fmt.Errorf("%w: %s", biz.ErrCAConfirmationRequired, preview.CAFingerprint)
+	}
+	return s.routes.ReconcileRoutesWithCATrust(preview.CAFingerprint)
 }
 
 func (s *Service) StartForwards(ctx context.Context, ids []int) map[int]string {

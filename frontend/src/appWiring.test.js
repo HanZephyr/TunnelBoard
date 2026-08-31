@@ -108,6 +108,23 @@ test('设置页区分可备份的 Vault 数据目录和本机 Caddy HTTPS 运行
   assert.match(zhCN, /"caddyDataDirDesc"/)
 })
 
+test('启动时的本地 CA 信任提示同时读取缓存状态并订阅后续事件', async () => {
+  const source = await readFile(new URL('./App.vue', import.meta.url), 'utf8')
+  assert.match(source, /GetStartupCATrustRequest/)
+  assert.match(source, /ConfirmStartupCATrust/)
+  assert.match(source, /EventsOn\('tunnelboard:startup-ca-trust-required'/)
+  assert.match(source, /function acceptStartupCATrustRequest/)
+  assert.match(source, /function confirmStartupCATrust/)
+  assert.match(source, /routes\.confirmations\.caTrustTitle/)
+})
+
+test('启动的其他网络错误不能吞掉本地 CA 信任提示', async () => {
+  const source = await readFile(new URL('../../app.go', import.meta.url), 'utf8')
+  const startup = source.slice(source.indexOf('go func() {'), source.indexOf('// shutdown'))
+  assert.ok(startup.indexOf('if result.CATrustNeeded') >= 0)
+  assert.ok(startup.indexOf('if result.CATrustNeeded') < startup.indexOf('if err != nil'))
+})
+
 test('高层命令结果先登记 revision 和 event sequence 再刷新', async () => {
   const source = await readFile(new URL('./App.vue', import.meta.url), 'utf8')
   assert.match(source, /function onVaultChanged[\s\S]*acceptRevision\(result\?\.acceptedRevision, result\?\.eventSequence\)[\s\S]*await loadVault/)

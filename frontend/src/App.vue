@@ -3,12 +3,14 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect
 import { useI18n } from 'vue-i18n'
 import {
   ApplyTrayLocale,
+	ConfirmStartupCATrust,
   GetAppVersion,
+	GetStartupCATrustRequest,
   GetUpdateCheckEnabled,
   SaveUILocale
 } from '../wailsjs/go/main/App'
-import { BrowserOpenURL } from '../wailsjs/runtime/runtime'
-import { callBackend } from './utils/backend'
+import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
+import { callBackend, errorMessage } from './utils/backend'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppTopHeader from './components/layout/AppTopHeader.vue'
 import OverviewPage from './components/pages/OverviewPage.vue'
@@ -63,6 +65,8 @@ const updateNotice = createUpdateNoticeStore(reactive({
 }))
 const updatePreference = createUpdatePreferenceStore()
 const application = createApplicationClient()
+const startupCATrustDialog = reactive({ visible: false, fingerprint: '', busy: false })
+let removeStartupCATrustListener = null
 
 const currentPage = computed(() => pages.value.find((page) => page.key === activePage.value))
 
@@ -194,6 +198,38 @@ function hideToast() {
   }
 }
 
+// ---- 启动时本地 CA 信任确认 ----
+function acceptStartupCATrustRequest(request) {
+  const fingerprint = String(request?.fingerprint || request?.Fingerprint || '').trim()
+  const required = request?.required === true || request?.Required === true
+  if (!required || !fingerprint) return
+  startupCATrustDialog.fingerprint = fingerprint
+  startupCATrustDialog.visible = true
+}
+
+async function loadStartupCATrustRequest() {
+  try {
+    acceptStartupCATrustRequest(await callBackend(GetStartupCATrustRequest))
+  } catch (_) {
+    /* startup networking can still be in progress; the Wails event will retry delivery */
+  }
+}
+
+async function confirmStartupCATrust() {
+  if (startupCATrustDialog.busy || !startupCATrustDialog.fingerprint) return
+  startupCATrustDialog.busy = true
+  try {
+    await callBackend(ConfirmStartupCATrust, startupCATrustDialog.fingerprint)
+    startupCATrustDialog.visible = false
+    startupCATrustDialog.fingerprint = ''
+    await loadVault()
+  } catch (error) {
+    notify(errorMessage(error))
+  } finally {
+    startupCATrustDialog.busy = false
+  }
+}
+
 // ---- 更新检查（启动时静默检查；手动检查在 Settings 页）----
 function openExternalUrl(url) {
   if (!url) return
@@ -260,7 +296,9 @@ function onNewRoute() {
 }
 
 onMounted(async () => {
+	removeStartupCATrustListener = EventsOn('tunnelboard:startup-ca-trust-required', acceptStartupCATrustRequest)
   await loadVault()
+	await loadStartupCATrustRequest()
   try {
     appMeta.version = await callBackend(GetAppVersion)
   } catch (_) {
@@ -283,6 +321,10 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+	if (removeStartupCATrustListener) {
+		removeStartupCATrustListener()
+		removeStartupCATrustListener = null
+	}
   if (toastTimer !== null) {
     window.clearTimeout(toastTimer)
     toastTimer = null
@@ -423,6 +465,23 @@ onBeforeUnmount(() => {
         <template #footer>
           <button type="button" class="btn btn-outline-secondary" data-dialog-initial-focus @click="updateDetailsVisible = false">{{ $t('app.common.close') }}</button>
           <button type="button" class="btn btn-primary" @click="openReleasePage">{{ $t('app.update.openRelease') }}</button>
+        </template>
+      </BaseDialog>
+
+      <BaseDialog
+        :visible="startupCATrustDialog.visible"
+        :title="$t('routes.confirmations.caTrustTitle')"
+        :busy="startupCATrustDialog.busy"
+        @close="startupCATrustDialog.visible = false"
+      >
+        <p class="action-dialog-message">{{ $t('routes.confirmations.caTrustMessage') }}</p>
+        <div class="inline-notice" role="note">
+          <span>{{ $t('routes.confirmations.caFingerprintLabel') }}</span>
+          <code class="font-mono text-break">{{ startupCATrustDialog.fingerprint }}</code>
+        </div>
+        <template #footer>
+          <button type="button" class="btn btn-outline-secondary" :disabled="startupCATrustDialog.busy" @click="startupCATrustDialog.visible = false">{{ $t('app.common.cancel') }}</button>
+          <button type="button" class="btn btn-warning" :disabled="startupCATrustDialog.busy" @click="confirmStartupCATrust">{{ $t('app.common.confirm') }}</button>
         </template>
       </BaseDialog>
 

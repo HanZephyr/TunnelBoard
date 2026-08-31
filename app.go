@@ -39,6 +39,10 @@ import (
 // 和应用偏好转换为 UI 可用的结果，不承载业务规则。
 type App struct {
 	ctx            context.Context
+	startupCATrust struct {
+		sync.RWMutex
+		request StartupCATrustRequest
+	}
 	store          *vault.Store
 	catalog        *biz.CatalogBiz
 	runtime        *biz.RuntimeBiz
@@ -64,6 +68,15 @@ type App struct {
 	closePrompt      func(context.Context, desktop.ClosePrompt) (desktop.CloseChoice, error)
 	hideWindow       func(context.Context)
 }
+
+// StartupCATrustRequest is the explicit local-CA trust decision awaiting the
+// current desktop user after Caddy resumes at application startup.
+type StartupCATrustRequest struct {
+	Required    bool   `json:"required"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+}
+
+const startupCATrustEvent = "tunnelboard:startup-ca-trust-required"
 
 // NewApp 打开默认数据目录下的 Vault 并组装应用 Module。
 // 打开失败（含密钥遗失 ErrKeyUnavailable）时仅记录 initErr，由绑定调用方通过 ensureReady 感知。
@@ -167,6 +180,13 @@ func (a *App) startup(ctx context.Context) {
 		}
 		go func() {
 			result, err := a.application.StartupNetwork(ctx)
+			if result.CATrustNeeded && result.CAFingerprint != "" {
+				request := StartupCATrustRequest{Required: true, Fingerprint: result.CAFingerprint}
+				a.startupCATrust.Lock()
+				a.startupCATrust.request = request
+				a.startupCATrust.Unlock()
+				wailsruntime.EventsEmit(ctx, startupCATrustEvent, request)
+			}
 			if err != nil {
 				if !errors.Is(err, application.ErrMaintenance) {
 					slog.Error("automatic network startup failed", "err", err)
@@ -971,6 +991,33 @@ func (a *App) GetConfigPath() (string, error) {
 		return a.store.Dir(), nil
 	}
 	return abs, nil
+}
+
+// GetStartupCATrustRequest returns the startup trust request even when the
+// frontend mounted after its Wails event was emitted.
+func (a *App) GetStartupCATrustRequest() (StartupCATrustRequest, error) {
+	if err := a.ensureReady(); err != nil {
+		return StartupCATrustRequest{}, err
+	}
+	a.startupCATrust.RLock()
+	defer a.startupCATrust.RUnlock()
+	return a.startupCATrust.request, nil
+}
+
+// ConfirmStartupCATrust verifies the displayed fingerprint again and applies
+// the current desired routes only after the user explicitly confirms it.
+func (a *App) ConfirmStartupCATrust(fingerprint string) (biz.RouteApplyResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return biz.RouteApplyResult{}, err
+	}
+	result, err := a.application.ConfirmStartupCATrust(context.Background(), fingerprint)
+	if err != nil {
+		return biz.RouteApplyResult{}, err
+	}
+	a.startupCATrust.Lock()
+	a.startupCATrust.request = StartupCATrustRequest{}
+	a.startupCATrust.Unlock()
+	return result, nil
 }
 
 // OpenConfigDir opens the Vault data directory in the OS file manager.

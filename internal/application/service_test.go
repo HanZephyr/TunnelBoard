@@ -337,6 +337,54 @@ func TestStartupNetworkRunsBehindRecoveryGate(t *testing.T) {
 	}
 }
 
+func TestStartupNetworkSurfacesCurrentUserCATrustConfirmation(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	store.data.WebRoutes[0].CaddyEnabled = true
+	runtime := &fakeRuntime{}
+	fingerprint := strings.Repeat("c", 64)
+	routes := &fakeRoutes{caFingerprint: fingerprint}
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: runtime, Routes: routes,
+		Restore: fakeRestore{}, Recovery: fakeRecovery{},
+	})
+
+	result, err := service.StartupNetwork(context.Background())
+	if err != nil {
+		t.Fatalf("startup network: %v", err)
+	}
+	if !result.CATrustNeeded || result.CAFingerprint != fingerprint {
+		t.Fatalf("startup CA prompt = %+v, want fingerprint %q", result, fingerprint)
+	}
+	if routes.resumes != 1 || routes.reconciles != 0 || routes.confirmedCA != "" {
+		t.Fatalf("startup must resume without granting trust: routes=%+v", routes)
+	}
+
+	if _, err := service.ConfirmStartupCATrust(context.Background(), fingerprint); err != nil {
+		t.Fatalf("confirm startup CA trust: %v", err)
+	}
+	if routes.reconciles != 1 || routes.confirmedCA != fingerprint {
+		t.Fatalf("confirmed startup trust was not reconciled: routes=%+v", routes)
+	}
+}
+
+func TestConfirmStartupCATrustRejectsDifferentAuthority(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	store.data.WebRoutes[0].CaddyEnabled = true
+	routes := &fakeRoutes{caFingerprint: strings.Repeat("d", 64)}
+	service := application.NewService(application.Dependencies{
+		Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: routes,
+		Restore: fakeRestore{}, Recovery: fakeRecovery{},
+	})
+
+	_, err := service.ConfirmStartupCATrust(context.Background(), strings.Repeat("e", 64))
+	if !errors.Is(err, biz.ErrCAConfirmationRequired) {
+		t.Fatalf("confirmation error = %v, want ErrCAConfirmationRequired", err)
+	}
+	if routes.reconciles != 0 || routes.confirmedCA != "" {
+		t.Fatalf("wrong CA fingerprint caused reconciliation: routes=%+v", routes)
+	}
+}
+
 func TestStartupNetworkCannotEnterDuringRestoreMaintenance(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
