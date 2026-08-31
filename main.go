@@ -30,7 +30,7 @@ var trayIconFallback []byte
 const (
 	applicationTitle = "TunnelBoard"
 	singleInstanceID = "tunnelboard-single-instance"
-	appVersion       = "1.0.16"
+	appVersion       = "1.0.17"
 )
 
 func main() {
