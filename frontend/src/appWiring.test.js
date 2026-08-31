@@ -94,6 +94,20 @@ test('更新偏好失败后保持关闭并提供重试', async () => {
   assert.match(source, /updatePreferencePhase !== 'ready'/)
 })
 
+test('设置页区分可备份的 Vault 数据目录和本机 Caddy HTTPS 运行目录', async () => {
+  const [settings, zhCN] = await Promise.all([
+    readFile(new URL('./components/pages/SettingsPage.vue', import.meta.url), 'utf8'),
+    readFile(new URL('./locales/zh-CN.json', import.meta.url), 'utf8')
+  ])
+  assert.match(settings, /GetCaddyDataPath/)
+  assert.match(settings, /OpenCaddyDataDir/)
+  assert.match(settings, /caddyDataPath/)
+  assert.match(settings, /settings\.caddyDataDir/)
+  assert.match(settings, /settings\.caddyDataDirDesc/)
+  assert.match(zhCN, /"caddyDataDir"/)
+  assert.match(zhCN, /"caddyDataDirDesc"/)
+})
+
 test('高层命令结果先登记 revision 和 event sequence 再刷新', async () => {
   const source = await readFile(new URL('./App.vue', import.meta.url), 'utf8')
   assert.match(source, /function onVaultChanged[\s\S]*acceptRevision\(result\?\.acceptedRevision, result\?\.eventSequence\)[\s\S]*await loadVault/)

@@ -961,7 +961,7 @@ func (a *App) SetAutoRunEnabled(enabled bool) error {
 	return autostart.Disable()
 }
 
-// GetConfigPath returns the absolute path of the current data directory.
+// GetConfigPath returns the absolute path of the Vault data directory.
 func (a *App) GetConfigPath() (string, error) {
 	if err := a.ensureReady(); err != nil {
 		return "", err
@@ -973,14 +973,45 @@ func (a *App) GetConfigPath() (string, error) {
 	return abs, nil
 }
 
-// OpenConfigDir opens the data directory in the OS file manager.
+// OpenConfigDir opens the Vault data directory in the OS file manager.
 // It supports macOS, Windows and Linux (via xdg-open).
 func (a *App) OpenConfigDir() error {
 	if err := a.ensureReady(); err != nil {
 		return err
 	}
-	dir := a.store.Dir()
+	return openDirectory(a.store.Dir())
+}
 
+// GetCaddyDataPath returns the device-local Caddy runtime and local HTTPS
+// credential directory. It is intentionally separate from the portable Vault.
+func (a *App) GetCaddyDataPath() (string, error) {
+	if err := a.ensureReady(); err != nil {
+		return "", err
+	}
+	if a.caddy == nil || strings.TrimSpace(a.caddy.DataDir) == "" {
+		return "", errors.New("caddy data directory is unavailable")
+	}
+	abs, err := filepath.Abs(a.caddy.DataDir)
+	if err != nil {
+		return a.caddy.DataDir, nil
+	}
+	return abs, nil
+}
+
+// OpenCaddyDataDir opens the device-local Caddy runtime and local HTTPS
+// credential directory in the OS file manager.
+func (a *App) OpenCaddyDataDir() error {
+	if err := a.ensureReady(); err != nil {
+		return err
+	}
+	path, err := a.GetCaddyDataPath()
+	if err != nil {
+		return err
+	}
+	return openDirectory(path)
+}
+
+func openDirectory(dir string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":

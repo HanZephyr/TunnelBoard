@@ -305,6 +305,8 @@
         "data": "Data",
         "dataDir": "Data Directory",
         "dataDirDesc": "The encrypted Vault and app preferences are stored in this directory.",
+        "caddyDataDir": "Local Caddy and HTTPS",
+        "caddyDataDirDesc": "Caddy runtime files, the local CA, and HTTPS certificate cache are stored on this device. They do not move with Vault backups; do not modify them manually.",
         "dataDirUnavailable": "Unable to read path (backend unavailable in this environment).",
         "openDir": "Open Dir",
         "diagnostics": "Diagnostics",

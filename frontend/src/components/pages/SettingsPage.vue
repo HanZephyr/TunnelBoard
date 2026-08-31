@@ -6,8 +6,10 @@ import {
   ExportBackupWithDialog,
   ExportDiagnosticsWithDialog,
   GetAutoRunEnabled,
+	GetCaddyDataPath,
   GetConfigPath,
   GetUpdateCheckEnabled,
+	OpenCaddyDataDir,
   OpenConfigDir,
 	StageRestoreCommand,
 	CommitRestoreCommand,
@@ -57,6 +59,7 @@ const updateCheckEnabled = ref(false)
 const updatePreferencePhase = ref('loading')
 const updatePreferenceError = ref('')
 const configPath = ref('')
+const caddyDataPath = ref('')
 const isCheckingUpdates = ref(false)
 const updateCheckDialog = reactive({
   visible: false,
@@ -92,6 +95,11 @@ onMounted(async () => {
     configPath.value = await callBackend(GetConfigPath)
   } catch (_) {
     configPath.value = ''
+  }
+  try {
+    caddyDataPath.value = await callBackend(GetCaddyDataPath)
+  } catch (_) {
+    caddyDataPath.value = ''
   }
 })
 
@@ -210,6 +218,14 @@ function closeUpdateCheckDialog() {
 async function onOpenConfigDir() {
   try {
     await callBackend(OpenConfigDir)
+  } catch (err) {
+    emit('notify', errorMessage(err))
+  }
+}
+
+async function onOpenCaddyDataDir() {
+  try {
+    await callBackend(OpenCaddyDataDir)
   } catch (err) {
     emit('notify', errorMessage(err))
   }
@@ -660,6 +676,25 @@ async function confirmRestoreActivation() {
               class="btn btn-sm btn-secondary flex-shrink-0"
               :disabled="!configPath"
               @click="onOpenConfigDir"
+            >
+              {{ t('settings.openDir') }}
+            </button>
+          </div>
+
+          <div class="config-row align-items-center">
+            <div class="flex-grow-1 min-w-0 pe-2">
+              <div class="config-name">{{ t('settings.caddyDataDir') }}</div>
+              <div class="config-desc">
+                <span v-if="caddyDataPath" class="text-break d-block">{{ caddyDataPath }}</span>
+                <template v-else>{{ t('settings.dataDirUnavailable') }}</template>
+              </div>
+              <div class="config-desc">{{ t('settings.caddyDataDirDesc') }}</div>
+            </div>
+            <button
+              type="button"
+              class="btn btn-sm btn-secondary flex-shrink-0"
+              :disabled="!caddyDataPath"
+              @click="onOpenCaddyDataDir"
             >
               {{ t('settings.openDir') }}
             </button>

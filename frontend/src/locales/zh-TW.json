@@ -305,6 +305,8 @@
         "data": "資料",
         "dataDir": "資料目錄",
         "dataDirDesc": "加密 Vault 與應用程式偏好儲存在此目錄中。",
+        "caddyDataDir": "本機 Caddy 與本地 HTTPS",
+        "caddyDataDirDesc": "Caddy 執行檔、本機 CA 與 HTTPS 憑證快取儲存在此裝置目錄；不會隨 Vault 備份遷移，請勿手動修改。",
         "dataDirUnavailable": "無法讀取路徑（目前環境後端不可用）。",
         "openDir": "開啟目錄",
         "diagnostics": "診斷資訊",
