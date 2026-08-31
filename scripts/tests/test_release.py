@@ -75,6 +75,21 @@ class ReleaseVersionNormalizationTests(unittest.TestCase):
             application.write_bytes(b"application " + digest.encode("ascii"))
             self.release.verify_embedded_helper_digest(application, digest)
 
+    def test_windows_application_file_version_uses_four_numeric_segments(self) -> None:
+        self.assertEqual(self.release.windows_application_file_version("1.0.18"), "1.0.18.0")
+        self.assertEqual(self.release.windows_application_file_version("v1.2.3.4"), "1.2.3.4")
+        self.assertEqual(self.release.windows_application_file_version("0.0.0-ci.42"), "0.0.1.0")
+
+    def test_wails_product_version_is_temporarily_set_and_restored(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            config_path = Path(raw) / "wails.json"
+            original = b'{\n  "name": "tunnelboard"\n}\n'
+            config_path.write_bytes(original)
+            with self.release.temporary_wails_product_version("1.0.18", config_path):
+                configured = json.loads(config_path.read_text(encoding="utf-8"))
+                self.assertEqual(configured["info"]["productVersion"], "1.0.18.0")
+            self.assertEqual(config_path.read_bytes(), original)
+
 
 class LinuxReleaseAssetTests(unittest.TestCase):
     @classmethod
@@ -546,12 +561,12 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         bundle = (ROOT / "scripts" / "windows-installer" / "Bundle.wxs").read_text(encoding="utf-8")
         theme = (ROOT / "scripts" / "windows-installer" / "installer-theme.xml").read_text(encoding="utf-8")
         self.assertIn('<Variable Name="LaunchAfterInstall" Type="numeric" Value="1"', bundle)
-        self.assertIn('LaunchTarget="[InstallFolder]TunnelBoard.exe"', bundle)
+        self.assertIn('LaunchTarget="[InstallFolder]\\TunnelBoard.exe"', bundle)
         self.assertIn('<Checkbox Name="LaunchAfterInstall"', theme)
-        self.assertIn('VisibleCondition="WixBundleAction = 5 AND LaunchAfterInstall"', theme)
-        self.assertIn('VisibleCondition="WixBundleAction != 5 OR NOT LaunchAfterInstall"', theme)
+        self.assertIn('VisibleCondition="WixBundleAction = 6 AND LaunchAfterInstall"', theme)
+        self.assertIn('VisibleCondition="WixBundleAction &lt;&gt; 6 OR NOT LaunchAfterInstall"', theme)
         self.assertIn('SuccessInstallMessage', theme)
-        self.assertIn('Visible="yes" VisibleCondition="WixBundleAction = 5"', theme)
+        self.assertIn('Visible="yes" VisibleCondition="WixBundleAction = 6"', theme)
         for language_id in ("1033", "2052", "1028", "3076", "1049"):
             locale = ROOT / "scripts" / "windows-installer" / language_id / "thm.wxl"
             self.assertTrue(locale.is_file(), f"missing installer locale {language_id}")

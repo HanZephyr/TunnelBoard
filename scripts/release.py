@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from contextlib import contextmanager
 import hashlib
 import io
 import json
@@ -1325,6 +1326,61 @@ def windows_installer_version(version: str) -> str:
     return "0.0.1"
 
 
+def windows_application_file_version(version: str) -> str:
+    """将发布版本映射为 Windows PE 文件资源支持的四段数字版本。"""
+    parts = version.removeprefix("v").split(".")
+    if 3 <= len(parts) <= 4 and all(part.isdecimal() for part in parts):
+        values = [int(part) for part in parts]
+        if all(value <= 65535 for value in values):
+            values.extend([0] * (4 - len(values)))
+            return ".".join(str(value) for value in values)
+    return "0.0.1.0"
+
+
+@contextmanager
+def temporary_wails_product_version(version: str, config_path: Path | None = None):
+    """仅在构建期间把发布版本写入 Wails 的 Windows 资源配置。"""
+    path = config_path or ROOT / "wails.json"
+    original = path.read_bytes()
+    try:
+        config = json.loads(original.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ReleaseError(f"invalid Wails configuration: {path}") from exc
+    info = config.setdefault("info", {})
+    if not isinstance(info, dict):
+        raise ReleaseError("wails.json info must be an object")
+    info["productVersion"] = windows_application_file_version(version)
+    path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        yield
+    finally:
+        path.write_bytes(original)
+
+
+def verify_windows_application_file_version(application_path: Path, expected_version: str) -> None:
+    """拒绝 Windows 文件资源版本未随发布版本递增的候选主程序。"""
+    quoted_path = str(application_path.resolve()).replace("'", "''")
+    command = (
+        f"$v = [System.Diagnostics.FileVersionInfo]::GetVersionInfo('{quoted_path}'); "
+        '"{0}.{1}.{2}.{3}" -f $v.FileMajorPart, $v.FileMinorPart, $v.FileBuildPart, $v.FilePrivatePart'
+    )
+    result = subprocess.run(
+        [windows_powershell(), "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=20,
+    )
+    if result.returncode != 0:
+        raise ReleaseError(f"cannot read Windows application file version: {result.stderr.strip()}")
+    actual_version = result.stdout.strip()
+    if actual_version != expected_version:
+        raise ReleaseError(
+            f"application file version mismatch: got {actual_version or 'missing'}, want {expected_version}"
+        )
+
+
 def build_windows(version: str, require_signing: bool, skip_installer: bool) -> list[Path]:
     if os.name != "nt":
         raise ReleaseError("windows-amd64 must be built on a Windows runner")
@@ -1344,24 +1400,26 @@ def build_windows(version: str, require_signing: bool, skip_installer: bool) -> 
         f"-X main.caddyBundleVersion={caddy_entry['version']} "
         f"-X main.caddyBundleSHA256={caddy_entry['binary_sha256']}"
     )
-    run(
-        [
-            "wails",
-            "build",
-            "-clean",
-            "-platform",
-            "windows/amd64",
-            "-o",
-            app.name,
-            "-ldflags",
-            ldflags,
-        ]
-    )
+    with temporary_wails_product_version(version):
+        run(
+            [
+                "wails",
+                "build",
+                "-clean",
+                "-platform",
+                "windows/amd64",
+                "-o",
+                app.name,
+                "-ldflags",
+                ldflags,
+            ]
+        )
     embedded = frontend_inventory()
     built_app = ROOT / "build" / "bin" / app.name
     if not built_app.is_file():
         raise ReleaseError(f"Wails did not produce {built_app}")
     verify_embedded_helper_digest(built_app, helper_digest)
+    verify_windows_application_file_version(built_app, windows_application_file_version(version))
     shutil.copy2(built_app, app)
     shutil.copy2(app, stage / app.name)
     shutil.copy2(helper, stage / helper.name)
