@@ -75,6 +75,15 @@ test('SSH 主机和 Forward 编辑器都提供不会保存配置的连通性检�
   assert.match(forwardModal, /\$emit\('test-connection'\)/)
 })
 
+test('SSH 主机编辑器提供文件选择和 Ed25519 密钥生成功能', async () => {
+  const source = await readFile(new URL('./components/hosts/SSHHostFields.vue', import.meta.url), 'utf8')
+  assert.match(source, /GenerateSSHKeyPair, SelectSSHKeyFile, SelectSSHKeySavePath/)
+  assert.match(source, /\.\.\/\.\.\/\.\.\/wailsjs\/go\/main\/App/)
+  assert.match(source, /@click="browseKeyFile"/)
+  assert.match(source, /@click="generateKeyPair"/)
+  assert.match(source, /generatedPublicKey/)
+})
+
 test('SSH 主机测试遇到未知或变更的 host key 时要求用户确认后再重新测试', async () => {
   const [hosts, dialog] = await Promise.all([
     readFile(new URL('./components/pages/HostsPage.vue', import.meta.url), 'utf8'),

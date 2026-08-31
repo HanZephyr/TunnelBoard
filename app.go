@@ -621,6 +621,67 @@ func (a *App) SelectBackupFile() (string, error) {
 	return strings.TrimSpace(srcPath), nil
 }
 
+// SelectSSHKeyFile 打开私钥文件选择对话框（取消为空串）；无扩展名过滤，并显示隐藏目录。
+func (a *App) SelectSSHKeyFile() (string, error) {
+	if err := a.ensureReady(); err != nil {
+		return "", err
+	}
+	keyPath, err := wailsruntime.OpenFileDialog(a.ctx, wailsruntime.OpenDialogOptions{
+		DefaultDirectory: defaultSSHKeyDirectory(false),
+		Title:            "Select SSH Private Key",
+		ShowHiddenFiles:  true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("file dialog: %w", err)
+	}
+	return strings.TrimSpace(keyPath), nil
+}
+
+// SelectSSHKeySavePath 打开保存私钥的对话框，默认落在 ~/.ssh（取消为空串）。
+func (a *App) SelectSSHKeySavePath() (string, error) {
+	if err := a.ensureReady(); err != nil {
+		return "", err
+	}
+	defaultDir := defaultSSHKeyDirectory(true)
+	destPath, err := wailsruntime.SaveFileDialog(a.ctx, wailsruntime.SaveDialogOptions{
+		DefaultDirectory:     defaultDir,
+		DefaultFilename:      application.DefaultSSHKeyFilename,
+		Title:                "Save SSH Key Pair",
+		CanCreateDirectories: true,
+	})
+	if err != nil {
+		return "", fmt.Errorf("file dialog: %w", err)
+	}
+	return strings.TrimSpace(destPath), nil
+}
+
+// defaultSSHKeyDirectory 返回 SSH 文件选择器的默认目录；生成密钥时确保 ~/.ssh 存在。
+func defaultSSHKeyDirectory(create bool) string {
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return ""
+	}
+	sshDir := filepath.Join(home, ".ssh")
+	if create {
+		if err := os.MkdirAll(sshDir, 0o700); err == nil {
+			return sshDir
+		}
+		return home
+	}
+	if info, err := os.Stat(sshDir); err == nil && info.IsDir() {
+		return sshDir
+	}
+	return home
+}
+
+// GenerateSSHKeyPair 生成 ed25519 密钥对并写入私钥文件；公钥仅返回给前端展示。
+func (a *App) GenerateSSHKeyPair(request application.GenerateSSHKeyRequest) (application.GenerateSSHKeyResult, error) {
+	if err := a.ensureReady(); err != nil {
+		return application.GenerateSSHKeyResult{}, err
+	}
+	return application.GenerateSSHKeyPair(context.Background(), request)
+}
+
 // StageImportCommand 有界读取并只解密一次，后续提交和私钥另存仅使用短期 token。
 func (a *App) StageImportCommand(request application.StageImportRequest) (application.ImportStagePreview, error) {
 	if err := a.ensureReady(); err != nil {

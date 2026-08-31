@@ -10,6 +10,18 @@ import (
 )
 
 func writePrivateKeyAtomic(ctx context.Context, destination string, content []byte) error {
+	return writePrivateKeyAtomicWith(ctx, destination, content, replacePrivateKeyFile, "replace")
+}
+
+// writePrivateKeyAtomicExclusive 与普通原子写入共用候选文件流程，但最终提交不覆盖已有文件。
+// 密钥生成使用该版本，避免并发请求在 Stat 检查后发生覆盖竞态。
+func writePrivateKeyAtomicExclusive(ctx context.Context, destination string, content []byte) error {
+	return writePrivateKeyAtomicWith(ctx, destination, content, linkPrivateKeyFile, "create")
+}
+
+type privateKeyCommit func(source, destination string) error
+
+func writePrivateKeyAtomicWith(ctx context.Context, destination string, content []byte, commit privateKeyCommit, operation string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -46,8 +58,11 @@ func writePrivateKeyAtomic(ctx context.Context, destination string, content []by
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := replacePrivateKeyFile(temporary, destination); err != nil {
-		return fmt.Errorf("application: replace private key destination: %w", err)
+	if err := commit(temporary, destination); err != nil {
+		if operation == "create" && errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("%w: %s", ErrSSHKeyExists, destination)
+		}
+		return fmt.Errorf("application: %s private key destination: %w", operation, err)
 	}
 	temporary = ""
 	return nil
