@@ -194,12 +194,13 @@ func TestGenerateSSHKeyPairExpandsHomePath(t *testing.T) {
 	if err != nil {
 		t.Skipf("resolve home dir: %v", err)
 	}
-	// 只验证路径展开，不真的写进用户 ~/.ssh：使用不存在标记前缀使其失败。
-	request := GenerateSSHKeyRequest{Destination: "~/.ssh"}
-	if _, err := GenerateSSHKeyPair(context.Background(), request); err == nil {
-		t.Fatal("expected failure writing to a directory path")
-	} else if !strings.Contains(err.Error(), ".ssh") && !strings.Contains(err.Error(), home) {
-		t.Fatalf("error does not reference expanded home path: %v", err)
+	got, err := expandHomePath("~/.ssh")
+	if err != nil {
+		t.Fatalf("expand home path: %v", err)
+	}
+	want := filepath.Join(home, ".ssh")
+	if got != want {
+		t.Fatalf("expanded path=%q, want %q", got, want)
 	}
 }
 
