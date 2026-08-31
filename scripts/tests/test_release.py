@@ -61,6 +61,20 @@ class ReleaseVersionNormalizationTests(unittest.TestCase):
         with self.assertRaises(self.release.ReleaseError):
             self.release.debian_version("vnext")
 
+    def test_helper_pin_must_be_embedded_in_windows_application(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            application = Path(raw) / "TunnelBoard.exe"
+            application.write_bytes(b"application old-pin")
+            with self.assertRaises(self.release.ReleaseError):
+                self.release.verify_embedded_helper_digest(application, "7928c618" * 8)
+
+    def test_helper_pin_is_accepted_when_embedded_in_windows_application(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            application = Path(raw) / "TunnelBoard.exe"
+            digest = "7928c618" * 8
+            application.write_bytes(b"application " + digest.encode("ascii"))
+            self.release.verify_embedded_helper_digest(application, digest)
+
 
 class LinuxReleaseAssetTests(unittest.TestCase):
     @classmethod
@@ -458,6 +472,15 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn("--cleanup-current-user-ca", installer[cleanup:delete_helper])
         self.assertIn('Return="check"', installer[cleanup:delete_helper], "failed trust cleanup must not silently orphan a root CA")
 
+    def test_windows_installer_prompts_to_close_tunnelboard_before_replacing_files(self) -> None:
+        installer = (ROOT / "scripts" / "windows-installer" / "Product.wxs").read_text(encoding="utf-8")
+        self.assertIn('xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"', installer)
+        self.assertIn('Codepage="65001"', installer)
+        self.assertIn('<util:CloseApplication', installer)
+        self.assertIn('Target="TunnelBoard.exe"', installer)
+        self.assertIn('PromptToContinue="yes"', installer)
+        self.assertIn('CloseMessage="yes"', installer)
+
     def test_windows_installer_uses_wix_burn_instead_of_nsis(self) -> None:
         workflow = (ROOT / ".github" / "workflows" / "build.yml").read_text(encoding="utf-8")
         release = RELEASE.read_text(encoding="utf-8")
@@ -465,6 +488,8 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertFalse((ROOT / "scripts" / "windows-installer.nsi").exists())
         self.assertIn("dotnet tool install", workflow)
         self.assertNotIn("choco install nsis", workflow)
+        self.assertIn("WixToolset.Util.wixext", release)
+        self.assertIn("WixToolset.Util.wixext/4.0.5", workflow)
         self.assertIn('WixStandardBootstrapperApplication', bundle)
         self.assertIn('Theme="hyperlinkLargeLicense"', bundle)
         self.assertIn('LocalizationFile="scripts\\windows-installer\\1033\\thm.wxl"', bundle)
@@ -520,13 +545,16 @@ class GitHubActionsReleaseContractTest(unittest.TestCase):
         self.assertIn('<Variable Name="LaunchAfterInstall" Type="numeric" Value="1"', bundle)
         self.assertIn('LaunchTarget="[InstallFolder]TunnelBoard.exe"', bundle)
         self.assertIn('<Checkbox Name="LaunchAfterInstall"', theme)
-        self.assertIn('VisibleCondition="WixBundleAction != 5 OR LaunchAfterInstall"', theme)
+        self.assertIn('VisibleCondition="WixBundleAction = 5 AND LaunchAfterInstall"', theme)
         self.assertIn('VisibleCondition="WixBundleAction != 5 OR NOT LaunchAfterInstall"', theme)
+        self.assertIn('SuccessInstallMessage', theme)
+        self.assertIn('Visible="yes" VisibleCondition="WixBundleAction = 5"', theme)
         for language_id in ("1033", "2052", "1028", "3076", "1049"):
             locale = ROOT / "scripts" / "windows-installer" / language_id / "thm.wxl"
             self.assertTrue(locale.is_file(), f"missing installer locale {language_id}")
             content = locale.read_text(encoding="utf-8-sig")
             self.assertIn('Id="SuccessLaunchCheckbox"', content)
+            self.assertIn('Id="SuccessInstallMessage"', content)
             self.assertIn('Id="OptionsShortcutLabel"', content)
 
 

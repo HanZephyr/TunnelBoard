@@ -86,6 +86,14 @@ def sha256_file(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def verify_embedded_helper_digest(application_path: Path, expected_digest: str) -> None:
+    """确认主程序确实携带本次构建 Helper 的完整性校验基线。"""
+    if expected_digest.encode("ascii") not in application_path.read_bytes():
+        raise ReleaseError(
+            f"application does not embed the current Helper SHA-256 pin: {application_path.name}"
+        )
+
+
 def load_lock(path: Path = LOCK_PATH) -> dict[str, Any]:
     lock = json.loads(path.read_text(encoding="utf-8"))
     if lock.get("schema_version") != 1 or not lock.get("version"):
@@ -1353,6 +1361,7 @@ def build_windows(version: str, require_signing: bool, skip_installer: bool) -> 
     built_app = ROOT / "build" / "bin" / app.name
     if not built_app.is_file():
         raise ReleaseError(f"Wails did not produce {built_app}")
+    verify_embedded_helper_digest(built_app, helper_digest)
     shutil.copy2(built_app, app)
     shutil.copy2(app, stage / app.name)
     shutil.copy2(helper, stage / helper.name)
@@ -1392,6 +1401,8 @@ def build_windows(version: str, require_signing: bool, skip_installer: bool) -> 
             f"SourceDir={stage}",
             "-d",
             f"MsiVersion={installer_version}",
+            "-ext",
+            "WixToolset.Util.wixext",
             "-o",
             str(msi),
             str(installer_root / "Product.wxs"),
@@ -1406,6 +1417,8 @@ def build_windows(version: str, require_signing: bool, skip_installer: bool) -> 
             "x64",
             "-ext",
             "WixToolset.Bal.wixext",
+            "-ext",
+            "WixToolset.Util.wixext",
             "-loc",
             str(installer_root / "1033" / "thm.wxl"),
             "-d",

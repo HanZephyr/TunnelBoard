@@ -44,6 +44,7 @@
   <String Id="SuccessRepairHeader" Value="Repair Successfully Completed" />
   <String Id="SuccessUninstallHeader" Value="Uninstall Successfully Completed" />
   <String Id="SuccessUnsafeUninstallHeader" Value="Uninstall Successfully Completed" />
+  <String Id="SuccessInstallMessage" Value="TunnelBoard has been installed successfully." />
   <String Id="SuccessLaunchCheckbox" Value="Launch TunnelBoard after setup" />
   <String Id="SuccessLaunchButton" Value="&amp;Finish and Launch" />
   <String Id="SuccessRestartText" Value="You must restart your computer before you can use the software." />

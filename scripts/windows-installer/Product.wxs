@@ -1,15 +1,24 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
   <Package
       Name="TunnelBoard"
       Manufacturer="TunnelBoard"
       Version="$(var.MsiVersion)"
       UpgradeCode="{D5CB6F64-09DB-4D47-9B52-F91B547C81AB}"
       Scope="perMachine"
+      Codepage="65001"
       InstallerVersion="500"
       Compressed="yes">
     <SummaryInformation Description="TunnelBoard local SSH forward manager" />
     <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 TunnelBoard，无法降级。" />
+    <util:CloseApplication
+        Id="CloseTunnelBoard"
+        Target="TunnelBoard.exe"
+        Description="请先关闭 TunnelBoard 主程序。"
+        PromptToContinue="yes"
+        CloseMessage="yes"
+        Timeout="5"
+        RebootPrompt="yes" />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
     <Property Id="ARPSYSTEMCOMPONENT" Value="1" />
     <Property Id="CREATE_START_MENU_SHORTCUT" Value="1" />
