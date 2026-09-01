@@ -1,4 +1,8 @@
-//go:build !windows
+//go:build !windows && !darwin
+
+// current-user CA trust 支持：Windows（CurrentUser\Root）、
+// macOS（login keychain，见 current_user_ca_darwin.go）与 Linux（系统级信任库）。
+// 其余平台保留 unsupported 占位。
 
 package helper
 
