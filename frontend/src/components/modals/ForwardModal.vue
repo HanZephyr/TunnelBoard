@@ -153,6 +153,7 @@ const portPreviewMessage = computed(() => {
   if (portPreviewState.status === 'available') return t('forwards.modal.portAvailable', { port })
   if (portPreviewState.status === 'owned_by_self') return t('forwards.modal.portOwnedBySelf', { port })
   if (portPreviewState.status === 'occupied') return t('forwards.modal.portConflict', { port })
+  if (portPreviewState.status === 'privileged') return t('forwards.modal.portPrivileged', { port })
   if (portPreviewState.status === 'unknown') return t('forwards.modal.portUnknown')
   return ''
 })

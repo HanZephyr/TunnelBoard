@@ -22,6 +22,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -207,9 +208,19 @@ func (a *Adapter) DiagnosePort() error { return CheckAddr("127.0.0.1:443") }
 func CheckAddr(addr string) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
+		if isPrivilegedBindError(err) {
+			return fmt.Errorf("caddy: %s unavailable: %w (privileged port: binding ports below 1024 requires elevated privileges)", addr, err)
+		}
 		return fmt.Errorf("caddy: %s unavailable: %w", addr, err)
 	}
 	return listener.Close()
+}
+
+// isPrivilegedBindError 报告 bind 是否因特权端口/权限被内核拒绝（EACCES/EPERM）。
+// macOS/Linux 上非特权进程绑定 <1024 端口都会命中；它与 EADDRINUSE（真实占用）
+// 语义完全不同，必须让调用方区分，避免误报"端口被占用"。
+func isPrivilegedBindError(err error) bool {
+	return errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
 }
 
 // Apply 串行完成配置注入、校验以及热重载/冷启动。只有持有的 Process 才能进入热重载分支。

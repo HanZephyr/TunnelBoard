@@ -141,6 +141,7 @@
             "localHost": "本機位址",
             "localPort": "本機連接埠",
             "portConflict": "連接埠 {port} 在本機已被佔用。",
+            "portPrivileged": "連接埠 {port} 需要管理員權限才能綁定，請使用 1024 以上的連接埠。",
             "portChecking": "正在檢查本機連接埠…",
             "portAvailable": "連接埠 {port} 可用。",
             "portOwnedBySelf": "連接埠 {port} 屬於目前執行中的 Forward。",
@@ -398,7 +399,7 @@
             "hostsNotApplied": "hosts 未生效",
             "caddyRunning": "Caddy 執行中",
             "caddyStopped": "Caddy 未執行",
-            "portConflict": "443 連接埠衝突",
+            "portConflict": "443 連接埠不可用",
             "caTrusted": "本機 CA 已信任",
             "checking": "正在檢查系統狀態",
             "unknown": "系統狀態未知",
@@ -456,7 +457,7 @@
             "deleted": "路由 \"{domain}\" 已刪除。",
             "applied": "路由已套用至系統。",
             "needForward": "請先建立 local 模式的 Forward。",
-            "portConflictWarning": "443 被佔用，Caddy 未啟動，可繼續使用 網域+連接埠 存取。"
+            "portConflictWarning": "443 連接埠無法綁定（被其他程式佔用或需要管理員權限），Caddy 未啟動，可繼續使用 網域+連接埠 存取。"
         }
     },
     "logs": {

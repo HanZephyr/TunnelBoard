@@ -1,4 +1,4 @@
-const VALID = new Set(['available', 'occupied', 'owned_by_self', 'unknown'])
+const VALID = new Set(['available', 'occupied', 'privileged', 'owned_by_self', 'unknown'])
 
 export function createListenerPreview(state = { status: 'idle', host: '', port: 0, message: '' }) {
   let generation = 0

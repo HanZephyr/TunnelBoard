@@ -141,6 +141,7 @@
             "localHost": "Local Host",
             "localPort": "Local Port",
             "portConflict": "Port {port} is already in use on this machine.",
+            "portPrivileged": "Port {port} requires elevated privileges to bind. Use a port above 1024.",
             "portChecking": "Checking local port…",
             "portAvailable": "Port {port} is available.",
             "portOwnedBySelf": "Port {port} belongs to this running Forward.",
@@ -398,7 +399,7 @@
             "hostsNotApplied": "hosts pending",
             "caddyRunning": "caddy running",
             "caddyStopped": "caddy stopped",
-            "portConflict": "port 443 conflict",
+            "portConflict": "port 443 unavailable",
             "caTrusted": "Local CA trusted",
             "checking": "Checking system state",
             "unknown": "System state unknown",
@@ -456,7 +457,7 @@
             "deleted": "Route \"{domain}\" deleted.",
             "applied": "Route applied to system.",
             "needForward": "Create a local-mode forward before adding web routes.",
-            "portConflictWarning": "Port 443 is occupied; Caddy was not started. You can still access the service via domain + port."
+            "portConflictWarning": "Port 443 could not be bound (occupied by another program or requires elevated privileges); Caddy was not started. You can still access the service via domain + port."
         }
     },
     "logs": {

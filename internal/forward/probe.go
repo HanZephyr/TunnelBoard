@@ -20,10 +20,11 @@ var ErrKeepAliveTimeout = errors.New("ssh keepalive timeout")
 type LocalListenerState string
 
 const (
-	LocalListenerAvailable LocalListenerState = "available"
-	LocalListenerOccupied  LocalListenerState = "occupied"
-	LocalListenerInvalid   LocalListenerState = "invalid"
-	LocalListenerUnknown   LocalListenerState = "unknown"
+	LocalListenerAvailable  LocalListenerState = "available"
+	LocalListenerOccupied   LocalListenerState = "occupied"
+	LocalListenerInvalid    LocalListenerState = "invalid"
+	LocalListenerPrivileged LocalListenerState = "privileged"
+	LocalListenerUnknown    LocalListenerState = "unknown"
 )
 
 type LocalListenerProbe struct {
@@ -134,6 +135,9 @@ func TestForwardConnection(fw model.Forward, hosts []model.SSHHost, verifier Hos
 		localAddr := net.JoinHostPort(localHost, strconv.Itoa(fw.LocalPort))
 		ln, err := net.Listen("tcp", localAddr)
 		if err != nil {
+			if isPrivilegedPortBindError(err) {
+				return 0, fmt.Errorf("local listen %s failed: %w (privileged port: binding ports below 1024 requires elevated privileges)", localAddr, err)
+			}
 			return 0, fmt.Errorf("local listen %s failed: %w", localAddr, err)
 		}
 		_ = ln.Close()
@@ -237,14 +241,30 @@ func PreviewLocalListener(host string, port int) LocalListenerProbe {
 	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		wrapped := fmt.Errorf("listen %s failed: %w", addr, err)
-		if errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, syscall.Errno(10048)) {
-			return LocalListenerProbe{State: LocalListenerOccupied, NormalizedAddress: addr, Err: wrapped}
-		}
-		return LocalListenerProbe{State: LocalListenerUnknown, NormalizedAddress: addr, Err: wrapped}
+		return classifyLocalListenError(addr, err)
 	}
 	if err := ln.Close(); err != nil {
 		return LocalListenerProbe{State: LocalListenerUnknown, NormalizedAddress: addr, Err: fmt.Errorf("close listener %s failed: %w", addr, err)}
 	}
 	return LocalListenerProbe{State: LocalListenerAvailable, NormalizedAddress: addr}
+}
+
+// classifyLocalListenError 把一次 bind 失败按语义归类：EADDRINUSE 为占用、
+// EACCES/EPERM 为特权端口/权限拒绝（macOS/Linux 上 <1024 端口）、其余为 unknown。
+func classifyLocalListenError(addr string, err error) LocalListenerProbe {
+	wrapped := fmt.Errorf("listen %s failed: %w", addr, err)
+	if errors.Is(err, syscall.EADDRINUSE) || errors.Is(err, syscall.Errno(10048)) {
+		return LocalListenerProbe{State: LocalListenerOccupied, NormalizedAddress: addr, Err: wrapped}
+	}
+	if isPrivilegedPortBindError(err) {
+		return LocalListenerProbe{State: LocalListenerPrivileged, NormalizedAddress: addr, Err: wrapped}
+	}
+	return LocalListenerProbe{State: LocalListenerUnknown, NormalizedAddress: addr, Err: wrapped}
+}
+
+// isPrivilegedPortBindError 报告 bind 是否因特权端口/权限被内核拒绝。
+// macOS/Linux 上非特权进程绑定 <1024 端口返回 EACCES；这类错误与"端口被占用"
+// 语义完全不同，必须分开提示。
+func isPrivilegedPortBindError(err error) bool {
+	return errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
 }

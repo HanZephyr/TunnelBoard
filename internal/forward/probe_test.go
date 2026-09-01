@@ -1,9 +1,12 @@
 package forward
 
 import (
+	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -52,5 +55,30 @@ func TestPreviewLocalListenerClassifiesBindResult(t *testing.T) {
 	invalid := PreviewLocalListener("127.0.0.1", 0)
 	if invalid.State != LocalListenerInvalid || invalid.Err == nil {
 		t.Fatalf("invalid preview = %+v", invalid)
+	}
+}
+
+// bind 错误分类必须区分"占用"与"特权端口/权限拒绝"（macOS/Linux <1024 端口）。
+func TestClassifyLocalListenError(t *testing.T) {
+	cases := []struct {
+		name  string
+		err   error
+		state LocalListenerState
+	}{
+		{"eacces", syscall.EACCES, LocalListenerPrivileged},
+		{"eperm", syscall.EPERM, LocalListenerPrivileged},
+		{"wrapped-eacces", fmt.Errorf("bind: %w", syscall.EACCES), LocalListenerPrivileged},
+		{"wrapped-eperm", fmt.Errorf("listen: %w", syscall.EPERM), LocalListenerPrivileged},
+		{"eaddrinuse", syscall.EADDRINUSE, LocalListenerOccupied},
+		{"wrapped-eaddrinuse", fmt.Errorf("bind: %w", syscall.EADDRINUSE), LocalListenerOccupied},
+		{"other", errors.New("boom"), LocalListenerUnknown},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			probe := classifyLocalListenError("127.0.0.1:443", tc.err)
+			if probe.State != tc.state {
+				t.Fatalf("classify(%v) = %s, want %s (err=%v)", tc.err, probe.State, tc.state, probe.Err)
+			}
+		})
 	}
 }
