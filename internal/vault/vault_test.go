@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/HanZephyr/TunnelBoard/internal/model"
@@ -269,5 +270,23 @@ func TestOpenInitializesFreshVault(t *testing.T) {
 		if perm := info.Mode().Perm(); perm != 0o600 {
 			t.Fatalf("%s perm = %o, want 600", name, perm)
 		}
+	}
+}
+
+func TestOpenReportsUnreadableDataFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix file modes")
+	}
+	dir := t.TempDir()
+	if _, err := vault.Open(dir); err != nil {
+		t.Fatal(err)
+	}
+	datPath := filepath.Join(dir, "vault.dat")
+	if err := os.Chmod(datPath, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(datPath, 0o600) })
+	if _, err := vault.Open(dir); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("Open err = %v, want permission denied", err)
 	}
 }

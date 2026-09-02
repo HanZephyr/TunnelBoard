@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/HanZephyr/TunnelBoard/internal/loopbackhttps"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 	"github.com/HanZephyr/TunnelBoard/internal/route"
 )
@@ -97,8 +98,8 @@ func TestCompileCaddyHTTPUpstream(t *testing.T) {
 	if !ok {
 		t.Fatalf("servers = %v, want key tunnelboard", cfg.Apps.HTTP.Servers)
 	}
-	if len(server.Listen) != 1 || server.Listen[0] != "127.0.0.1:443" {
-		t.Fatalf("server.listen = %v, want [127.0.0.1:443]", server.Listen)
+	if len(server.Listen) != 1 || server.Listen[0] != loopbackhttps.BindAddr() {
+		t.Fatalf("server.listen = %v, want [%s]", server.Listen, loopbackhttps.BindAddr())
 	}
 	if len(server.Routes) != 1 {
 		t.Fatalf("routes = %d, want 1", len(server.Routes))

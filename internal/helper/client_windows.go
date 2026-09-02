@@ -24,6 +24,8 @@ func (c *Client) EnsureInstalled() error {
 	return c.session.Ensure(ctx)
 }
 
+func (c *Client) EnsureLoopbackHTTPSRedirect(context.Context) error { return nil }
+
 func (c *Client) Call(request Request) (Response, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout())
 	defer cancel()

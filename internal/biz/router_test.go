@@ -53,6 +53,8 @@ func (f *fakeHelperClient) EnsureInstalled() error {
 	return f.ensureErr
 }
 
+func (f *fakeHelperClient) EnsureLoopbackHTTPSRedirect(context.Context) error { return nil }
+
 type fakeCaddyAdapter struct {
 	mu           sync.Mutex
 	running      bool

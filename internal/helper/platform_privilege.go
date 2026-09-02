@@ -35,6 +35,8 @@ type PlatformPrivilege interface {
 	ApplyManagedHosts(ctx context.Context, content []byte) error
 	TrustLocalCA(ctx context.Context, certDER []byte) error
 	UntrustLocalCA(ctx context.Context, fingerprint string) error
+	EnsureLoopbackHTTPSRedirect(ctx context.Context) error
+	RepairDataDirOwner(ctx context.Context, dir, owner string) error
 }
 
 type platformPrivilege struct {
@@ -151,6 +153,46 @@ func (p *platformPrivilege) writePrivateTemp(kind string, content []byte) (strin
 	return path, cleanup, nil
 }
 
+func (p *platformPrivilege) writePrivateDir(files map[string][]byte) (string, func(), error) {
+	if len(files) == 0 {
+		return "", nil, errors.New("helper: empty privilege payload")
+	}
+	dir, err := os.MkdirTemp(p.tempRoot, "tunnelboard-privilege-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("helper: create private temp dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	if err := os.Chmod(dir, 0o700); err != nil {
+		cleanup()
+		return "", nil, err
+	}
+	for name, content := range files {
+		if name == "" || name != filepath.Base(name) || strings.Contains(name, "..") {
+			cleanup()
+			return "", nil, fmt.Errorf("helper: invalid privilege payload name %q", name)
+		}
+		path := filepath.Join(dir, name)
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			cleanup()
+			return "", nil, err
+		}
+		_, writeErr := f.Write(content)
+		syncErr := f.Sync()
+		closeErr := f.Close()
+		if writeErr != nil || syncErr != nil || closeErr != nil {
+			cleanup()
+			return "", nil, errors.Join(writeErr, syncErr, closeErr)
+		}
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			cleanup()
+			return "", nil, errors.New("helper: private temp input is not a regular file")
+		}
+	}
+	return dir, cleanup, nil
+}
+
 func (p *platformPrivilege) run(ctx context.Context, executable string, args ...string) error {
 	out, err := p.runner.Run(ctx, executable, args...)
 	if err != nil {
@@ -170,6 +212,10 @@ else if operation is "trust-ca" then
   set commandText to executablePath & " add-trusted-cert -d -r trustRoot -k " & quoted form of valueTwo & " " & quoted form of valueOne
 else if operation is "untrust-ca" then
   set commandText to executablePath & " delete-certificate -Z " & quoted form of valueOne & " " & quoted form of valueTwo
+else if operation is "ensure-https-redirect" then
+  set commandText to "/bin/mkdir -p /etc/pf.anchors && /bin/cp -- " & quoted form of (valueOne & "/anchor") & " /etc/pf.anchors/com.hanzephyr.tunnelboard && /bin/cp -- " & quoted form of (valueOne & "/pf.conf") & " /etc/pf.conf && /bin/cp -- " & quoted form of (valueOne & "/plist") & " /Library/LaunchDaemons/com.hanzephyr.tunnelboard.https-redirect.plist && /usr/sbin/chown root:wheel /etc/pf.anchors/com.hanzephyr.tunnelboard /Library/LaunchDaemons/com.hanzephyr.tunnelboard.https-redirect.plist && /bin/chmod 644 /etc/pf.anchors/com.hanzephyr.tunnelboard /Library/LaunchDaemons/com.hanzephyr.tunnelboard.https-redirect.plist && /sbin/pfctl -E -f /etc/pf.conf ; /bin/launchctl unload /Library/LaunchDaemons/com.hanzephyr.tunnelboard.https-redirect.plist ; /bin/launchctl load -w /Library/LaunchDaemons/com.hanzephyr.tunnelboard.https-redirect.plist"
+else if operation is "repair-data-dir" then
+  set commandText to "/usr/sbin/chown -R " & quoted form of valueOne & " " & quoted form of valueTwo
 else
   error "unsupported TunnelBoard privilege operation"
 end if

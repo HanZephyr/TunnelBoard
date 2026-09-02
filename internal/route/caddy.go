@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/HanZephyr/TunnelBoard/internal/loopbackhttps"
 	"github.com/HanZephyr/TunnelBoard/internal/model"
 )
 
@@ -151,7 +152,7 @@ func CompileCaddy(data model.VaultData) ([]byte, error) {
 			HTTP: caddyHTTPApp{
 				Servers: map[string]caddyServer{
 					"tunnelboard": {
-						Listen: []string{"127.0.0.1:443"},
+						Listen: []string{loopbackhttps.BindAddr()},
 						Routes: routes,
 					},
 				},

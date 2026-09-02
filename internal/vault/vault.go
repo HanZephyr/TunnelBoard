@@ -77,6 +77,9 @@ func Open(dir string) (*Store, error) {
 		if !datExists {
 			return s, s.saveLocked(model.VaultData{Version: payloadVersion, Prefs: model.Prefs{UpdateCheckEnabled: true}})
 		}
+		if err := verifyReadable(filepath.Join(dir, dataFileName)); err != nil {
+			return nil, fmt.Errorf("vault: read data: %w", err)
+		}
 		return s, nil
 	}
 }
@@ -306,11 +309,23 @@ func readKey(path string) ([]byte, error) {
 	return key, nil
 }
 
+func verifyReadable(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
 // writeFileAtomic 写临时文件后 rename，避免半写状态。
 func writeFileAtomic(dir, name string, data []byte, perm os.FileMode) error {
 	tmp := filepath.Join(dir, name+".tmp")
 	if err := os.WriteFile(tmp, data, perm); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(dir, name))
+	path := filepath.Join(dir, name)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return os.Chmod(path, perm)
 }

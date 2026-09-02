@@ -4,6 +4,7 @@ package helper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 
@@ -38,6 +39,13 @@ func (c *localElevatedClient) Ping() (string, error) {
 
 // EnsureInstalled 本地模式无需安装。
 func (c *localElevatedClient) EnsureInstalled() error { return nil }
+
+func (c *localElevatedClient) EnsureLoopbackHTTPSRedirect(ctx context.Context) error {
+	if c.privilege == nil {
+		return errors.New("helper: platform privilege is unavailable")
+	}
+	return c.privilege.EnsureLoopbackHTTPSRedirect(ctx)
+}
 
 // Call 校验请求并按操作执行提权写入；全部操作复用服务端的同一套校验红线。
 func (c *localElevatedClient) Call(req Request) (Response, error) {
@@ -82,6 +90,18 @@ func (c *localElevatedClient) applyManagedHosts(entries []route.HostEntry, expec
 
 type unavailablePrivilege struct{ err error }
 
-func (p unavailablePrivilege) ApplyManagedHosts(context.Context, []byte) error { return p.err }
-func (p unavailablePrivilege) TrustLocalCA(context.Context, []byte) error      { return p.err }
-func (p unavailablePrivilege) UntrustLocalCA(context.Context, string) error    { return p.err }
+func (p unavailablePrivilege) ApplyManagedHosts(context.Context, []byte) error {
+	return p.err
+}
+func (p unavailablePrivilege) TrustLocalCA(context.Context, []byte) error {
+	return p.err
+}
+func (p unavailablePrivilege) UntrustLocalCA(context.Context, string) error {
+	return p.err
+}
+func (p unavailablePrivilege) EnsureLoopbackHTTPSRedirect(context.Context) error {
+	return p.err
+}
+func (p unavailablePrivilege) RepairDataDirOwner(context.Context, string, string) error {
+	return p.err
+}

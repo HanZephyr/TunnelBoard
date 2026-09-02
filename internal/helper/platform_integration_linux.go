@@ -41,6 +41,8 @@ func (o *linuxSessionOperator) Ping() (string, error) { return "linux-polkit-ses
 
 func (o *linuxSessionOperator) EnsureInstalled() error { return ensureLinuxPrivilegedPayload() }
 
+func (o *linuxSessionOperator) EnsureLoopbackHTTPSRedirect(context.Context) error { return nil }
+
 func (o *linuxSessionOperator) Call(request Request) (Response, error) {
 	if o.session == nil {
 		return Response{}, errors.New("helper: Linux privileged session is unavailable")

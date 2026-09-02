@@ -33,6 +33,7 @@ type HelperClient interface {
 	Call(req helper.Request) (helper.Response, error)
 	Ping() (string, error)
 	EnsureInstalled() error
+	EnsureLoopbackHTTPSRedirect(ctx context.Context) error
 }
 
 // CaddyAdapter 是 Caddy 进程管理接缝（生产 = *caddy.Adapter，测试 = fake）。
@@ -327,6 +328,10 @@ func (b *RouterBiz) applySystemLocked(confirmedCAFingerprint string) (result Rou
 	}
 	revision := configRevision(caddyConfig)
 	caddyMutated = true
+	if err := b.helper.EnsureLoopbackHTTPSRedirect(context.Background()); err != nil {
+		slog.Error("loopback https redirect unavailable", "err", err)
+		return result, fmt.Errorf("prepare loopback https: %w", err)
+	}
 	applyResult, err := b.caddy.Apply(context.Background(), revision, caddyConfig)
 	if err != nil {
 		slog.Error("reload caddy failed", "err", err)

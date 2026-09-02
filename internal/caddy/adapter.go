@@ -24,6 +24,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/HanZephyr/TunnelBoard/internal/loopbackhttps"
 )
 
 const EnvPathOverride = "TUNNELBOARD_CADDY_PATH"
@@ -203,7 +205,7 @@ func (a *Adapter) VerifySHA256(bin string) error {
 	return nil
 }
 
-func (a *Adapter) DiagnosePort() error { return CheckAddr("127.0.0.1:443") }
+func (a *Adapter) DiagnosePort() error { return CheckAddr(loopbackhttps.BindAddr()) }
 
 func CheckAddr(addr string) error {
 	listener, err := net.Listen("tcp", addr)

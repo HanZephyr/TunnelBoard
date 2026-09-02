@@ -78,9 +78,28 @@ type StartupCATrustRequest struct {
 
 const startupCATrustEvent = "tunnelboard:startup-ca-trust-required"
 
+func denyRootProcess() error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	if os.Geteuid() == 0 {
+		return errors.New("TunnelBoard must run as the logged-in user; port 443 uses a one-time administrator prompt instead of sudo")
+	}
+	return nil
+}
+
 // NewApp 打开默认数据目录下的 Vault 并组装应用 Module。
 // 打开失败（含密钥遗失 ErrKeyUnavailable）时仅记录 initErr，由绑定调用方通过 ensureReady 感知。
 func NewApp() *App {
+	if err := denyRootProcess(); err != nil {
+		diagBuf := diag.NewRingBuffer(slog.NewTextHandler(os.Stderr, nil), 2000)
+		slog.SetDefault(slog.New(diag.NewSafeLogHandler(diagBuf)))
+		return &App{initErr: err, diagBuf: diagBuf}
+	}
+	dataDir := vault.ResolveDataDir(vault.DefaultDataDir())
+	if err := helper.RepairDataDirIfNeeded(dataDir); err != nil {
+		slog.Warn("vault data dir owner repair skipped", "err", err)
+	}
 	store, err := vault.OpenDefault()
 
 	if err != nil {

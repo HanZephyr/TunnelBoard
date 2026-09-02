@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -31,6 +32,14 @@ func (r *recordingRunner) Run(_ context.Context, executable string, args ...stri
 	}
 	if r.output != nil {
 		return r.output(executable, args)
+	}
+	if len(args) > 3 && args[3] == "ensure-https-redirect" && len(args) > 4 {
+		dir := args[4]
+		for _, name := range []string{"anchor", "pf.conf", "plist"} {
+			if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return nil, nil
 }
@@ -123,5 +132,54 @@ func TestDarwinUntrustLocalCANoopsWhenCertificateAbsent(t *testing.T) {
 		if call.executable == "/usr/bin/osascript" {
 			t.Fatal("missing certificate must not prompt for administrator authorization")
 		}
+	}
+}
+
+func TestDarwinEnsureLoopbackHTTPSRedirectUsesSourceDirArgv(t *testing.T) {
+	runner := &recordingRunner{}
+	root := t.TempDir()
+	privilege, err := helper.NewPlatformPrivilege(helper.PlatformPrivilegeOptions{Platform: "darwin", TempRoot: root, Runner: runner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := privilege.EnsureLoopbackHTTPSRedirect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.calls) == 0 {
+		if runtime.GOOS == "darwin" {
+			t.Skip("host already has the TunnelBoard pf anchor; skipping argv assertion")
+		}
+		t.Fatal("expected an osascript elevation")
+	}
+	if len(runner.calls) != 1 || runner.calls[0].executable != "/usr/bin/osascript" {
+		t.Fatalf("calls = %+v", runner.calls)
+	}
+	args := runner.calls[0].args
+	if len(args) != 7 || args[3] != "ensure-https-redirect" {
+		t.Fatalf("osascript argv = %#v", args)
+	}
+	srcDir := args[4]
+	if !strings.HasPrefix(srcDir, root) {
+		t.Fatalf("payload dir %q must be under temp root %q", srcDir, root)
+	}
+	if strings.Contains(args[1], root) {
+		t.Fatal("dynamic payload path must not be inlined into the AppleScript")
+	}
+}
+
+func TestRepairDataDirOwnerRejectsUnsafeInputs(t *testing.T) {
+	runner := &recordingRunner{}
+	privilege, err := helper.NewPlatformPrivilege(helper.PlatformPrivilegeOptions{Platform: "darwin", TempRoot: t.TempDir(), Runner: runner})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := privilege.RepairDataDirOwner(context.Background(), "/tmp/TunnelBoard", "root; rm"); err == nil {
+		t.Fatal("unsafe owner must be rejected")
+	}
+	if err := privilege.RepairDataDirOwner(context.Background(), "relative/TunnelBoard", "alice"); err == nil {
+		t.Fatal("relative data dir must be rejected")
+	}
+	if len(runner.calls) != 0 {
+		t.Fatalf("rejected repair must not elevate: %+v", runner.calls)
 	}
 }
