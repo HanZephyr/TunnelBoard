@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"os"
 	"runtime"
@@ -20,9 +21,6 @@ var assets embed.FS
 
 //go:embed build/windows/icon.ico
 var trayIconWindows []byte
-
-//go:embed build/macos-systray.png
-var trayIconMacOS []byte
 
 //go:embed build/appicon.png
 var trayIconFallback []byte
@@ -48,34 +46,18 @@ func main() {
 		wailsruntime.WindowUnminimise(app.ctx)
 	}
 
+	var startTray, endTray func()
 	if lifecycle.HasTray() {
 		trayLabels := traytext.ForLocale(app.UILocale())
-		startTray, endTray := systray.RunWithExternalLoop(func() {
+		startTray, endTray = systray.RunWithExternalLoop(func() {
 			iconBytes := trayIconFallback
-			switch runtime.GOOS {
-			case "windows":
-				if len(trayIconWindows) > 0 {
-					iconBytes = trayIconWindows
-				}
-				if len(iconBytes) > 0 {
-					systray.SetIcon(iconBytes)
-				}
-			case "darwin":
-				if len(trayIconMacOS) > 0 {
-					iconBytes = trayIconMacOS
-				}
-				// macOS menu bar icon prefers template icons.
-				if len(iconBytes) > 0 {
-					systray.SetTemplateIcon(iconBytes, iconBytes)
-				}
-			default:
-				if len(iconBytes) > 0 {
-					systray.SetIcon(iconBytes)
-				}
+			if runtime.GOOS == "windows" && len(trayIconWindows) > 0 {
+				iconBytes = trayIconWindows
 			}
-			if runtime.GOOS != "darwin" {
-				systray.SetTitle(trayLabels.AppTitle)
+			if len(iconBytes) > 0 {
+				systray.SetIcon(iconBytes)
 			}
+			systray.SetTitle(trayLabels.AppTitle)
 			systray.SetTooltip(trayLabels.IconTooltip)
 
 			showWinItem := systray.AddMenuItem(trayLabels.ShowMainTitle, trayLabels.ShowMainTooltip)
@@ -87,13 +69,9 @@ func main() {
 					wailsruntime.Quit(app.ctx)
 					return
 				}
-				// Fallback for edge cases where Wails context isn't ready yet.
 				os.Exit(0)
 			})
 
-			// 点击图标弹出菜单（与 energye/systray 示例一致）。
-			// macOS：CreateMenu 把菜单挂到 NSStatusItem，系统负责左键出菜单（在 Wails 下比 SetOnClick 可靠）。
-			// Windows / Linux：用 ShowMenu 弹出同一套菜单项。
 			popupTrayMenu := func(menu systray.IMenu) {
 				if menu != nil {
 					_ = menu.ShowMenu()
@@ -109,11 +87,13 @@ func main() {
 
 			app.SetTrayMenuItems(showWinItem, quitMenu)
 		}, func() {})
-		startTray()
-		defer endTray()
+		defer func() {
+			if endTray != nil {
+				endTray()
+			}
+		}()
 	}
 
-	// Create application with options
 	err := wails.Run(&options.App{
 		Title:         applicationTitle,
 		Width:         1024,
@@ -124,8 +104,13 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour:  &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup:         app.startup,
+		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
+		OnStartup: func(ctx context.Context) {
+			app.startup(ctx)
+			if startTray != nil {
+				desktop.StartTrayPreservingAppDelegate(startTray)
+			}
+		},
 		OnBeforeClose:     app.beforeClose,
 		OnShutdown:        app.shutdown,
 		HideWindowOnClose: runtime.GOOS == "darwin",

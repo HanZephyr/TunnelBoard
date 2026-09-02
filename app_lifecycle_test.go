@@ -51,6 +51,21 @@ func TestBeforeCloseLinuxWithoutTrayExitsOnlyAfterUserChoosesExit(t *testing.T) 
 	}
 }
 
+func TestBeforeCloseDarwinAllowsDockQuit(t *testing.T) {
+	var hidden bool
+	app := &App{
+		desktopLifecycle: desktop.NewLifecycle(desktop.PlatformDarwin, true),
+		hideWindow:       func(context.Context) { hidden = true },
+	}
+
+	if prevent := app.beforeClose(context.Background()); prevent {
+		t.Fatal("beforeClose() = true, want Darwin application quit to proceed")
+	}
+	if hidden {
+		t.Fatal("Dock/Cmd+Q must not be turned into a hide")
+	}
+}
+
 func TestBeforeCloseLinuxWithTrayHidesWithoutPrompt(t *testing.T) {
 	var promptCalls int
 	var hidden bool

@@ -63,8 +63,13 @@ func (l Lifecycle) CloseAction(explicitQuit bool) CloseAction {
 		}
 		return CloseAskUser
 	}
-	if l.platform == PlatformWindows || l.platform == PlatformDarwin {
+	if l.platform == PlatformWindows {
 		return CloseHide
+	}
+	if l.platform == PlatformDarwin {
+		// 窗口红灯由 Wails HideWindowOnClose 在 Cocoa 层 [NSApp hide]；
+		// OnBeforeClose 在 Darwin 上只会出现在 Cmd+Q、Dock 退出和 runtime.Quit。
+		return CloseExit
 	}
 	return CloseExit
 }

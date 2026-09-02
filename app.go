@@ -268,7 +268,8 @@ func (a *App) PrepareForQuit() {
 }
 
 // beforeClose applies the session lifecycle policy. Linux without a usable tray asks on every
-// normal close; tray-capable sessions hide, and explicit exit always proceeds to shutdown.
+// normal close; Windows tray sessions hide. Darwin window close is HideWindowOnClose; this
+// callback is Cmd+Q / Dock Quit / tray quit and must proceed to shutdown.
 func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	switch a.desktopLifecycle.CloseAction(a.allowClose.Load()) {
 	case desktop.CloseExit:
@@ -367,9 +368,7 @@ func (a *App) applyTrayLocaleUnlocked(tag string) {
 		a.trayQuit.SetTitle(s.QuitTitle)
 		a.trayQuit.SetTooltip(s.QuitTooltip)
 	}
-	if runtime.GOOS != "darwin" {
-		systray.SetTitle(s.AppTitle)
-	}
+	systray.SetTitle(s.AppTitle)
 	systray.SetTooltip(s.IconTooltip)
 }
 

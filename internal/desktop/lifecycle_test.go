@@ -41,6 +41,22 @@ func TestExplicitQuitAlwaysExits(t *testing.T) {
 	}
 }
 
+func TestDarwinApplicationQuitExits(t *testing.T) {
+	lifecycle := NewLifecycle(PlatformDarwin, true)
+
+	if got, want := lifecycle.CloseAction(false), CloseExit; got != want {
+		t.Fatalf("CloseAction(false) = %v, want %v so Dock/Cmd+Q can terminate", got, want)
+	}
+}
+
+func TestWindowsWindowCloseHides(t *testing.T) {
+	lifecycle := NewLifecycle(PlatformWindows, true)
+
+	if got, want := lifecycle.CloseAction(false), CloseHide; got != want {
+		t.Fatalf("CloseAction(false) = %v, want %v", got, want)
+	}
+}
+
 func TestLinuxTrayAvailabilityRequiresStatusNotifierWatcher(t *testing.T) {
 	if TrayAvailable(PlatformLinux, watcherProbe(false)) {
 		t.Fatal("TrayAvailable() = true without StatusNotifierWatcher")
