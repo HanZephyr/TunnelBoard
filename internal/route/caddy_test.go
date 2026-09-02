@@ -18,8 +18,12 @@ type caddyJSON struct {
 	} `json:"admin"`
 	Apps struct {
 		HTTP struct {
-			Servers map[string]struct {
-				Listen []string `json:"listen"`
+			HTTPSPort int `json:"https_port"`
+			Servers   map[string]struct {
+				Listen         []string `json:"listen"`
+				AutomaticHTTPS struct {
+					DisableRedirects bool `json:"disable_redirects"`
+				} `json:"automatic_https"`
 				Routes []struct {
 					Match []struct {
 						Host []string `json:"host"`
@@ -100,6 +104,12 @@ func TestCompileCaddyHTTPUpstream(t *testing.T) {
 	}
 	if len(server.Listen) != 1 || server.Listen[0] != loopbackhttps.BindAddr() {
 		t.Fatalf("server.listen = %v, want [%s]", server.Listen, loopbackhttps.BindAddr())
+	}
+	if cfg.Apps.HTTP.HTTPSPort != loopbackhttps.BindPort() {
+		t.Fatalf("http.https_port = %d, want %d", cfg.Apps.HTTP.HTTPSPort, loopbackhttps.BindPort())
+	}
+	if !server.AutomaticHTTPS.DisableRedirects {
+		t.Fatal("automatic_https.disable_redirects must be true so Caddy does not bind :80")
 	}
 	if len(server.Routes) != 1 {
 		t.Fatalf("routes = %d, want 1", len(server.Routes))

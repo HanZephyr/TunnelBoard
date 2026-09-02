@@ -37,12 +37,20 @@ type caddyPKILocal struct {
 }
 
 type caddyHTTPApp struct {
-	Servers map[string]caddyServer `json:"servers"`
+	// HTTPSPort 必须与 listen 端口一致。Caddy 默认把它当成 443，再额外
+	// 在 :80 开 HTTP→HTTPS 跳转；macOS 普通用户绑定 80 会直接退出。
+	HTTPSPort int                    `json:"https_port"`
+	Servers   map[string]caddyServer `json:"servers"`
+}
+
+type caddyAutomaticHTTPS struct {
+	DisableRedirects bool `json:"disable_redirects"`
 }
 
 type caddyServer struct {
-	Listen []string     `json:"listen"`
-	Routes []caddyRoute `json:"routes"`
+	Listen         []string            `json:"listen"`
+	Routes         []caddyRoute        `json:"routes"`
+	AutomaticHTTPS caddyAutomaticHTTPS `json:"automatic_https"`
 }
 
 type caddyRoute struct {
@@ -150,10 +158,12 @@ func CompileCaddy(data model.VaultData) ([]byte, error) {
 	cfg := caddyConfig{
 		Apps: caddyApps{
 			HTTP: caddyHTTPApp{
+				HTTPSPort: loopbackhttps.BindPort(),
 				Servers: map[string]caddyServer{
 					"tunnelboard": {
-						Listen: []string{loopbackhttps.BindAddr()},
-						Routes: routes,
+						Listen:         []string{loopbackhttps.BindAddr()},
+						Routes:         routes,
+						AutomaticHTTPS: caddyAutomaticHTTPS{DisableRedirects: true},
 					},
 				},
 			},
