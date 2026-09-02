@@ -445,7 +445,7 @@
             "dnsOverrideTitle": "Confirm DNS Override",
             "caTrustTitle": "Confirm Local CA Trust",
             "dnsOverrideMessage": "The following hosts records will be written for: {domains}",
-            "caTrustMessage": "Caddy HTTPS requires trusting TunnelBoard's local CA for the current Windows user. Confirm this change before continuing.",
+            "caTrustMessage": "Caddy HTTPS needs TunnelBoard's local CA installed in this computer's trust store. Confirm the fingerprint to continue. macOS and Linux will ask for administrator authorization.",
             "caFingerprintLabel": "Certificate SHA-256 fingerprint:",
             "hostsRecordDomain": "Domain",
             "hostsRecordIp": "IP",

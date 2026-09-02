@@ -13,7 +13,9 @@ import (
 	"time"
 )
 
-// CertificateStore 是操作系统当前用户证书存储的最小 Adapter seam。
+// CertificateStore 是操作系统信任库的最小 Adapter seam。
+// Windows 写入 CurrentUser\Root；macOS 写入 System keychain（需管理员授权）；
+// Linux 写入发行版系统 CA 目录（需 polkit）。
 // SHA-256 指纹由 LocalCATrust 从固定 Caddy authority 计算，业务调用方不能提供。
 type CertificateStore interface {
 	ContainsSHA256(ctx context.Context, fingerprint string) (bool, error)

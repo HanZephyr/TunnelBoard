@@ -6,17 +6,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/pem"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
 
-// loginKeychain 是当前用户的 login keychain 相对名；/usr/bin/security
-// 会按默认 keychain 搜索路径解析到 ~/Library/Keychains/login.keychain-db。
-// 当前用户域的操作不需要 root，也不需要 osascript 提权弹窗。
+// loginKeychain 是当前用户的 login keychain 相对名。旧版本曾把 CA 写到这里，
+// Chrome 不把 login keychain 当作 HTTPS 信任锚；现在只在安装到 System
+// keychain 成功后尽力清掉这份副本，避免钥匙串里留下重复项。
 const loginKeychain = "login.keychain-db"
 
 func CurrentUserDataDir() (string, error) {
@@ -35,18 +33,38 @@ func NewCurrentUserCATrust() (LocalCATrust, error) {
 	return NewCurrentUserCATrustAt(root), nil
 }
 
-// NewCurrentUserCATrustAt 将本地 Caddy 的 CA 信任写入当前用户 login keychain，
-// 并信任为根证书（-r trustRoot），与 Windows CurrentUser\Root 语义一致。
+// NewCurrentUserCATrustAt 将本地 Caddy 的 CA 经管理员授权写入 System keychain
+//（-r trustRoot）。这与 Windows CurrentUser\Root 不同：Chrome 在 macOS 上只
+// 稳定信任系统钥匙串里的根证书，因此必须提权。
 func NewCurrentUserCATrustAt(root string) LocalCATrust {
-	authority := filepath.Join(root, "caddy", "pki", "authorities", "local", "root.crt")
-	record := filepath.Join(root, "state", "ca-trust.json")
-	return NewLocalCATrust(authority, record, darwinLoginKeychainStore{})
+	privilege, err := newNativePlatformPrivilege()
+	if err != nil {
+		privilege = unavailablePrivilege{err: err}
+	}
+	return newDarwinSystemCATrust(root, privilege, execCommandRunner{})
 }
 
-type darwinLoginKeychainStore struct{}
+func newDarwinSystemCATrust(root string, privilege PlatformPrivilege, runner CommandRunner) LocalCATrust {
+	if runner == nil {
+		runner = execCommandRunner{}
+	}
+	authority := filepath.Join(root, "caddy", "pki", "authorities", "local", "root.crt")
+	record := filepath.Join(root, "state", "ca-trust.json")
+	return NewLocalCATrust(authority, record, darwinSystemKeychainStore{privilege: privilege, runner: runner})
+}
 
-func (darwinLoginKeychainStore) ContainsSHA256(ctx context.Context, fingerprint string) (bool, error) {
-	entries, err := listLoginKeychainCertificates(ctx)
+// darwinSystemKeychainStore 只读枚举不提权；写入/删除 System keychain 必须
+// 穿过 PlatformPrivilege（osascript 管理员授权）。公开 API 仍不暴露路径或命令。
+type darwinSystemKeychainStore struct {
+	privilege PlatformPrivilege
+	runner    CommandRunner
+}
+
+func (s darwinSystemKeychainStore) ContainsSHA256(ctx context.Context, fingerprint string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	entries, err := listKeychainCertificates(ctx, s.runner, darwinSystemKeychain)
 	if err != nil {
 		return false, err
 	}
@@ -58,103 +76,46 @@ func (darwinLoginKeychainStore) ContainsSHA256(ctx context.Context, fingerprint 
 	return false, nil
 }
 
-func (darwinLoginKeychainStore) AddDER(ctx context.Context, certDER []byte) error {
-	if err := ctx.Err(); err != nil {
+func (s darwinSystemKeychainStore) AddDER(ctx context.Context, certDER []byte) error {
+	if s.privilege == nil {
+		return fmt.Errorf("helper: macOS CA trust requires administrator authorization")
+	}
+	if err := s.privilege.TrustLocalCA(ctx, certDER); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp("", "tunnelboard-ca-*.pem")
-	if err != nil {
-		return fmt.Errorf("helper: create temp CA file: %w", err)
-	}
-	name := tmp.Name()
-	defer os.Remove(name)
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("helper: chmod temp CA file: %w", err)
-	}
-	if err := pem.Encode(tmp, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("helper: write temp CA PEM: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("helper: close temp CA file: %w", err)
-	}
-	out, err := exec.CommandContext(ctx, "/usr/bin/security",
-		"add-trusted-cert", "-d", "-r", "trustRoot", "-k", loginKeychain, name).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("helper: add CA to login keychain: %w: %s", err, strings.TrimSpace(string(out)))
-	}
+	sum := sha256.Sum256(certDER)
+	_ = removeUnprivilegedKeychainSHA256(ctx, s.runner, loginKeychain, hex.EncodeToString(sum[:]))
 	return nil
 }
 
-func (darwinLoginKeychainStore) RemoveSHA256(ctx context.Context, fingerprint string) error {
-	entries, err := listLoginKeychainCertificates(ctx)
+func (s darwinSystemKeychainStore) RemoveSHA256(ctx context.Context, fingerprint string) error {
+	if s.privilege == nil {
+		return fmt.Errorf("helper: macOS CA trust requires administrator authorization")
+	}
+	if err := s.privilege.UntrustLocalCA(ctx, fingerprint); err != nil {
+		return err
+	}
+	_ = removeUnprivilegedKeychainSHA256(ctx, s.runner, loginKeychain, fingerprint)
+	return nil
+}
+
+func removeUnprivilegedKeychainSHA256(ctx context.Context, runner CommandRunner, keychain, fingerprint string) error {
+	entries, err := listKeychainCertificates(ctx, runner, keychain)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.sha256 == fingerprint {
-			out, err := exec.CommandContext(ctx, "/usr/bin/security",
-				"delete-certificate", "-Z", entry.sha1, loginKeychain).CombinedOutput()
-			if err != nil {
-				return fmt.Errorf("helper: delete CA from login keychain: %w: %s", err, strings.TrimSpace(string(out)))
-			}
-			return nil
-		}
-	}
-	return nil
-}
-
-type keychainCertificate struct {
-	sha1   string
-	sha256 string
-}
-
-// listLoginKeychainCertificates 枚举 login keychain 中全部证书。
-// `security find-certificate -a -p -Z` 输出形如：
-//
-//	SHA-1 hash: 1234abcd...
-//	-----BEGIN CERTIFICATE-----
-//	...
-//	-----END CERTIFICATE-----
-//
-// 我们保留每张证书的 SHA-1（delete-certificate -Z 需要）并现场重算 SHA-256
-// （接口指纹按 SHA-256 匹配）。
-func listLoginKeychainCertificates(ctx context.Context) ([]keychainCertificate, error) {
-	out, err := exec.CommandContext(ctx, "/usr/bin/security",
-		"find-certificate", "-a", "-p", "-Z", loginKeychain).Output()
-	if err != nil {
-		return nil, fmt.Errorf("helper: enumerate login keychain: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	var (
-		entries []keychainCertificate
-		sha1Hex string
-		pemBuf  strings.Builder
-	)
-	flush := func() {
-		if pemBuf.Len() == 0 {
-			return
-		}
-		block, _ := pem.Decode([]byte(pemBuf.String()))
-		if block != nil && block.Type == "CERTIFICATE" {
-			sum := sha256.Sum256(block.Bytes)
-			entries = append(entries, keychainCertificate{
-				sha1:   sha1Hex,
-				sha256: hex.EncodeToString(sum[:]),
-			})
-		}
-		pemBuf.Reset()
-		sha1Hex = ""
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if rest, found := strings.CutPrefix(line, "SHA-1 hash:"); found {
-			flush()
-			sha1Hex = strings.TrimSpace(rest)
+		if entry.sha256 != fingerprint {
 			continue
 		}
-		pemBuf.WriteString(line)
-		pemBuf.WriteString("\n")
+		if err := validateSHA1Fingerprint(entry.sha1); err != nil {
+			return err
+		}
+		out, err := runner.Run(ctx, "/usr/bin/security", "delete-certificate", "-Z", entry.sha1, keychain)
+		if err != nil {
+			return fmt.Errorf("helper: delete CA from %s: %w: %s", keychain, err, strings.TrimSpace(string(out)))
+		}
+		return nil
 	}
-	flush()
-	return entries, nil
+	return nil
 }

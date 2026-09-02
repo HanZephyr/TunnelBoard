@@ -445,7 +445,7 @@
             "dnsOverrideTitle": "确认 DNS 覆盖",
             "caTrustTitle": "确认本地 CA 信任",
             "dnsOverrideMessage": "将为以下域名写入 hosts 记录：{domains}",
-            "caTrustMessage": "Caddy HTTPS 需要为当前 Windows 用户信任 TunnelBoard 本地 CA，请确认后继续。",
+            "caTrustMessage": "Caddy HTTPS 需要将 TunnelBoard 本地 CA 安装到本机信任库。请核对指纹后继续；macOS 与 Linux 会请求管理员授权。",
             "caFingerprintLabel": "证书 SHA-256 指纹：",
             "hostsRecordDomain": "域名",
             "hostsRecordIp": "IP",

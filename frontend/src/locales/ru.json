@@ -445,7 +445,7 @@
             "dnsOverrideTitle": "Подтверждение перезаписи DNS",
             "caTrustTitle": "Подтверждение доверия локальному CA",
             "dnsOverrideMessage": "Будут записаны hosts-записи для доменов: {domains}",
-            "caTrustMessage": "Для HTTPS через Caddy требуется доверие локальному центру сертификации TunnelBoard для текущего пользователя Windows. Подтвердите изменение.",
+            "caTrustMessage": "Для HTTPS через Caddy нужно установить локальный ЦС TunnelBoard в хранилище доверия этого компьютера. Подтвердите отпечаток. На macOS и Linux потребуется авторизация администратора.",
             "caFingerprintLabel": "Отпечаток сертификата SHA-256:",
             "hostsRecordDomain": "Домен",
             "hostsRecordIp": "IP",

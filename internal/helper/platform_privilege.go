@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"os"
@@ -81,7 +82,8 @@ func (p *platformPrivilege) TrustLocalCA(ctx context.Context, certDER []byte) er
 	if err := ValidateLocalCA(certDER, hex.EncodeToString(sum[:])); err != nil {
 		return err
 	}
-	tempPath, cleanup, err := p.writePrivateTemp("ca", certDER)
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	tempPath, cleanup, err := p.writePrivateTemp("ca.pem", pemBytes)
 	if err != nil {
 		return err
 	}
@@ -94,7 +96,21 @@ func (p *platformPrivilege) UntrustLocalCA(ctx context.Context, fingerprint stri
 	if err := validateFingerprint(fingerprint); err != nil {
 		return err
 	}
-	return p.runDarwin(ctx, "untrust-ca", fingerprint, darwinSystemKeychain, "/usr/bin/security")
+	// delete-certificate -Z 只接受 SHA-1；调用方持有的是 LocalCATrust 的 SHA-256。
+	entries, err := listKeychainCertificates(ctx, p.runner, darwinSystemKeychain)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.sha256 != fingerprint {
+			continue
+		}
+		if err := validateSHA1Fingerprint(entry.sha1); err != nil {
+			return err
+		}
+		return p.runDarwin(ctx, "untrust-ca", entry.sha1, darwinSystemKeychain, "/usr/bin/security")
+	}
+	return nil
 }
 
 func (p *platformPrivilege) writePrivateTemp(kind string, content []byte) (string, func(), error) {
@@ -171,6 +187,18 @@ func validateFingerprint(value string) error {
 	for _, char := range value {
 		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
 			return errors.New("helper: fingerprint must be 64 lowercase hexadecimal characters")
+		}
+	}
+	return nil
+}
+
+func validateSHA1Fingerprint(value string) error {
+	if len(value) != 40 {
+		return errors.New("helper: certificate SHA-1 must be 40 hexadecimal characters")
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return errors.New("helper: certificate SHA-1 must be 40 hexadecimal characters")
 		}
 	}
 	return nil
