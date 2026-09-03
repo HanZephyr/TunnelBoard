@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"embed"
 	"os"
 	"runtime"
@@ -46,10 +45,9 @@ func main() {
 		wailsruntime.WindowUnminimise(app.ctx)
 	}
 
-	var startTray, endTray func()
 	if lifecycle.HasTray() {
 		trayLabels := traytext.ForLocale(app.UILocale())
-		startTray, endTray = systray.RunWithExternalLoop(func() {
+		startTray, endTray := systray.RunWithExternalLoop(func() {
 			iconBytes := trayIconFallback
 			if runtime.GOOS == "windows" && len(trayIconWindows) > 0 {
 				iconBytes = trayIconWindows
@@ -87,11 +85,11 @@ func main() {
 
 			app.SetTrayMenuItems(showWinItem, quitMenu)
 		}, func() {})
-		defer func() {
-			if endTray != nil {
-				endTray()
-			}
-		}()
+		// nativeStart must run on the main OS thread before Wails takes the
+		// AppKit/Win32 loop. OnStartup runs on a background goroutine; calling
+		// it there crashes silently on Darwin (AppKit is not thread-safe).
+		startTray()
+		defer endTray()
 	}
 
 	err := wails.Run(&options.App{
@@ -105,12 +103,7 @@ func main() {
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup: func(ctx context.Context) {
-			app.startup(ctx)
-			if startTray != nil {
-				desktop.StartTrayPreservingAppDelegate(startTray)
-			}
-		},
+		OnStartup:         app.startup,
 		OnBeforeClose:     app.beforeClose,
 		OnShutdown:        app.shutdown,
 		HideWindowOnClose: runtime.GOOS == "darwin",
