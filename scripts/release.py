@@ -318,6 +318,7 @@ def verify_bundle_root(
             if executable is None:
                 raise ReleaseError("Windows artifact is missing a required executable")
             verify_windows_pe_machine(executable, 0x8664)
+        verify_embedded_helper_digest(app_path, sha256_file(helper_path))
     if os_name == "linux":
         expected_machine = {"amd64": 0x3E, "arm64": 0xB7}.get(manifest["target"]["arch"])
         if expected_machine is None:

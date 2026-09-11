@@ -10,7 +10,11 @@
       InstallerVersion="500"
       Compressed="yes">
     <SummaryInformation Description="TunnelBoard local SSH forward manager" />
-    <MajorUpgrade DowngradeErrorMessage="已安装更新版本的 TunnelBoard，无法降级。" />
+    <!-- 同版本重打包也必须成套替换主程序和 Helper；旧包移除纳入安装事务以支持回滚。 -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        Schedule="afterInstallInitialize"
+        DowngradeErrorMessage="已安装更新版本的 TunnelBoard，无法降级。" />
     <util:CloseApplication
         Id="CloseTunnelBoard"
         Target="TunnelBoard.exe"
@@ -112,7 +116,7 @@
 
     <InstallExecuteSequence>
       <Custom Action="CleanupLegacyService" Before="InstallFiles" Condition="NOT REMOVE~=&quot;ALL&quot;" />
-      <Custom Action="CleanupCurrentUserCA" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot;" />
+      <Custom Action="CleanupCurrentUserCA" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
     <Feature Id="MainFeature" Title="TunnelBoard" Level="1">

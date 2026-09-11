@@ -50,10 +50,28 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
         working-directory: frontend
+      - name: Release Module contract tests
+        run: uv run -m unittest scripts.tests.test_release
       - name: Build Windows package
         env:
           PACKAGE_VERSION: ${{ inputs.version }}
         run: uv run scripts/release.py build --target windows-amd64 --version "$env:PACKAGE_VERSION"
+      - name: Verify same-version installer upgrade
+        env:
+          PACKAGE_VERSION: ${{ inputs.version }}
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem build/release/windows-amd64/out -Filter *-setup.exe -File)
+          if ($installers.Count -ne 1) { throw "Expected exactly one Windows installer" }
+          uv run scripts/tests/windows_installer_upgrade.py --installer $installers[0].FullName --payload build/release/windows-amd64/stage/TunnelBoard --version "$env:PACKAGE_VERSION"
+      - name: Upload installer verification logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tunnelboard-windows-installer-logs-${{ github.run_id }}
+          path: build/release/windows-amd64/installer-logs
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload exact Windows candidate directory
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

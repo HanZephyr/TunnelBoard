@@ -135,7 +135,7 @@ class ReleaseVerifierCLITest(unittest.TestCase):
         (self.root / "caddy").mkdir(parents=True)
         (self.root / "LICENSES").mkdir()
         files = {
-            "TunnelBoard.exe": (fake_pe(b"app"), "application", True),
+            "TunnelBoard.exe": (fake_pe(b"app" + digest(fake_pe(b"helper")).encode("ascii")), "application", True),
             "tunnelboard-helper.exe": (fake_pe(b"helper"), "privileged_helper", True),
             "caddy/caddy.exe": (fake_pe(b"caddy"), "caddy", True),
             "LICENSES/TunnelBoard.txt": (b"license", "license", False),
@@ -228,6 +228,20 @@ class ReleaseVerifierCLITest(unittest.TestCase):
         result = self.run_verify(self.archive())
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("missing", result.stderr.lower())
+
+    def test_mismatched_helper_pin_fails_even_with_matching_manifest_hashes(self) -> None:
+        app = self.root / "TunnelBoard.exe"
+        app.write_bytes(fake_pe(b"old-app" + b"0" * 64))
+        manifest_path = self.root / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for record in manifest["files"]:
+            if record["path"] == "TunnelBoard.exe":
+                record["size"] = app.stat().st_size
+                record["sha256"] = digest(app.read_bytes())
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        result = self.run_verify(self.archive())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Helper SHA-256 pin", result.stderr)
 
     def test_tampered_file_fails(self) -> None:
         caddy = self.root / "caddy" / "caddy.exe"
