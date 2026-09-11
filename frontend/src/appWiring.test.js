@@ -34,7 +34,7 @@ test('Route 页面使用独立的状态视图模块', async () => {
   assert.match(source, /deriveRouteAppliedView\(route, statusOf\(route\.id\), t\)/)
 })
 
-test('Route HTTPS Host 使用三种模式并仅在自定义模式显示输入框', async () => {
+test('Route HTTP 和 HTTPS 均显示 Host 模式，只有 HTTPS 可跟随 TLS SNI', async () => {
   const [page, modal] = await Promise.all([
     readFile(new URL('./components/pages/RoutesPage.vue', import.meta.url), 'utf8'),
     readFile(new URL('./components/modals/RouteModal.vue', import.meta.url), 'utf8')
@@ -44,6 +44,12 @@ test('Route HTTPS Host 使用三种模式并仅在自定义模式显示输入框
   assert.match(modal, /routeUpstreamHostMode/)
   assert.match(modal, /upstreamHostModeOriginal/)
   assert.match(modal, /form\.upstreamHostMode === 'custom'/)
+  assert.match(modal, /<div class="col-12 col-md-6">\s*<label[^>]*for="routeUpstreamHostMode"/)
+  assert.match(modal, /<option v-if="form\.upstreamScheme === 'https'" value="tls_sni">/)
+  assert.match(modal, /<div v-if="form\.upstreamHostMode === 'custom'"/)
+  assert.match(modal, /Object\.assign\(props\.form, upstreamHostFieldsForForm\(props\.form\)\)/)
+  assert.match(page, /if \(payload\.upstreamHostMode === UPSTREAM_HOST_MODES\.CUSTOM && !payload\.upstreamHost\)/)
+  assert.match(page, /const upstreamHost = upstreamHostDisplayValue\(route\)/)
 })
 
 test('LogsPage 传递完整 generation cursor 而不是只传 offset', async () => {

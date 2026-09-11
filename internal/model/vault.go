@@ -61,7 +61,7 @@ type Forward struct {
 	Description  string `json:"description,omitempty"`
 }
 
-// UpstreamHostMode 控制 HTTPS 上游请求的 Host 来源。
+// UpstreamHostMode 控制 HTTP/HTTPS 上游请求的 Host 来源。
 type UpstreamHostMode string
 
 const (
@@ -79,7 +79,7 @@ type WebRoute struct {
 	CaddyEnabled   bool   `json:"caddyEnabled"`
 	UpstreamScheme string `json:"upstreamScheme"` // http | https
 	TLSSNI         string `json:"tlsSni,omitempty"`
-	// UpstreamHostMode 是 HTTPS 上游请求的 Host 来源；为空时按原始 Host 处理。
+	// UpstreamHostMode 是 HTTP/HTTPS 上游请求的 Host 来源；为空时按原始 Host 处理。
 	UpstreamHostMode UpstreamHostMode `json:"upstreamHostMode,omitempty"`
 	// UpstreamHost 仅在 UpstreamHostModeCustom 时使用；旧 Vault 中存在该值时兼容为自定义 Host。
 	UpstreamHost string `json:"upstreamHost,omitempty"`
@@ -97,17 +97,11 @@ func (r WebRoute) EffectiveUpstreamHostMode() UpstreamHostMode {
 	return UpstreamHostModeOriginal
 }
 
-// NormalizeUpstreamHostSelection 规范化 HTTPS 上游的 Host 选择，并清理不适用的旧值。
+// NormalizeUpstreamHostSelection 规范化 HTTP/HTTPS 上游的 Host 选择，并清理不适用的旧值。
 // 未声明模式的旧 Route：有 upstreamHost 时保留自定义语义，否则升级为原始 Host。
 func (r WebRoute) NormalizeUpstreamHostSelection() WebRoute {
 	r.UpstreamHostMode = UpstreamHostMode(strings.TrimSpace(string(r.UpstreamHostMode)))
 	r.UpstreamHost = strings.TrimSpace(r.UpstreamHost)
-	if r.UpstreamScheme != "https" {
-		r.UpstreamHostMode = ""
-		r.UpstreamHost = ""
-		return r
-	}
-
 	r.UpstreamHostMode = r.EffectiveUpstreamHostMode()
 	if r.UpstreamHostMode != UpstreamHostModeCustom {
 		r.UpstreamHost = ""

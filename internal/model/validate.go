@@ -15,8 +15,8 @@ var (
 
 	ErrRouteNeedsLocalForward  = errors.New("model: web route requires a local-mode forward")
 	ErrRouteNeedsTLSSNI        = errors.New("model: https upstream requires explicit TLS SNI")
-	ErrInvalidUpstreamHostMode = errors.New("model: invalid https upstream Host mode")
-	ErrRouteNeedsUpstreamHost  = errors.New("model: custom https upstream Host is required")
+	ErrInvalidUpstreamHostMode = errors.New("model: invalid upstream Host mode")
+	ErrRouteNeedsUpstreamHost  = errors.New("model: custom upstream Host is required")
 
 	ErrDuplicateID      = errors.New("model: duplicate entity id")
 	ErrDuplicateHostKey = errors.New("model: duplicate host key for address and port")
@@ -90,9 +90,13 @@ func (d VaultData) Validate() error {
 		if r.UpstreamScheme == "https" && r.TLSSNI == "" {
 			return fmt.Errorf("%w: web route %q (%d)", ErrRouteNeedsTLSSNI, r.Domain, r.ID)
 		}
-		if r.UpstreamScheme == "https" {
+		if r.UpstreamScheme == "https" || r.UpstreamScheme == "http" || r.UpstreamScheme == "" {
 			switch r.EffectiveUpstreamHostMode() {
-			case UpstreamHostModeOriginal, UpstreamHostModeTLSSNI:
+			case UpstreamHostModeOriginal:
+			case UpstreamHostModeTLSSNI:
+				if r.UpstreamScheme != "https" {
+					return fmt.Errorf("%w: TLS SNI Host requires HTTPS", ErrInvalidUpstreamHostMode)
+				}
 			case UpstreamHostModeCustom:
 				if strings.TrimSpace(r.UpstreamHost) == "" {
 					return fmt.Errorf("%w: web route %q (%d)", ErrRouteNeedsUpstreamHost, r.Domain, r.ID)

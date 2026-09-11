@@ -70,6 +70,29 @@ func TestValidateUniqueness(t *testing.T) {
 
 // WebRoute 只能引用存在的、Mode 为 local 的 Forward；HTTPS 上游必须显式配置 TLS SNI。
 func TestValidateWebRouteRules(t *testing.T) {
+	t.Run("HTTP Host normalization and validation", func(t *testing.T) {
+		d := validGraph()
+		r := d.WebRoutes[0]
+		r.UpstreamScheme = "http"
+		r.UpstreamHostMode = model.UpstreamHostModeCustom
+		r.UpstreamHost = " backend.internal:8080 "
+		r = r.NormalizeUpstreamHostSelection()
+		if r.UpstreamHostMode != model.UpstreamHostModeCustom || r.UpstreamHost != "backend.internal:8080" {
+			t.Fatalf("HTTP custom Host lost during normalization: %+v", r)
+		}
+		d.WebRoutes[0] = r
+		if err := d.Validate(); err != nil {
+			t.Fatal(err)
+		}
+		d.WebRoutes[0].UpstreamHost = ""
+		if err := d.Validate(); !errors.Is(err, model.ErrRouteNeedsUpstreamHost) {
+			t.Fatalf("empty HTTP custom Host: %v", err)
+		}
+		d.WebRoutes[0].UpstreamHostMode = model.UpstreamHostModeTLSSNI
+		if err := d.Validate(); !errors.Is(err, model.ErrInvalidUpstreamHostMode) {
+			t.Fatalf("HTTP must reject TLS SNI Host: %v", err)
+		}
+	})
 	t.Run("引用不存在的 Forward", func(t *testing.T) {
 		d := validGraph()
 		d.WebRoutes[0].ForwardID = 99

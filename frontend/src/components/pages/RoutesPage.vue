@@ -72,7 +72,7 @@ function upstreamDetail(route) {
   const scheme = route.upstreamScheme === 'https' ? 'https' : 'http'
   const target = forward ? `${forward.name} (${forward.localHost}:${forward.localPort})` : forwardName(route.forwardId)
   const sni = route.upstreamScheme === 'https' && route.tlsSni ? ` · SNI ${route.tlsSni}` : ''
-  const upstreamHost = route.upstreamScheme === 'https' ? upstreamHostDisplayValue(route) : ''
+  const upstreamHost = upstreamHostDisplayValue(route)
   const host = upstreamHost ? ` · Host ${upstreamHost}` : ''
   return `${scheme} → ${target}${sni}${host}`
 }
@@ -324,7 +324,7 @@ function editRoute(route) {
     upstreamScheme: route.upstreamScheme || 'http',
     tlsSni: route.tlsSni || '',
     upstreamHostMode,
-    upstreamHost: upstreamHostMode === UPSTREAM_HOST_MODES.CUSTOM ? (route.upstreamHost || '') : ''
+    upstreamHost: upstreamHostMode === UPSTREAM_HOST_MODES.CUSTOM ? upstreamHostDisplayValue(route) : ''
   })
   routeValidationError.value = ''
   routeModalOpen.value = true
@@ -335,7 +335,7 @@ function validateRoutePayload(payload) {
   if (/\s/.test(payload.domain) || !payload.domain.includes('.')) return t('routes.errors.domainInvalid')
   if (!payload.forwardId) return t('routes.errors.forwardRequired')
   if (payload.upstreamScheme === 'https' && !payload.tlsSni) return t('routes.errors.tlsSniRequired')
-  if (payload.upstreamScheme === 'https' && payload.upstreamHostMode === UPSTREAM_HOST_MODES.CUSTOM && !payload.upstreamHost) {
+  if (payload.upstreamHostMode === UPSTREAM_HOST_MODES.CUSTOM && !payload.upstreamHost) {
     return t('routes.errors.upstreamHostRequired')
   }
   return ''
@@ -345,6 +345,7 @@ async function saveRoute() {
   if (props.configurationLocked || routeMutation.active) return
   const upstreamHostFields = upstreamHostFieldsForForm({
     upstreamScheme: routeForm.upstreamScheme,
+    tlsSni: routeForm.tlsSni,
     upstreamHostMode: routeForm.upstreamHostMode,
     upstreamHost: routeForm.upstreamHost
   })

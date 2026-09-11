@@ -200,6 +200,7 @@ func TestCompileCaddyHTTPSUpstreamPreservesOriginalHost(t *testing.T) {
 func TestCompileCaddyHTTPSUpstreamHostModes(t *testing.T) {
 	cases := []struct {
 		name         string
+		scheme       string
 		mode         model.UpstreamHostMode
 		upstreamHost string
 		wantHost     string
@@ -208,22 +209,30 @@ func TestCompileCaddyHTTPSUpstreamHostModes(t *testing.T) {
 		{name: "tls sni", mode: model.UpstreamHostModeTLSSNI, wantHost: "grafana.internal"},
 		{name: "custom", mode: model.UpstreamHostModeCustom, upstreamHost: "localhost:8443", wantHost: "localhost:8443"},
 		{name: "legacy custom", upstreamHost: "legacy.internal", wantHost: "legacy.internal"},
+		{name: "http custom", scheme: "http", mode: model.UpstreamHostModeCustom, upstreamHost: "backend.internal:8080", wantHost: "backend.internal:8080"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			scheme := tc.scheme
+			if scheme == "" {
+				scheme = "https"
+			}
 			data := model.VaultData{
 				Forwards:  []model.Forward{localForward(1, 8443)},
-				WebRoutes: []model.WebRoute{{ID: 1, ForwardID: 1, Domain: "grafana.example.com", CaddyEnabled: true, UpstreamScheme: "https", TLSSNI: "grafana.internal", UpstreamHostMode: tc.mode, UpstreamHost: tc.upstreamHost}},
+				WebRoutes: []model.WebRoute{{ID: 1, ForwardID: 1, Domain: "grafana.example.com", CaddyEnabled: true, UpstreamScheme: scheme, TLSSNI: "grafana.internal", UpstreamHostMode: tc.mode, UpstreamHost: tc.upstreamHost}},
 			}
 			raw, err := route.CompileCaddy(data)
 			if err != nil {
 				t.Fatal(err)
 			}
 			h := decodeCaddy(t, raw).Apps.HTTP.Servers["tunnelboard"].Routes[0].Handle[0]
+			if scheme == "http" && h.Transport != nil {
+				t.Fatal("HTTP custom Host must not enable TLS")
+			}
 			if got := h.Headers.Request.Set["Host"]; len(got) != 1 || got[0] != tc.wantHost {
 				t.Fatalf("Host header = %v, want [%s]", got, tc.wantHost)
 			}
-			if h.Transport == nil || h.Transport.TLS.ServerName != "grafana.internal" {
+			if scheme == "https" && (h.Transport == nil || h.Transport.TLS.ServerName != "grafana.internal") {
 				t.Fatalf("TLS transport changed: %+v", h.Transport)
 			}
 		})

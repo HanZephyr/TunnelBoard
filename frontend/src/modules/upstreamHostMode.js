@@ -12,7 +12,9 @@ export function upstreamHostModeForRoute(route = {}) {
 }
 
 export function upstreamHostFieldsForForm(form = {}) {
-  if (form.upstreamScheme !== 'https') return { upstreamHostMode: '', upstreamHost: '' }
+  if (form.upstreamScheme === 'http' && form.upstreamHostMode === UPSTREAM_HOST_MODES.TLS_SNI) {
+    return { upstreamHostMode: UPSTREAM_HOST_MODES.CUSTOM, upstreamHost: String(form.tlsSni || '').trim() }
+  }
   const mode = Object.values(UPSTREAM_HOST_MODES).includes(form.upstreamHostMode)
     ? form.upstreamHostMode
     : UPSTREAM_HOST_MODES.ORIGINAL

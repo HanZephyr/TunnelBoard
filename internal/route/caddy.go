@@ -186,30 +186,35 @@ func CompileCaddy(data model.VaultData) ([]byte, error) {
 }
 
 // proxyHandler 生成单个 Route 的 reverse_proxy handler。HTTPS 上游始终设置显式
-// TLS SNI；HTTP Host 默认保留当前请求 Host，也支持继承 SNI 或显式自定义。
+// TLS SNI；HTTP/HTTPS Host 默认保留当前请求 Host，也支持显式自定义。
 func proxyHandler(r model.WebRoute, f model.Forward) (caddyHandler, error) {
 	h := caddyHandler{
 		Handler:   "reverse_proxy",
 		Upstreams: []caddyUpstream{{Dial: fmt.Sprintf("127.0.0.1:%d", f.LocalPort)}},
 	}
-	if r.UpstreamScheme == "https" {
+	if r.UpstreamScheme == "https" || r.EffectiveUpstreamHostMode() != model.UpstreamHostModeOriginal {
 		var upstreamHost string
 		switch r.EffectiveUpstreamHostMode() {
 		case model.UpstreamHostModeOriginal:
 			upstreamHost = "{http.request.host}"
 		case model.UpstreamHostModeTLSSNI:
+			if r.UpstreamScheme != "https" {
+				return caddyHandler{}, fmt.Errorf("route: TLS SNI Host requires HTTPS for route %d", r.ID)
+			}
 			upstreamHost = r.TLSSNI
 		case model.UpstreamHostModeCustom:
 			upstreamHost = r.UpstreamHost
 			if upstreamHost == "" {
-				return caddyHandler{}, fmt.Errorf("route: custom HTTPS Host is required for route %d (%s)", r.ID, r.Domain)
+				return caddyHandler{}, fmt.Errorf("route: custom upstream Host is required for route %d (%s)", r.ID, r.Domain)
 			}
 		default:
-			return caddyHandler{}, fmt.Errorf("route: invalid HTTPS Host mode %q for route %d (%s)", r.UpstreamHostMode, r.ID, r.Domain)
+			return caddyHandler{}, fmt.Errorf("route: invalid upstream Host mode %q for route %d (%s)", r.UpstreamHostMode, r.ID, r.Domain)
 		}
-		h.Transport = &caddyTransport{
-			Protocol: "http",
-			TLS:      caddyTransportTLS{ServerName: r.TLSSNI},
+		if r.UpstreamScheme == "https" {
+			h.Transport = &caddyTransport{
+				Protocol: "http",
+				TLS:      caddyTransportTLS{ServerName: r.TLSSNI},
+			}
 		}
 		h.Headers = &caddyHeaders{
 			Request: caddyHeadersRequest{Set: map[string][]string{"Host": {upstreamHost}}},
