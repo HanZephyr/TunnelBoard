@@ -430,7 +430,9 @@
             "upstreamHostModeCustom": "自訂 Host",
             "upstreamHost": "自訂 Host",
             "upstreamHostPlaceholder": "例如 localhost:8443",
-            "upstreamHostHint": "僅在選擇「自訂 Host」時填寫。"
+            "upstreamHostHint": "僅在選擇「自訂 Host」時填寫。",
+            "removeProxyHeaders": "移除代理轉發請求標頭",
+            "removeProxyHeadersHint": "移除 Via、Forwarded、X-Forwarded-* 和 X-Real-IP。"
         },
         "errors": {
             "domainRequired": "域名不能為空。",

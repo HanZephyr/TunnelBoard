@@ -1258,6 +1258,37 @@ func TestRouteUpsertEnforcesCaddyHostsInvariantInBackend(t *testing.T) {
 	}
 }
 
+func TestRouteUpsertPersistsProxyHeaderSelection(t *testing.T) {
+	store := &memStore{data: routeFixture()}
+	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}})
+	for _, enabled := range []bool{true, false} {
+		snapshot, err := service.GetSnapshot(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := store.data.WebRoutes[0]
+		r.RemoveProxyHeaders = enabled
+		preview, err := service.PreviewRouteChange(context.Background(), application.RouteChangeIntent{
+			ExpectedRevision: snapshot.Revisions.Vault, Action: application.RouteChangeUpsert, Route: &r,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if preview.Route == nil || preview.Route.RemoveProxyHeaders != enabled {
+			t.Fatalf("preview lost header selection: %+v", preview.Route)
+		}
+		result, err := service.CommitRouteChange(context.Background(), application.CommitRouteChangeCommand{
+			Token: preview.Token, ConfirmedDomains: preview.RequiresConfirmation,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.DesiredSaved || store.data.WebRoutes[0].RemoveProxyHeaders != enabled {
+			t.Fatalf("save lost header selection: result=%+v route=%+v", result, store.data.WebRoutes[0])
+		}
+	}
+}
+
 func TestRouteUpsertNormalizesUpstreamHost(t *testing.T) {
 	store := &memStore{data: routeFixture()}
 	service := application.NewService(application.Dependencies{Store: store, Catalog: biz.NewCatalogBiz(store), Runtime: &fakeRuntime{}, Routes: &fakeRoutes{}, Restore: fakeRestore{}, Recovery: fakeRecovery{}})

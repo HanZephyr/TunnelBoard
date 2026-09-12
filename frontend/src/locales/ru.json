@@ -430,7 +430,9 @@
             "upstreamHostModeCustom": "Пользовательский Host",
             "upstreamHost": "Пользовательский Host",
             "upstreamHostPlaceholder": "например localhost:8443",
-            "upstreamHostHint": "Заполняйте только при выборе пользовательского Host."
+            "upstreamHostHint": "Заполняйте только при выборе пользовательского Host.",
+            "removeProxyHeaders": "Удалять заголовки переадресации прокси",
+            "removeProxyHeadersHint": "Удалять Via, Forwarded, X-Forwarded-* и X-Real-IP."
         },
         "errors": {
             "domainRequired": "Укажите домен.",

@@ -291,6 +291,7 @@ function defaultRouteForm() {
     forwardId: 0,
     hostsEnabled: true,
     caddyEnabled: false,
+    removeProxyHeaders: false,
     upstreamScheme: 'http',
     tlsSni: '',
     upstreamHostMode: UPSTREAM_HOST_MODES.ORIGINAL,
@@ -321,6 +322,7 @@ function editRoute(route) {
     forwardId: route.forwardId,
     hostsEnabled: !!route.hostsEnabled,
     caddyEnabled: !!route.caddyEnabled,
+    removeProxyHeaders: !!route.removeProxyHeaders,
     upstreamScheme: route.upstreamScheme || 'http',
     tlsSni: route.tlsSni || '',
     upstreamHostMode,
@@ -355,6 +357,7 @@ async function saveRoute() {
     domain: routeForm.domain.trim(),
     hostsEnabled: !!routeForm.hostsEnabled,
     caddyEnabled: !!routeForm.caddyEnabled,
+    removeProxyHeaders: !!routeForm.removeProxyHeaders,
     upstreamScheme: routeForm.upstreamScheme,
     tlsSni: routeForm.upstreamScheme === 'https' ? routeForm.tlsSni.trim() : '',
     ...upstreamHostFields

@@ -52,6 +52,24 @@ test('Route HTTP 和 HTTPS 均显示 Host 模式，只有 HTTPS 可跟随 TLS SN
   assert.match(page, /const upstreamHost = upstreamHostDisplayValue\(route\)/)
 })
 
+test('Route 移除代理请求头选项默认关闭，编辑回填并作为布尔值提交', async () => {
+  const [page, modal] = await Promise.all([
+    readFile(new URL('./components/pages/RoutesPage.vue', import.meta.url), 'utf8'),
+    readFile(new URL('./components/modals/RouteModal.vue', import.meta.url), 'utf8')
+  ])
+  assert.match(page, /removeProxyHeaders: false/)
+  assert.match(page, /removeProxyHeaders: !!route\.removeProxyHeaders/)
+  assert.match(page, /removeProxyHeaders: !!routeForm\.removeProxyHeaders/)
+  assert.match(modal, /<div class="col-12">\s*<div class="form-check mt-1">\s*<input id="routeRemoveProxyHeaders" v-model="form\.removeProxyHeaders" type="checkbox"/)
+  for (const locale of ['en', 'zh-CN', 'zh-TW', 'zh-HK', 'ru']) {
+    const messages = JSON.parse(await readFile(new URL(`./locales/${locale}.json`, import.meta.url), 'utf8'))
+    assert.ok(messages.routes.modal.removeProxyHeaders)
+    for (const header of ['Via', 'Forwarded', 'X-Forwarded-*', 'X-Real-IP']) {
+      assert.ok(messages.routes.modal.removeProxyHeadersHint.includes(header), `${locale}: ${header}`)
+    }
+  }
+})
+
 test('LogsPage 传递完整 generation cursor 而不是只传 offset', async () => {
   const source = await readFile(new URL('./components/pages/LogsPage.vue', import.meta.url), 'utf8')
   assert.match(source, /GetLogTailV2/)

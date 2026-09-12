@@ -56,6 +56,11 @@ jobs:
         env:
           PACKAGE_VERSION: ${{ inputs.version }}
         run: uv run scripts/release.py build --target windows-amd64 --version "$env:PACKAGE_VERSION"
+      - name: Verify proxy headers with bundled Caddy
+        shell: pwsh
+        run: |
+          $env:TUNNELBOARD_TEST_CADDY_BINARY = (Resolve-Path build/release/windows-amd64/stage/TunnelBoard/caddy/caddy.exe).Path
+          go test ./internal/route -run TestCaddyProxyHeaders -count=1 -v
       - name: Verify same-version installer upgrade
         env:
           PACKAGE_VERSION: ${{ inputs.version }}

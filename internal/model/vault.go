@@ -83,6 +83,8 @@ type WebRoute struct {
 	UpstreamHostMode UpstreamHostMode `json:"upstreamHostMode,omitempty"`
 	// UpstreamHost 仅在 UpstreamHostModeCustom 时使用；旧 Vault 中存在该值时兼容为自定义 Host。
 	UpstreamHost string `json:"upstreamHost,omitempty"`
+	// RemoveProxyHeaders 移除发送到上游的代理来源请求头，默认保留。
+	RemoveProxyHeaders bool `json:"removeProxyHeaders,omitempty"`
 }
 
 // EffectiveUpstreamHostMode 返回当前 Route 的 Host 模式。未写入模式的旧记录：

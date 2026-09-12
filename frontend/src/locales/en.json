@@ -430,7 +430,9 @@
             "upstreamHostModeCustom": "Custom Host",
             "upstreamHost": "Custom Host",
             "upstreamHostPlaceholder": "e.g. localhost:8443",
-            "upstreamHostHint": "Enter a value only when Custom Host is selected."
+            "upstreamHostHint": "Enter a value only when Custom Host is selected.",
+            "removeProxyHeaders": "Remove proxy forwarding request headers",
+            "removeProxyHeadersHint": "Remove Via, Forwarded, X-Forwarded-*, and X-Real-IP."
         },
         "errors": {
             "domainRequired": "Domain is required.",

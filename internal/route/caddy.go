@@ -84,7 +84,8 @@ type caddyHeaders struct {
 }
 
 type caddyHeadersRequest struct {
-	Set map[string][]string `json:"set"`
+	Set    map[string][]string `json:"set,omitempty"`
+	Delete []string            `json:"delete,omitempty"`
 }
 
 type caddyUpstream struct {
@@ -219,6 +220,12 @@ func proxyHandler(r model.WebRoute, f model.Forward) (caddyHandler, error) {
 		h.Headers = &caddyHeaders{
 			Request: caddyHeadersRequest{Set: map[string][]string{"Host": {upstreamHost}}},
 		}
+	}
+	if r.RemoveProxyHeaders {
+		if h.Headers == nil {
+			h.Headers = &caddyHeaders{}
+		}
+		h.Headers.Request.Delete = []string{"Forwarded", "X-Forwarded-*", "X-Real-IP", "Via"}
 	}
 	return h, nil
 }

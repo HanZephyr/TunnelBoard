@@ -122,6 +122,13 @@ const forwardOptions = computed(() =>
             />
             <div class="form-text">{{ t('routes.modal.upstreamHostHint') }}</div>
           </div>
+          <div class="col-12">
+            <div class="form-check mt-1">
+              <input id="routeRemoveProxyHeaders" v-model="form.removeProxyHeaders" type="checkbox" class="form-check-input" aria-describedby="routeRemoveProxyHeadersHint" />
+              <label class="form-check-label" for="routeRemoveProxyHeaders">{{ t('routes.modal.removeProxyHeaders') }}</label>
+            </div>
+            <div id="routeRemoveProxyHeadersHint" class="form-text">{{ t('routes.modal.removeProxyHeadersHint') }}</div>
+          </div>
         </div>
         <div v-if="validationError" class="form-error mt-2">{{ validationError }}</div>
     </fieldset>
