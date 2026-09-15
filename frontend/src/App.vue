@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue'
+import { computed, nextTick, provide, onBeforeUnmount, onMounted, reactive, ref, watch, watchEffect } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   ApplyTrayLocale,
@@ -10,6 +10,7 @@ import {
   SaveUILocale
 } from '../wailsjs/go/main/App'
 import { BrowserOpenURL, EventsOn } from '../wailsjs/runtime/runtime'
+import { vaultRefreshKey } from './utils/vaultRevision'
 import { callBackend, errorMessage } from './utils/backend'
 import AppSidebar from './components/layout/AppSidebar.vue'
 import AppTopHeader from './components/layout/AppTopHeader.vue'
@@ -117,7 +118,14 @@ const snapshotPhase = ref('loading')
 const snapshotError = ref('')
 const hasSnapshot = ref(false)
 
+provide(vaultRefreshKey, async () => {
+  await loadVault()
+  await nextTick()
+  return snapshotStore.canMutate()
+})
+
 async function loadVault() {
+  snapshotPhase.value = hasSnapshot.value ? 'refreshing' : 'loading'
   await snapshotStore.refresh(async () => {
     const raw = await application.getSnapshot()
     const catalog = raw?.catalog || raw?.Catalog || raw
@@ -297,7 +305,6 @@ function onNewRoute() {
 
 onMounted(async () => {
 	removeStartupCATrustListener = EventsOn('tunnelboard:startup-ca-trust-required', acceptStartupCATrustRequest)
-  await loadVault()
 	await loadStartupCATrustRequest()
   try {
     appMeta.version = await callBackend(GetAppVersion)
@@ -314,6 +321,7 @@ onMounted(async () => {
   } catch (_) {
     /* locale persist is best-effort */
   }
+  await loadVault()
   await updatePreference.load(() => callBackend(GetUpdateCheckEnabled))
   if (updatePreference.shouldAutoCheck()) {
     void checkForUpdatesSilently()

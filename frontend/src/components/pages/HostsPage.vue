@@ -1,5 +1,6 @@
 <script setup>
-import { computed, reactive, ref } from 'vue'
+import { computed, inject, reactive, ref } from 'vue'
+import { vaultRefreshKey, recoverRevisionConflict } from '../../utils/vaultRevision'
 import { useI18n } from 'vue-i18n'
 import { DeleteSelection, EnrollHostKey, ReplaceHostKey } from '../../../wailsjs/go/main/App'
 import { callBackend, errorMessage } from '../../utils/backend'
@@ -30,6 +31,7 @@ const emit = defineEmits(['vault-changed', 'notify'])
 
 const { t } = useI18n()
 const application = createApplicationClient()
+const refreshVault = inject(vaultRefreshKey)
 
 const sortedHosts = computed(() => [...props.sshHosts].sort((a, b) => a.id - b.id))
 
@@ -195,6 +197,11 @@ async function confirmHostKey() {
       await callBackend(EnrollHostKey, item.host, item.port, '', item.fingerprint)
     }
     pendingHostKey.value = null
+    if (!await refreshVault()) {
+      hostTest.status = 'error'
+      hostTest.message = t('hosts.errors.revisionRefreshFailed')
+      return
+    }
     // 仅信任端点指纹；必须重新完成真实 SSH 握手与认证，测试不会保存当前草稿。
     await testHostConnection()
   } catch (err) {
@@ -233,7 +240,7 @@ async function saveHost() {
     emit('vault-changed', result)
     emit('notify', t('hosts.notify.saved', { name: saved?.name || command.host.name }))
   } catch (err) {
-    hostValidationError.value = errorMessage(err)
+    hostValidationError.value = await recoverRevisionConflict(err, refreshVault, t)
   } finally {
     hostSaveBusy.value = false
   }

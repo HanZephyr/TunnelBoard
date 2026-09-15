@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { vaultRefreshKey, recoverRevisionConflict } from '../../utils/vaultRevision'
 import { useI18n } from 'vue-i18n'
 import { errorMessage, isValidPort } from '../../utils/backend'
 import BaseDialog from '../common/BaseDialog.vue'
@@ -46,6 +47,7 @@ const emit = defineEmits(['close', 'submit', 'test-connection', 'host-created'])
 
 const { t } = useI18n()
 const application = createApplicationClient()
+const refreshVault = inject(vaultRefreshKey)
 
 const chainCandidateId = ref('')
 
@@ -138,7 +140,7 @@ async function saveNewHost() {
     clearSSHHostTransientSecrets(newHostForm)
     emit('host-created')
   } catch (err) {
-    newHostError.value = errorMessage(err)
+    newHostError.value = await recoverRevisionConflict(err, refreshVault, t)
   } finally {
     newHostSaving.value = false
   }

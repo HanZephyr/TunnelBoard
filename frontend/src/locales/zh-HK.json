@@ -160,6 +160,8 @@
             "testPassedWithLatency": "連線測試通過，SSH 延遲：{latency}。"
         },
         "errors": {
+            "revisionConflict": "設定已變更，已保留填寫內容。請確認後再次儲存。",
+            "revisionRefreshFailed": "設定重新載入失敗，已保留填寫內容。請先重試載入設定，再儲存。",
             "nameRequired": "名稱不可留空。",
             "folderRequired": "請選擇資料夾。",
             "chainRequired": "主機鏈至少選擇一台 SSH 主機。",

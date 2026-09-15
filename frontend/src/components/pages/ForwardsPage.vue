@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { vaultRefreshKey } from '../../utils/vaultRevision'
 import { useI18n } from 'vue-i18n'
 import {
   CreateFolder,
@@ -47,6 +48,7 @@ const emit = defineEmits(['vault-changed', 'notify'])
 
 const { t } = useI18n()
 const application = createApplicationClient()
+const refreshVault = inject(vaultRefreshKey)
 const forwardTest = reactive({ status: 'idle', message: '' })
 
 function resetForwardTest() {
@@ -575,6 +577,7 @@ async function confirmHostKey() {
     } else {
       await callBackend(EnrollHostKey, item.host, item.port, '', item.fingerprint)
     }
+    if (!await refreshVault()) throw new Error(t('hosts.errors.revisionRefreshFailed'))
     shiftHostKeyQueue()
     // 用户已信任指纹，自动重试启动
     const forward = props.forwards.find((entry) => entry.id === item.forwardId)

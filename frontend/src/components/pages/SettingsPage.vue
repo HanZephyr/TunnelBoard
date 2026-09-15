@@ -1,5 +1,6 @@
 <script setup>
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, inject, onMounted, reactive, ref } from 'vue'
+import { vaultRefreshKey } from '../../utils/vaultRevision'
 import { useI18n } from 'vue-i18n'
 import {
   ApplyTrayLocale,
@@ -52,6 +53,7 @@ const emit = defineEmits(['theme-change', 'notify', 'vault-changed', 'update-out
 const i18n = useI18n()
 const { t, locale } = i18n
 const application = createApplicationClient()
+const refreshVault = inject(vaultRefreshKey)
 
 const releasePageUrl = ref(DEFAULT_RELEASES_PAGE_URL)
 const autoRunEnabled = ref(false)
@@ -111,6 +113,7 @@ async function onUpdateCheckChange(event) {
   updateCheckEnabled.value = enabled
   try {
     await callBackend(SetUpdateCheckEnabled, enabled)
+    await refreshVault()
   } catch (err) {
     updateCheckEnabled.value = previous
     emit('notify', errorMessage(err))
@@ -124,6 +127,7 @@ async function onAutoRunChange(event) {
   autoRunEnabled.value = enabled
   try {
     await callBackend(SetAutoRunEnabled, enabled)
+    await refreshVault()
   } catch (err) {
     autoRunEnabled.value = previous
     emit('notify', errorMessage(err))
@@ -151,6 +155,7 @@ async function onLocaleChange(event) {
   }
   try {
     await callBackend(SaveUILocale, newLocale)
+    await refreshVault()
   } catch (_) {
     /* locale persist is best-effort */
   }

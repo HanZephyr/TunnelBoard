@@ -160,6 +160,8 @@
             "testPassedWithLatency": "Connection test passed. SSH latency: {latency}."
         },
         "errors": {
+            "revisionConflict": "Configuration changed. Your input has been kept. Review it and save again.",
+            "revisionRefreshFailed": "Could not refresh configuration. Your input has been kept. Retry loading configuration before saving.",
             "nameRequired": "Name is required.",
             "folderRequired": "Please select a folder.",
             "chainRequired": "Select at least one SSH host for the chain.",

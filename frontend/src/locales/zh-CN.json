@@ -160,6 +160,8 @@
             "testPassedWithLatency": "连接测试通过，SSH 延迟：{latency}。"
         },
         "errors": {
+            "revisionConflict": "配置已发生变化，已保留填写内容。请核对后再次保存。",
+            "revisionRefreshFailed": "配置刷新失败，已保留填写内容。请先重试加载配置，再保存。",
             "nameRequired": "名称不能为空。",
             "folderRequired": "请选择文件夹。",
             "chainRequired": "主机链至少选择一台 SSH 主机。",
